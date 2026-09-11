@@ -1,0 +1,7 @@
+filegroup {
+    name: "ax_dragonite_systemui_sources",
+    srcs: [
+        "src/**/*.kt",
+    ],
+    visibility: ["//frameworks/base/packages/SystemUI:__subpackages__"],
+}
