@@ -1,0 +1,28 @@
+package {
+    default_visibility: ["//visibility:public"],
+}
+
+android_library {
+    name: "ax_icon_provider",
+    manifest: "AndroidManifest.xml",
+
+    srcs: [
+        "src/**/*.java",
+        "src/**/*.kt",
+    ],
+
+    static_libs: [
+        "androidx.core_core",
+        "ax_icon_loader",
+        "ax_utils",
+        "kotlin-stdlib",
+        "kotlinx-coroutines-android",
+    ],
+
+    platform_apis: true,
+    min_sdk_version: "31",
+
+    kotlincflags: [
+        "-Xjvm-default=all",
+    ],
+}
