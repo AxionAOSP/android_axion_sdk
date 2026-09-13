@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="themed_icon_color">#FF555555</color>
+    <color name="themed_icon_background_color">#FFE0E0E0</color>
+    <color name="themed_icon_adaptive_background_color">#FFC0C0C0</color>
+    <color name="ax_themed_icon_color">#FF555555</color>
+    <color name="ax_themed_icon_background_color">#FFE0E0E0</color>
+    <color name="ax_themed_icon_adaptive_background_color">#FFC0C0C0</color>
+    <color name="ax_themed_badge_icon_color">#FF555555</color>
+    <color name="ax_themed_badge_icon_background_color">#FFE0E0E0</color>
+</resources>
