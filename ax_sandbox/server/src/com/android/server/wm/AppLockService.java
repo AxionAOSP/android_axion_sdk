@@ -26,6 +26,7 @@ import android.text.TextUtils;
 
 import com.android.internal.app.IAppLockStateListener;
 import com.android.internal.app.IAppSessionListener;
+import com.android.server.wm.ActivityRecord;
 import com.android.server.wm.sandbox.applock.AppLockRepository;
 
 import java.util.ArrayList;
@@ -111,30 +112,23 @@ public class AppLockService {
         }
     }
 
-    public boolean hasAppLock(String packageName) {
-        int userId = UserHandle.getUserId(Binder.getCallingUid());
+    public boolean hasAppLock(String packageName, int userId) {
         return computeAppLockState(packageName, userId).hasAppLock();
     }
 
     public AppLockState computeAppLockState(String packageName, int userId) {
         if (TextUtils.isEmpty(packageName)) return NONE;
         if (BLACKLISTED_PACKAGES.contains(packageName)) return NONE;
-        if (!mRepository.isAppLocked(packageName)) return NONE;
+        if (!mRepository.isAppLocked(packageName, userId)) return NONE;
         if (!mKeyguardDone) return LOCKED;
         return isSessionUnlocked(packageName, userId) ? UNLOCKED : LOCKED;
     }
 
-    public int getAppLockState(String packageName) {
-        int userId = UserHandle.getUserId(Binder.getCallingUid());
+    public int getAppLockState(String packageName, int userId) {
         return computeAppLockState(packageName, userId).ordinal();
     }
 
-    public int getAppLockStateForUser(String packageName, int userId) {
-        return computeAppLockState(packageName, userId).ordinal();
-    }
-
-    public boolean isAppLocked(String packageName) {
-        int userId = UserHandle.getUserId(Binder.getCallingUid());
+    public boolean isAppLocked(String packageName, int userId) {
         return computeAppLockState(packageName, userId) == LOCKED;
     }
 
@@ -149,9 +143,9 @@ public class AppLockService {
     public boolean isAppLocked(String packageName, int uid, ComponentName component) {
         if (TextUtils.isEmpty(packageName)) return false;
         if (BLACKLISTED_PACKAGES.contains(packageName)) return false;
-        if (!mRepository.isAppLocked(packageName)) return false;
-        if (component != null && isAuthActivity(component)) return false;
         int userId = UserHandle.getUserId(uid);
+        if (!mRepository.isAppLocked(packageName, userId)) return false;
+        if (component != null && isAuthActivity(component)) return false;
         return !isSessionUnlocked(packageName, userId);
     }
 
@@ -159,35 +153,32 @@ public class AppLockService {
         return mRepository.hasLockedPackages();
     }
 
-    public void addLockedApp(String packageName) {
-        if (isPackageLockable(packageName)) {
-            if (mRepository.addLockedApp(packageName)) {
+    public void addLockedApp(String packageName, int userId) {
+        if (isPackageLockable(packageName, userId)) {
+            if (mRepository.addLockedApp(packageName, userId)) {
                 notifyAppLockStateChanged(packageName, true);
             }
         }
     }
 
-    public void removeLockedApp(String packageName) {
-        if (mRepository.removeLockedApp(packageName)) {
-            int uid = getPackageUid(packageName);
-            if (uid >= 0) {
-                markSessionLocked(packageName, UserHandle.getUserId(uid));
-            }
+    public void removeLockedApp(String packageName, int userId) {
+        if (mRepository.removeLockedApp(packageName, userId)) {
+            markSessionLocked(packageName, userId);
             notifyAppLockStateChanged(packageName, false);
         }
     }
 
-    public List<String> getLockedPackages() {
-        return mRepository.getLockedPackages();
+    public List<String> getLockedPackages(int userId) {
+        return mRepository.getLockedPackages(userId);
     }
 
-    public List<String> getLockablePackages() {
+    public List<String> getLockablePackages(int userId) {
         List<String> result = new ArrayList<>();
         LauncherApps launcherApps = getLauncherApps();
         if (launcherApps != null) {
             try {
                 List<LauncherActivityInfo> activities = launcherApps.getActivityList(
-                        null, UserHandle.of(UserHandle.USER_SYSTEM));
+                        null, UserHandle.of(userId));
                 Set<String> seen = new HashSet<>();
                 for (LauncherActivityInfo info : activities) {
                     String pkgName = info.getApplicationInfo().packageName;
@@ -203,7 +194,7 @@ public class AppLockService {
             try {
                 PackageManager pm = mContext.getPackageManager();
                 if (pm != null) {
-                    List<ApplicationInfo> apps = pm.getInstalledApplications(0);
+                    List<ApplicationInfo> apps = pm.getInstalledApplicationsAsUser(0, userId);
                     for (ApplicationInfo appInfo : apps) {
                         if (BLACKLISTED_PACKAGES.contains(appInfo.packageName)) continue;
                         if (isSystemUid(appInfo.uid)) continue;
@@ -223,18 +214,18 @@ public class AppLockService {
         return appId == Process.ROOT_UID || appId == Process.SYSTEM_UID;
     }
 
-    public boolean isPackageLockable(String packageName) {
+    public boolean isPackageLockable(String packageName, int userId) {
         if (TextUtils.isEmpty(packageName) || BLACKLISTED_PACKAGES.contains(packageName)) {
             return false;
         }
-        if (mRepository.isAppLocked(packageName)) {
+        if (mRepository.isAppLocked(packageName, userId)) {
             return true;
         }
         LauncherApps launcherApps = getLauncherApps();
         if (launcherApps != null) {
             try {
                 List<LauncherActivityInfo> activities = launcherApps.getActivityList(
-                        packageName, UserHandle.of(UserHandle.USER_SYSTEM));
+                        packageName, UserHandle.of(userId));
                 if (activities != null && !activities.isEmpty()) {
                     return true;
                 }
@@ -516,20 +507,22 @@ public class AppLockService {
     public void removeTask(Task task, String reason) {
         if (task == null || !hasLockedPackages()) return;
         String pkg = task.getBasePackageName();
-        if (pkg != null && isAppLocked(pkg)) {
+        if (pkg != null && isAppLocked(pkg, task.mUserId)) {
             markSessionLocked(pkg, task.mUserId);
         }
     }
 
+    public void cleanupPackage(String packageName, int userId) {
+        removeLockedApp(packageName, userId);
+        String targetKey = sessionKey(userId, packageName);
+        mUnlockedApps.remove(targetKey);
+        mUnlockTimestamps.remove(targetKey);
+        cancelTimeoutLock(targetKey);
+    }
+
     public void cleanupPackage(String packageName) {
-        removeLockedApp(packageName);
-        for (String key : new ArrayList<>(mUnlockedApps)) {
-            if (key.endsWith(":" + packageName)) {
-                mUnlockedApps.remove(key);
-                mUnlockTimestamps.remove(key);
-                cancelTimeoutLock(key);
-            }
-        }
+        cleanupPackage(packageName, 0);
+        cleanupPackage(packageName, 999);
     }
 
     public boolean isSandboxActivity(ComponentName componentName) {

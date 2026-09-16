@@ -1,4 +1,20 @@
-package com.axion.dualapps;
+/*
+ * Copyright 2025-2026 AxionOS
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.android.internal.dualapps;
 
 import android.app.Activity;
 import android.app.ActivityManager;
@@ -10,7 +26,6 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.IPackageManager;
 import android.content.pm.ParceledListSlice;
 import android.content.pm.ResolveInfo;
-import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Handler;
@@ -21,8 +36,6 @@ import android.text.TextUtils;
 import com.android.internal.app.ResolverActivity.ResolvedComponentInfo;
 import com.android.internal.app.ResolverListController;
 import com.android.internal.R;
-import com.axion.dualapps.IAxDualAppsReceiver;
-import java.lang.CharSequence;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -318,27 +331,6 @@ public class AxDualAppsManager {
         } catch (RemoteException e) {
             return Collections.emptyList();
         }
-    }
-
-    public CharSequence getUserBadgedLabel(CharSequence label, int userId) {
-        if (!isDualAppsUserId(userId)) {
-            return null;
-        }
-        if (label != null) {
-            String labelString = label.toString();
-            String cloneBadge = Resources.getSystem().getString(R.string.dual_apps_profile_label_badge);
-            if (cloneBadge.length() > 5 && labelString.endsWith(cloneBadge.substring(5))) {
-                return labelString;
-            }
-        }
-        return Resources.getSystem().getString(R.string.dual_apps_profile_label_badge, label);
-    }
-
-    public CharSequence getUserBadgedLabel(CharSequence label, ApplicationInfo appInfo) {
-        if (appInfo == null) {
-            return null;
-        }
-        return getUserBadgedLabel(label, UserHandle.getUserId(appInfo.uid));
     }
 
     public void shouldTintBadgeBg(Context context, Drawable drawable, int userId) {

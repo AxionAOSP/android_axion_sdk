@@ -1,3 +1,19 @@
+/*
+ * Copyright 2025-2026 AxionOS
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.android.server.axdualapps;
 
 import android.app.admin.DevicePolicyManagerInternal;
@@ -16,6 +32,7 @@ import android.os.UserManager;
 import android.text.TextUtils;
 
 import com.android.internal.R;
+import com.android.internal.dualapps.IAxDualAppsReceiver;
 import com.android.server.LocalServices;
 import com.android.server.SystemService;
 import com.android.server.appop.AppOpsService;
@@ -23,8 +40,6 @@ import com.android.server.pm.CrossProfileDomainInfo;
 import com.android.server.pm.UserTypeDetails;
 import com.android.server.wm.ActivityTaskSupervisor;
 import com.android.server.wm.AxDualAppsWmHelper;
-
-import com.axion.dualapps.IAxDualAppsReceiver;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -224,10 +239,10 @@ public class AxDualAppsService extends SystemService {
     }
 
     public void modifyDefaultTypeProfileClone(UserTypeDetails.Builder builder) {
-        builder.setIconBadge(R.drawable.ic_corp_badge_color)
-                .setBadgePlain(R.drawable.ic_corp_badge_no_background)
-                .setBadgeNoBackground(R.drawable.ic_corp_badge_no_background)
-                .setBadgeLabels(new int[]{R.string.dual_apps_profile_label_badge})
+        builder.setIconBadge(R.drawable.ic_clone_icon_badge)
+                .setBadgePlain(R.drawable.ic_clone_badge)
+                .setBadgeNoBackground(R.drawable.ic_clone_badge)
+                .setBadgeLabels(new int[]{R.string.clone_profile_label_badge})
                 .setBadgeColors(new int[]{R.color.dual_badge_icon_color})
                 .setDarkThemeBadgeColors(new int[]{R.color.dual_badge_icon_color});
     }
