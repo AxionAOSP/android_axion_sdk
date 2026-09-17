@@ -1,0 +1,14 @@
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+java_library {
+    name: "ax_dexopt",
+    srcs: [
+        "src/**/*.java",
+        "src/**/*.kt",
+    ],
+    platform_apis: true,
+    installable: true,
+    visibility: ["//visibility:public"],
+}
