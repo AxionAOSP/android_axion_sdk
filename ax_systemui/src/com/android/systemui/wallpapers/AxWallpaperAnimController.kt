@@ -16,6 +16,7 @@
 
 package com.android.systemui.wallpapers
 
+import android.util.Log
 import com.android.systemui.CoreStartable
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
@@ -97,6 +98,7 @@ constructor(
     }
 
     private fun onStateChanged(state: KeyguardState) {
+        if (DEBUG) Log.d(TAG, "onStateChanged: state=$state")
         when (state) {
             KeyguardState.AOD,
             KeyguardState.DOZING,
@@ -133,20 +135,24 @@ constructor(
     }
 
     private fun checkPrepProgress() {
+        if (DEBUG) Log.d(TAG, "checkPrepProgress: pending=$isPendingPrep, lightReveal=$lightRevealAmount, canUse=${canUseWallpaper()}")
         if (isPendingPrep && lightRevealAmount <= SCRIM_COVERED_THRESHOLD) {
             isPendingPrep = false
             if (canUseWallpaper()) {
                 isPrepped = true
+                if (DEBUG) Log.d(TAG, "checkPrepProgress: holding depth")
                 animator.holdDepth()
             }
         }
     }
 
     private fun checkRevealProgress() {
+        if (DEBUG) Log.d(TAG, "checkRevealProgress: pending=$isPendingReveal, prepped=$isPrepped, lightReveal=$lightRevealAmount, canUse=${canUseWallpaper()}")
         if (isPendingReveal && isPrepped && lightRevealAmount >= REVEAL_START_THRESHOLD) {
             isPendingReveal = false
             isPrepped = false
             if (canUseWallpaper()) {
+                if (DEBUG) Log.d(TAG, "checkRevealProgress: playing reveal")
                 animator.playReveal()
             }
         }
@@ -164,7 +170,9 @@ constructor(
     }
 
     companion object {
-        private const val DISABLE_WALLPAPER_ZOOM = "ax_wallpaper_depth_zoom_disabled"
+        private const val TAG = "AxWallpaperAnimController"
+        private const val DEBUG = false
+        private const val DISABLE_WALLPAPER_ZOOM = "pref_disable_wallpaper_zoom"
         private const val SCRIM_COVERED_THRESHOLD = 0.05f
         private const val REVEAL_START_THRESHOLD = 0.55f
     }
