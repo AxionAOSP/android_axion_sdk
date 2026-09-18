@@ -75,82 +75,85 @@ constructor(
                     configuration.screenWidthDp
                 },
         )
+    val defaultTileSpecs: List<String>
+        get() = defaultTileIds
+
     private val qsOrder by
         hydrator.hydratedStateOf(
             traceName = "qsOrder",
-            initialValue = null,
+            initialValue = repository.qsOrder.value ?: (repository.defaultControls + defaultTileIds),
             source = repository.qsOrder,
         )
     private val qqsOrder by
         hydrator.hydratedStateOf(
             traceName = "qqsOrder",
-            initialValue = null,
+            initialValue = repository.qqsOrder.value ?: (repository.defaultControls + defaultTileIds),
             source = repository.qqsOrder,
         )
     private val qsSpans by
         hydrator.hydratedStateOf(
             traceName = "qsSpans",
-            initialValue = repository.defaultControlSpans,
+            initialValue = repository.qsSpans.value,
             source = repository.qsSpans,
         )
     private val qqsSpans by
         hydrator.hydratedStateOf(
             traceName = "qqsSpans",
-            initialValue = repository.defaultControlSpans,
+            initialValue = repository.qqsSpans.value,
             source = repository.qqsSpans,
         )
     private val landscapeOrder by
         hydrator.hydratedStateOf(
             traceName = "landscapeOrder",
-            initialValue = null,
+            initialValue = repository.landscapeOrder.value ?: (repository.defaultControls + defaultTileIds),
             source = repository.landscapeOrder,
         )
     private val qqsControlOrder by
         hydrator.hydratedStateOf(
             traceName = "qqsControlOrder",
-            initialValue = null,
+            initialValue = repository.qqsControlOrder.value ?: repository.defaultControls,
             source = repository.qqsControlOrder,
         )
     private val qqsTileOrder by
         hydrator.hydratedStateOf(
             traceName = "qqsTileOrder",
-            initialValue = null,
+            initialValue = repository.qqsTileOrder.value ?: defaultTileIds,
             source = repository.qqsTileOrder,
         )
     private val qsControlOrder by
         hydrator.hydratedStateOf(
             traceName = "qsControlOrder",
-            initialValue = null,
+            initialValue = repository.qsControlOrder.value ?: repository.defaultControls,
             source = repository.qsControlOrder,
         )
     private val qsTileOrder by
         hydrator.hydratedStateOf(
             traceName = "qsTileOrder",
-            initialValue = null,
+            initialValue = repository.qsTileOrder.value ?: defaultTileIds,
             source = repository.qsTileOrder,
         )
     private val landscapeControlOrder by
         hydrator.hydratedStateOf(
             traceName = "landscapeControlOrder",
-            initialValue = null,
+            initialValue = repository.landscapeControlOrder.value ?: repository.defaultControls,
             source = repository.landscapeControlOrder,
         )
     private val landscapeTileOrder by
         hydrator.hydratedStateOf(
             traceName = "landscapeTileOrder",
-            initialValue = null,
+            initialValue = repository.landscapeTileOrder.value ?: defaultTileIds,
             source = repository.landscapeTileOrder,
         )
     private val splitShadeControlOrder by
         hydrator.hydratedStateOf(
             traceName = "splitShadeControlOrder",
-            initialValue = null,
+            initialValue = repository.splitShadeControlOrder.value ?: repository.defaultControls,
             source = repository.splitShadeControlOrder,
         )
     private val splitShadeTileOrder by
         hydrator.hydratedStateOf(
             traceName = "splitShadeTileOrder",
-            initialValue = null,
+            initialValue = repository.splitShadeTileOrder.value ?: defaultTileIds,
             source = repository.splitShadeTileOrder,
         )
     private val qqsControlPositions by

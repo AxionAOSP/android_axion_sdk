@@ -35,12 +35,15 @@ import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 @SysUISingleton
@@ -52,41 +55,50 @@ constructor(
     @Application private val applicationScope: CoroutineScope,
     @Background private val backgroundDispatcher: CoroutineDispatcher,
 ) {
-    val qsOrder: Flow<List<String>?> = orderSetting(QS_ORDER)
-    val qqsOrder: Flow<List<String>?> = orderSetting(QQS_ORDER)
-    val landscapeOrder: Flow<List<String>?> = orderSetting(LANDSCAPE_ORDER)
-
-    val qqsControlOrder: Flow<List<String>?> = orderSetting(QQS_CONTROL_ORDER, DEFAULT_CONTROLS_STRING)
-    val qqsTileOrder: Flow<List<String>?> = orderSetting(QQS_TILE_ORDER)
-    val qsControlOrder: Flow<List<String>?> = orderSetting(QS_CONTROL_ORDER, DEFAULT_CONTROLS_STRING)
-    val qsTileOrder: Flow<List<String>?> = orderSetting(QS_TILE_ORDER)
-    val landscapeControlOrder: Flow<List<String>?> = orderSetting(LANDSCAPE_CONTROL_ORDER, DEFAULT_CONTROLS_STRING)
-    val landscapeTileOrder: Flow<List<String>?> = orderSetting(LANDSCAPE_TILE_ORDER)
-    val splitShadeControlOrder: Flow<List<String>?> = orderSetting(SPLIT_SHADE_CONTROL_ORDER, DEFAULT_CONTROLS_STRING)
-    val splitShadeTileOrder: Flow<List<String>?> = orderSetting(SPLIT_SHADE_TILE_ORDER)
-
-    val qsSpans: Flow<Map<String, AxQsSpan>> = spansSetting(QS_SPANS)
-    val qqsSpans: Flow<Map<String, AxQsSpan>> = spansSetting(QQS_SPANS)
-    val landscapeSpans: Flow<Map<String, AxQsSpan>> = spansSetting(LANDSCAPE_SPANS)
-    val splitShadeSpans: Flow<Map<String, AxQsSpan>> = spansSetting(SPLIT_SHADE_SPANS)
-
-    val qqsControlPositions: Flow<Map<String, AxQsGridPosition>> = positionsSetting(QQS_CONTROL_POSITIONS)
-    val qsControlPositions: Flow<Map<String, AxQsGridPosition>> = positionsSetting(QS_CONTROL_POSITIONS)
-    val landscapeControlPositions: Flow<Map<String, AxQsGridPosition>> = positionsSetting(LANDSCAPE_CONTROL_POSITIONS)
-    val splitShadeControlPositions: Flow<Map<String, AxQsGridPosition>> = positionsSetting(SPLIT_SHADE_CONTROL_POSITIONS)
-
-    val panelMode: Flow<AxQsPanelMode> =
-        intSetting(PANEL_MODE, AxQsPanelMode.TOGETHER.settingValue).map(AxQsPanelMode::fromSetting)
-    val quickPanelOnLeft: Flow<Boolean> = boolSetting(QUICK_PANEL_ON_LEFT, false)
-    val verticalSliderStyles: Flow<Map<AxQsVerticalSliderKey, AxQsVerticalSliderStyle>> =
-        verticalSliderStyleSettings()
-    val gridColumns: Flow<Map<AxQsGridLayout, Int>> =
-        gridSettings(AxQsGridLayout.entries, ::gridColumnsKey)
-    val gridRows: Flow<Map<AxQsGridLayout, Int>> =
-        gridSettings(AxQsGridLayout.entries.filter { it.section == AxQsGridSection.TILES }, ::gridRowsKey)
-    val tileLabels: Flow<Map<AxQsGridLayout, Boolean>> = tileLabelSettings()
-
     val defaultControlSpans: Map<String, AxQsSpan> = parseSpans(DEFAULT_SPANS_STRING)
+    val defaultControls: List<String> = DEFAULT_CONTROLS_LIST
+
+    val qsOrder: StateFlow<List<String>?> = orderSetting(QS_ORDER)
+    val qqsOrder: StateFlow<List<String>?> = orderSetting(QQS_ORDER)
+    val landscapeOrder: StateFlow<List<String>?> = orderSetting(LANDSCAPE_ORDER)
+
+    val qqsControlOrder: StateFlow<List<String>?> = orderSetting(QQS_CONTROL_ORDER, DEFAULT_CONTROLS_STRING)
+    val qqsTileOrder: StateFlow<List<String>?> = orderSetting(QQS_TILE_ORDER)
+    val qsControlOrder: StateFlow<List<String>?> = orderSetting(QS_CONTROL_ORDER, DEFAULT_CONTROLS_STRING)
+    val qsTileOrder: StateFlow<List<String>?> = orderSetting(QS_TILE_ORDER)
+    val landscapeControlOrder: StateFlow<List<String>?> = orderSetting(LANDSCAPE_CONTROL_ORDER, DEFAULT_CONTROLS_STRING)
+    val landscapeTileOrder: StateFlow<List<String>?> = orderSetting(LANDSCAPE_TILE_ORDER)
+    val splitShadeControlOrder: StateFlow<List<String>?> = orderSetting(SPLIT_SHADE_CONTROL_ORDER, DEFAULT_CONTROLS_STRING)
+    val splitShadeTileOrder: StateFlow<List<String>?> = orderSetting(SPLIT_SHADE_TILE_ORDER)
+
+    val qsSpans: StateFlow<Map<String, AxQsSpan>> = spansSetting(QS_SPANS)
+    val qqsSpans: StateFlow<Map<String, AxQsSpan>> = spansSetting(QQS_SPANS)
+    val landscapeSpans: StateFlow<Map<String, AxQsSpan>> = spansSetting(LANDSCAPE_SPANS)
+    val splitShadeSpans: StateFlow<Map<String, AxQsSpan>> = spansSetting(SPLIT_SHADE_SPANS)
+
+    val qqsControlPositions: StateFlow<Map<String, AxQsGridPosition>> = positionsSetting(QQS_CONTROL_POSITIONS)
+    val qsControlPositions: StateFlow<Map<String, AxQsGridPosition>> = positionsSetting(QS_CONTROL_POSITIONS)
+    val landscapeControlPositions: StateFlow<Map<String, AxQsGridPosition>> = positionsSetting(LANDSCAPE_CONTROL_POSITIONS)
+    val splitShadeControlPositions: StateFlow<Map<String, AxQsGridPosition>> = positionsSetting(SPLIT_SHADE_CONTROL_POSITIONS)
+
+    val panelMode: StateFlow<AxQsPanelMode> =
+        intSetting(PANEL_MODE, AxQsPanelMode.TOGETHER.settingValue)
+            .map(AxQsPanelMode::fromSetting)
+            .distinctUntilChanged()
+            .stateIn(applicationScope, SharingStarted.Eagerly, AxQsPanelMode.TOGETHER)
+
+    val quickPanelOnLeft: StateFlow<Boolean> = boolSetting(QUICK_PANEL_ON_LEFT, false)
+
+    val verticalSliderStyles: StateFlow<Map<AxQsVerticalSliderKey, AxQsVerticalSliderStyle>> =
+        verticalSliderStyleSettings()
+
+    val gridColumns: StateFlow<Map<AxQsGridLayout, Int>> =
+        gridSettings(AxQsGridLayout.entries, ::gridColumnsKey)
+
+    val gridRows: StateFlow<Map<AxQsGridLayout, Int>> =
+        gridSettings(AxQsGridLayout.entries.filter { it.section == AxQsGridSection.TILES }, ::gridRowsKey)
+
+    val tileLabels: StateFlow<Map<AxQsGridLayout, Boolean>> = tileLabelSettings()
 
     fun setOrder(order: List<String>, layout: AxQsLayout, section: AxQsGridSection) {
         putString(sectionOrderKey(layout, section), order.distinct())
@@ -161,14 +173,38 @@ constructor(
         }
     }
 
-    private fun orderSetting(key: String, default: String? = null): Flow<List<String>?> =
-        stringSetting(key, default).map(::parseOrder)
+    fun init() {
+        applicationScope.launch(backgroundDispatcher) {
+            val userId = userRepository.getSelectedUserInfo().id
+            CONTROL_ORDER_KEYS.forEach { key ->
+                secureSettings.getStringForUser(key, userId)
+            }
+            TILE_ORDER_KEYS.forEach { key ->
+                secureSettings.getStringForUser(key, userId)
+            }
+            SPANS_KEYS.values.forEach { key ->
+                secureSettings.getStringForUser(key, userId)
+            }
+        }
+    }
 
-    private fun spansSetting(key: String): Flow<Map<String, AxQsSpan>> =
-        stringSetting(key, DEFAULT_SPANS_STRING).map(::parseSpans)
+    private fun orderSetting(key: String, default: String? = null): StateFlow<List<String>?> =
+        stringSetting(key, default)
+            .map(::parseOrder)
+            .distinctUntilChanged()
+            .stateIn(applicationScope, SharingStarted.Eagerly, parseOrder(default))
 
-    private fun positionsSetting(key: String): Flow<Map<String, AxQsGridPosition>> =
-        stringSetting(key).map(::parsePositions)
+    private fun spansSetting(key: String): StateFlow<Map<String, AxQsSpan>> =
+        stringSetting(key, DEFAULT_SPANS_STRING)
+            .map(::parseSpans)
+            .distinctUntilChanged()
+            .stateIn(applicationScope, SharingStarted.Eagerly, defaultControlSpans)
+
+    private fun positionsSetting(key: String): StateFlow<Map<String, AxQsGridPosition>> =
+        stringSetting(key)
+            .map(::parsePositions)
+            .distinctUntilChanged()
+            .stateIn(applicationScope, SharingStarted.Eagerly, emptyMap())
 
     private fun stringSetting(key: String, default: String? = null): Flow<String?> {
         return userRepository.selectedUserInfo
@@ -178,7 +214,6 @@ constructor(
                     .onStart { emit(Unit) }
                     .map { secureSettings.getStringForUser(key, user.id) ?: default }
             }
-            .distinctUntilChanged()
             .flowOn(backgroundDispatcher)
     }
 
@@ -190,17 +225,19 @@ constructor(
                     .onStart { emit(Unit) }
                     .map { secureSettings.getIntForUser(key, default, user.id) }
             }
-            .distinctUntilChanged()
             .flowOn(backgroundDispatcher)
     }
 
-    private fun boolSetting(key: String, default: Boolean): Flow<Boolean> =
-        intSetting(key, default.toSetting()).map { it != 0 }
+    private fun boolSetting(key: String, default: Boolean): StateFlow<Boolean> =
+        intSetting(key, default.toSetting())
+            .map { it != 0 }
+            .distinctUntilChanged()
+            .stateIn(applicationScope, SharingStarted.Eagerly, default)
 
     private fun gridSettings(
         layouts: Iterable<AxQsGridLayout>,
         keyForLayout: (AxQsGridLayout) -> String,
-    ): Flow<Map<AxQsGridLayout, Int>> {
+    ): StateFlow<Map<AxQsGridLayout, Int>> {
         return userRepository.selectedUserInfo
             .flatMapLatest { user ->
                 combine(
@@ -221,9 +258,10 @@ constructor(
             }
             .distinctUntilChanged()
             .flowOn(backgroundDispatcher)
+            .stateIn(applicationScope, SharingStarted.Eagerly, emptyMap())
     }
 
-    private fun tileLabelSettings(): Flow<Map<AxQsGridLayout, Boolean>> {
+    private fun tileLabelSettings(): StateFlow<Map<AxQsGridLayout, Boolean>> {
         return userRepository.selectedUserInfo
             .flatMapLatest { user ->
                 combine(
@@ -244,10 +282,11 @@ constructor(
             }
             .distinctUntilChanged()
             .flowOn(backgroundDispatcher)
+            .stateIn(applicationScope, SharingStarted.Eagerly, emptyMap())
     }
 
     private fun verticalSliderStyleSettings():
-        Flow<Map<AxQsVerticalSliderKey, AxQsVerticalSliderStyle>> {
+        StateFlow<Map<AxQsVerticalSliderKey, AxQsVerticalSliderStyle>> {
         return userRepository.selectedUserInfo
             .flatMapLatest { user ->
                 combine(
@@ -271,6 +310,7 @@ constructor(
             }
             .distinctUntilChanged()
             .flowOn(backgroundDispatcher)
+            .stateIn(applicationScope, SharingStarted.Eagerly, emptyMap())
     }
 
     private fun putString(key: String, values: List<String>) {

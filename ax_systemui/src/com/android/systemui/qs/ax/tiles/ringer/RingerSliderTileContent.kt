@@ -98,9 +98,10 @@ fun RingerSliderTileContent(
             .pointerInput(viewModel.availableModes, viewModel.numModes) {
                 detectTapGestures { tapOffset ->
                     val sectionWidth = size.width / viewModel.numModes.toFloat()
+                    val maxModeIndex = (viewModel.numModes - 1).coerceAtLeast(0)
                     val tappedIndex = (tapOffset.x / sectionWidth)
                         .toInt()
-                        .coerceIn(0, viewModel.numModes - 1)
+                        .coerceIn(0, maxModeIndex)
                     viewModel.setRingerMode(viewModel.availableModes[tappedIndex].mode)
                 }
             }
@@ -123,19 +124,18 @@ fun RingerSliderTileContent(
         val availableHeight = (maxHeight - outerPadding * 2).coerceAtLeast(0.dp)
         val availableWidth = (controlWidth - outerPadding * 2).coerceAtLeast(0.dp)
         val slotSize = minOf(availableHeight, availableWidth)
-        val iconSize = (slotSize * 0.42f).coerceIn(20.dp, 28.dp)
-        val currentIndex = animatedPosition.value.roundToInt().coerceIn(0, viewModel.numModes - 1)
+        val iconSize = (slotSize * 0.42f).coerceIn(minOf(12.dp, slotSize), 28.dp)
+        val maxModeIndex = (viewModel.numModes - 1).coerceAtLeast(0)
+        val currentIndex = animatedPosition.value.roundToInt().coerceIn(0, maxModeIndex)
         val travelWidth = (controlWidth - outerPadding * 2 - slotSize).coerceAtLeast(0.dp)
         val step = if (viewModel.numModes > 1) travelWidth / (viewModel.numModes - 1) else 0.dp
         val indicatorOffset = outerPadding + step * animatedPosition.value
 
         val minCenter = outerPadding + slotSize / 2
-        val startDotCenter =
-            (controlWidth * 0.16f).coerceIn(outerPadding + RINGER_DOT_SIZE * 2, minCenter)
-        val endDotCenter = controlWidth - startDotCenter
+        val maxCenter = (controlWidth - outerPadding - slotSize / 2).coerceAtLeast(minCenter)
         val dotStep =
             if (viewModel.numModes > 1) {
-                (endDotCenter - startDotCenter) / (viewModel.numModes - 1)
+                (maxCenter - minCenter) / (viewModel.numModes - 1)
             } else {
                 0.dp
             }
@@ -148,7 +148,7 @@ fun RingerSliderTileContent(
                         animationSpec = tween(durationMillis = 200),
                         label = "RingerModeDotAlpha",
                     )
-                val dotOffset = startDotCenter + dotStep * index - RINGER_DOT_SIZE / 2
+                val dotOffset = (minCenter + dotStep * index - RINGER_DOT_SIZE / 2).coerceAtLeast(0.dp)
                 Box(
                     modifier =
                         Modifier.offset(x = dotOffset)

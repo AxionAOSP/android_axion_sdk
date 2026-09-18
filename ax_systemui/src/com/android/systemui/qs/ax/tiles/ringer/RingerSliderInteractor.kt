@@ -80,7 +80,7 @@ constructor(
         return idx.toFloat()
     }
 
-    fun snapToIndex(offset: Float): Int = offset.roundToInt().coerceIn(0, numModes - 1)
+    fun snapToIndex(offset: Float): Int = offset.roundToInt().coerceIn(0, (numModes - 1).coerceAtLeast(0))
 
     val ringerModeChanges: Flow<Int> =
         broadcastDispatcher
