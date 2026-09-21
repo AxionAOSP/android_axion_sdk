@@ -40,8 +40,23 @@ public final class AxNamedThreadAffinityFeature {
     public static final String COMM_WMSHELL_MAIN = "wmshell.main";
     public static final String COMM_WMSHELL_ANIM = "wmshell.anim";
     public static final String COMM_SPLASH_SCREEN = "ll.splashscreen";
+    public static final String COMM_ANDROID_ANIM = "android.anim";
+    public static final String COMM_ANDROID_DISPLAY = "android.display";
+    public static final String COMM_UI_THREAD_HELPER = "UiThreadHelper";
     public static final String KEYWORD_WMSHELL = "wmshell";
     public static final String KEYWORD_SPLASH = "splashscreen";
+    public static final String KEYWORD_THUMBNAIL = "TaskThumbnail";
+    public static final String KEYWORD_PRIMES = "Primes";
+    public static final String KEYWORD_LOWPOOL = "lowpool";
+    public static final String KEYWORD_HIGHPOOL = "highpool";
+    public static final String KEYWORD_LAUNCHER_BG = "LauncherBg";
+    public static final String KEYWORD_LAUNCHER_LOADER = "launcher-loader";
+    public static final String KEYWORD_SYSUI_BG = "SystemUIBg";
+    public static final String KEYWORD_SYS_UI_BG = "SysUiBg";
+    public static final String KEYWORD_SHADE_GC = "ShadeGC";
+    public static final String COMM_JIT_THREAD_POOL = "Jit thread pool";
+    public static final String COMM_HEAP_TASK_DAEMON = "HeapTaskDaemon";
+    public static final String PREFIX_BINDER = "binder:";
     public static final int PID_BUFFER_CAPACITY = 1024;
     public static final int COMM_BUFFER_SIZE = 32;
 
@@ -57,16 +72,23 @@ public final class AxNamedThreadAffinityFeature {
     public static final int INVALID_PID = 0;
 
     private final AxCpuClusterManager mClusterManager;
+    private final AxProcessTracker mProcessTracker;
     private final Map<String, Long> mDefaultCommRules = new HashMap<>();
     private final Map<Integer, Map<Integer, Long>> mPidThreadAffinityCache = new HashMap<>();
+    private final Map<Integer, Integer> mPidTaskCountMap = new HashMap<>();
 
-    public AxNamedThreadAffinityFeature(AxCpuClusterManager clusterManager) {
+    public AxNamedThreadAffinityFeature(AxCpuClusterManager clusterManager, AxProcessTracker processTracker) {
         this.mClusterManager = clusterManager;
+        this.mProcessTracker = processTracker;
         initDefaultRules();
     }
 
+    public AxNamedThreadAffinityFeature(AxCpuClusterManager clusterManager) {
+        this(clusterManager, null);
+    }
+
     private void initDefaultRules() {
-        mDefaultCommRules.put(COMM_RENDER_THREAD, mClusterManager.getBoostMask());
+        mDefaultCommRules.put(COMM_RENDER_THREAD, mClusterManager.getBigMask());
         mDefaultCommRules.put(COMM_CR_RENDERER_MAIN, mClusterManager.getBigMask());
         mDefaultCommRules.put(COMM_UNITY_MAIN, mClusterManager.getBoostMask());
         mDefaultCommRules.put(COMM_GL_THREAD, mClusterManager.getBoostMask());
@@ -75,18 +97,17 @@ public final class AxNamedThreadAffinityFeature {
         mDefaultCommRules.put(COMM_WMSHELL_MAIN, mClusterManager.getBoostMask());
         mDefaultCommRules.put(COMM_WMSHELL_ANIM, mClusterManager.getBoostMask());
         mDefaultCommRules.put(COMM_SPLASH_SCREEN, mClusterManager.getBoostMask());
+        mDefaultCommRules.put(COMM_ANDROID_ANIM, mClusterManager.getBoostMask());
+        mDefaultCommRules.put(COMM_ANDROID_DISPLAY, mClusterManager.getBoostMask());
+        mDefaultCommRules.put(COMM_UI_THREAD_HELPER, mClusterManager.getBoostMask());
+        mDefaultCommRules.put(COMM_JIT_THREAD_POOL, mClusterManager.getLittleMask());
+        mDefaultCommRules.put(COMM_HEAP_TASK_DAEMON, mClusterManager.getLittleMask());
+        mDefaultCommRules.put(KEYWORD_PRIMES, mClusterManager.getLittleMask());
+        mDefaultCommRules.put(KEYWORD_LOWPOOL, mClusterManager.getLittleMask());
     }
 
     public void applyNamedAffinityForPid(int pid) {
         if (pid <= INVALID_PID) {
-            return;
-        }
-
-        Map<Integer, Long> cachedRules = mPidThreadAffinityCache.get(pid);
-        if (cachedRules != null) {
-            for (Map.Entry<Integer, Long> entry : cachedRules.entrySet()) {
-                setThreadAffinity(entry.getKey(), entry.getValue());
-            }
             return;
         }
 
@@ -95,36 +116,114 @@ public final class AxNamedThreadAffinityFeature {
             return;
         }
 
+        int activeCount = 0;
+        while (activeCount < tids.length && tids[activeCount] > 0) {
+            activeCount++;
+        }
+
+        Map<Integer, Long> cachedRules = mPidThreadAffinityCache.get(pid);
+        Integer prevTaskCount = mPidTaskCountMap.get(pid);
+        boolean isSystemServer = (pid == Process.myPid());
+        if (cachedRules != null && cachedRules.size() > 1 && (!isSystemServer || (prevTaskCount != null && prevTaskCount == activeCount))) {
+            for (Map.Entry<Integer, Long> entry : cachedRules.entrySet()) {
+                setThreadAffinity(entry.getKey(), entry.getValue());
+            }
+            return;
+        }
+
         Map<Integer, Long> rulesToCache = new HashMap<>();
         for (int tid : tids) {
-            if (tid <= 0) break;
-            try {
-                if (tid == pid) {
-                    rulesToCache.put(tid, mClusterManager.getBoostMask());
-                    setThreadAffinity(tid, mClusterManager.getBoostMask());
+            if (tid <= 0) {
+                break;
+            }
+            if (tid == pid) {
+                boolean isUiSystemProc = (mProcessTracker != null
+                        && (pid == mProcessTracker.getLauncherPid() || pid == mProcessTracker.getSystemUiPid()));
+                long mask = isUiSystemProc ? mClusterManager.getBigMask() : mClusterManager.getBoostMask();
+                rulesToCache.put(tid, mask);
+                setThreadAffinity(tid, mask);
+                continue;
+            }
+            String comm = readComm(tid);
+            Long mask = resolveThreadMask(comm);
+            if (mask == null) {
+                if (isSystemServer && comm != null && comm.startsWith(PREFIX_BINDER)) {
+                    mask = mClusterManager.getBoostMask();
+                } else {
                     continue;
                 }
-                String comm = readComm(tid);
-                if (comm != null) {
-                    String trimmed = comm.trim();
-                    Long mask = mDefaultCommRules.get(trimmed);
-                    if (mask == null && (trimmed.contains(KEYWORD_WMSHELL) || trimmed.contains(KEYWORD_SPLASH))) {
-                        mask = mClusterManager.getBoostMask();
-                    }
-                    if (mask != null) {
-                        rulesToCache.put(tid, mask);
-                        setThreadAffinity(tid, mask);
-                    }
-                }
-            } catch (Exception ignored) {
+            }
+            rulesToCache.put(tid, mask);
+            setThreadAffinity(tid, mask);
+            if (COMM_ANDROID_ANIM.equals(comm)
+                    || COMM_ANDROID_DISPLAY.equals(comm)
+                    || COMM_UI_THREAD_HELPER.equals(comm)
+                    || comm.contains(KEYWORD_THUMBNAIL)) {
+                elevateThreadPriority(tid);
             }
         }
-        mPidThreadAffinityCache.put(pid, rulesToCache);
+        if (rulesToCache.size() > 1) {
+            mPidThreadAffinityCache.put(pid, rulesToCache);
+            mPidTaskCountMap.put(pid, activeCount);
+        }
 
-        AxPerfEnhancer.writeNode(PATH_NTA_PID, String.valueOf(pid));
-        for (Map.Entry<String, Long> entry : mDefaultCommRules.entrySet()) {
-            String rule = entry.getKey() + " 0x" + Long.toHexString(entry.getValue());
-            AxPerfEnhancer.writeNode(PATH_NTA_AFFINITY, rule);
+        if (cachedRules == null) {
+            AxPerfEnhancer.writeNode(PATH_NTA_PID, String.valueOf(pid));
+            for (Map.Entry<String, Long> entry : mDefaultCommRules.entrySet()) {
+                String rule = entry.getKey() + " 0x" + Long.toHexString(entry.getValue());
+                AxPerfEnhancer.writeNode(PATH_NTA_AFFINITY, rule);
+            }
+        }
+    }
+
+    private Long resolveThreadMask(String comm) {
+        if (comm == null || comm.isEmpty()) {
+            return null;
+        }
+        Long mask = mDefaultCommRules.get(comm);
+        if (mask != null) {
+            return mask;
+        }
+        if (comm.contains(KEYWORD_PRIMES)
+                || comm.contains(KEYWORD_LOWPOOL)
+                || comm.contains(KEYWORD_HIGHPOOL)
+                || comm.startsWith(KEYWORD_LAUNCHER_BG)
+                || comm.startsWith(KEYWORD_LAUNCHER_LOADER)
+                || comm.startsWith(KEYWORD_SYSUI_BG)
+                || comm.startsWith(KEYWORD_SYS_UI_BG)
+                || comm.equals(KEYWORD_SHADE_GC)) {
+            return mClusterManager.getLittleMask();
+        }
+        if (comm.contains(KEYWORD_WMSHELL)
+                || comm.contains(KEYWORD_SPLASH)
+                || comm.contains(KEYWORD_THUMBNAIL)) {
+            return mClusterManager.getBoostMask();
+        }
+        return null;
+    }
+
+    private void elevateThreadPriority(int tid) {
+        try {
+            Process.setThreadPriority(tid, Process.THREAD_PRIORITY_URGENT_DISPLAY);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    public void yieldPidToLittleCores(int pid) {
+        if (pid <= INVALID_PID) {
+            return;
+        }
+        long littleMask = mClusterManager.getLittleMask();
+        setThreadAffinity(pid, littleMask);
+        int[] tids = Process.getPids(PATH_PROC_PREFIX + pid + PATH_TASK_SUFFIX, new int[PID_BUFFER_CAPACITY]);
+        if (tids == null) {
+            return;
+        }
+        for (int tid : tids) {
+            if (tid <= 0) {
+                break;
+            }
+            setThreadAffinity(tid, littleMask);
         }
     }
 
@@ -133,6 +232,7 @@ public final class AxNamedThreadAffinityFeature {
             return;
         }
         mPidThreadAffinityCache.remove(pid);
+        mPidTaskCountMap.remove(pid);
         AxPerfEnhancer.writeNode(PATH_NTA_PID, String.valueOf(pid));
         AxPerfEnhancer.writeNode(PATH_NTA_RESET, VALUE_RESET_TRIGGER);
 

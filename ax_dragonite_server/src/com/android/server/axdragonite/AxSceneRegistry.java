@@ -25,21 +25,13 @@ import static com.android.internal.dragonite.AxDragoniteConstants.*;
  */
 public final class AxSceneRegistry {
 
-    public static final class ScenarioConfig {
-        public final int sceneId;
-        public final int defaultTimeoutMs;
-        public final int boostLevel;
-        public final boolean boostRenderThread;
-        public final boolean pinKswapd;
-
-        public ScenarioConfig(int id, int timeout, int level, boolean boostRt, boolean pinKs) {
-            this.sceneId = id;
-            this.defaultTimeoutMs = timeout;
-            this.boostLevel = level;
-            this.boostRenderThread = boostRt;
-            this.pinKswapd = pinKs;
-        }
-    }
+    public record ScenarioConfig(
+            int sceneId,
+            int defaultTimeoutMs,
+            int boostLevel,
+            boolean boostRenderThread,
+            boolean pinKswapd
+    ) {}
 
     private final SparseArray<ScenarioConfig> mScenarios = new SparseArray<>();
 
@@ -49,12 +41,12 @@ public final class AxSceneRegistry {
 
     private void initScenarios() {
         mScenarios.put(SCENE_AX_APP_START, new ScenarioConfig(SCENE_AX_APP_START, DURATION_AX_APP_START_MS, BOOST_LEVEL_HEAVY, true, true));
-        mScenarios.put(SCENE_FLING, new ScenarioConfig(SCENE_FLING, DURATION_FLING_MS, BOOST_LEVEL_LIGHT, true, false));
+        mScenarios.put(SCENE_FLING, new ScenarioConfig(SCENE_FLING, DURATION_FLING_MS, BOOST_LEVEL_HEAVY, true, false));
         mScenarios.put(SCENE_SCROLL, new ScenarioConfig(SCENE_SCROLL, DURATION_SCROLL_MS, BOOST_LEVEL_LIGHT, true, false));
         mScenarios.put(SCENE_DATA_LOADING, new ScenarioConfig(SCENE_DATA_LOADING, DURATION_DEFAULT_FALLBACK_MS, BOOST_LEVEL_LIGHT, true, false));
         mScenarios.put(SCENE_FOLDER_ANIMATION, new ScenarioConfig(SCENE_FOLDER_ANIMATION, DURATION_DEFAULT_FALLBACK_MS, BOOST_LEVEL_LIGHT, true, false));
         mScenarios.put(SCENE_DRAG_AND_DROP, new ScenarioConfig(SCENE_DRAG_AND_DROP, DURATION_DEFAULT_FALLBACK_MS, BOOST_LEVEL_LIGHT, true, false));
-        mScenarios.put(SCENE_AX_NOTIFICATION_EXPAND, new ScenarioConfig(SCENE_AX_NOTIFICATION_EXPAND, DURATION_AX_NOTIFICATION_EXPAND_MS, BOOST_LEVEL_LIGHT, true, false));
+        mScenarios.put(SCENE_AX_NOTIFICATION_EXPAND, new ScenarioConfig(SCENE_AX_NOTIFICATION_EXPAND, DURATION_AX_NOTIFICATION_EXPAND_MS, BOOST_LEVEL_HEAVY, true, false));
         mScenarios.put(SCENE_AX_UNLOCK, new ScenarioConfig(SCENE_AX_UNLOCK, DURATION_AX_UNLOCK_MS, BOOST_LEVEL_HEAVY, true, true));
         mScenarios.put(SCENE_AX_SYSTEMUI_ANIMATION, new ScenarioConfig(SCENE_AX_SYSTEMUI_ANIMATION, DURATION_AX_SYSTEMUI_ANIMATION_MS, BOOST_LEVEL_LIGHT, true, false));
         mScenarios.put(SCENE_APP_LAUNCH_COLD, new ScenarioConfig(SCENE_APP_LAUNCH_COLD, DURATION_APP_LAUNCH_COLD_MS, BOOST_LEVEL_HEAVY, true, true));
@@ -89,8 +81,11 @@ public final class AxSceneRegistry {
                 || sceneId == SCENE_APP_EXIT_ANIM
                 || sceneId == SCENE_RECENT_TASK_SLIDE
                 || sceneId == SCENE_QUICK_SWITCH_APP
+                || sceneId == SCENE_FLING
                 || sceneId == SCENE_FLING_LEVEL_1
-                || sceneId == SCENE_AX_APP_START;
+                || sceneId == SCENE_AX_APP_START
+                || sceneId == SCENE_AX_NOTIFICATION_EXPAND
+                || sceneId == SCENE_AX_UNLOCK;
     }
 
     public boolean isSurfaceFlingerBoostScene(int sceneId) {

@@ -138,9 +138,13 @@ public final class AxCpuClusterManager {
             mMidMask = mClusters.get(CLUSTER_INDEX_BIG).mask;
             mBigMask = mClusters.get(CLUSTER_INDEX_BIG).mask;
             mPrimeMask = mBigMask;
-            mBoostMask = mBigMask;
+            if (Long.bitCount(mBigMask) <= 2 && Long.bitCount(mLittleMask) >= 4) {
+                mBoostMask = mBigMask | getHighestNBits(mLittleMask, 2);
+            } else {
+                mBoostMask = mBigMask;
+            }
             mEfficiencyPoolMask = mLittleMask;
-            mPerformancePoolMask = mBigMask;
+            mPerformancePoolMask = mBoostMask;
         } else if (clusterCount == TRI_CLUSTER) {
             mLittleMask = mClusters.get(CLUSTER_INDEX_LITTLE).mask;
             mMidMask = mClusters.get(CLUSTER_INDEX_BIG).mask;
@@ -271,6 +275,19 @@ public final class AxCpuClusterManager {
         long result = 0;
         int found = 0;
         for (int i = 0; i < 64 && found < count; i++) {
+            if (((mask >> i) & 1L) != 0) {
+                result |= (1L << i);
+                found++;
+            }
+        }
+        return result != 0 ? result : mask;
+    }
+
+    public static long getHighestNBits(long mask, int count) {
+        if (count <= 0) return 0;
+        long result = 0;
+        int found = 0;
+        for (int i = 63; i >= 0 && found < count; i--) {
             if (((mask >> i) & 1L) != 0) {
                 result |= (1L << i);
                 found++;

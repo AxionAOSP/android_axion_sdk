@@ -22,7 +22,8 @@ import android.util.Slog;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -51,7 +52,7 @@ public final class AxFreezerController {
     public static final int FIRST_APP_UID = Process.FIRST_APPLICATION_UID;
 
     private boolean mIsCgroupV2 = false;
-    private final Set<Integer> mFrozenPids = new HashSet<>();
+    private final Map<Integer, String> mFrozenPidPaths = new HashMap<>();
     private final Object mLock = new Object();
 
     public AxFreezerController() {
@@ -87,12 +88,12 @@ public final class AxFreezerController {
             if (mIsCgroupV2) {
                 String path = String.format(PATH_FREEZER_V2_FMT, uid, pid);
                 if (writeNode(path, STATE_FROZEN_V2)) {
-                    mFrozenPids.add(pid);
+                    mFrozenPidPaths.put(pid, path);
                 }
             } else {
                 writeNode(PATH_FREEZER_V1_PROCS, String.valueOf(pid));
                 writeNode(PATH_FREEZER_V1_STATE, STATE_FROZEN_V1);
-                mFrozenPids.add(pid);
+                mFrozenPidPaths.put(pid, PATH_FREEZER_V1_STATE);
             }
         }
     }
@@ -104,21 +105,20 @@ public final class AxFreezerController {
 
         synchronized (mLock) {
             if (mIsCgroupV2) {
-                String path = String.format(PATH_FREEZER_V2_FMT, uid, pid);
+                String path = mFrozenPidPaths.remove(pid);
+                if (path == null) {
+                    path = String.format(PATH_FREEZER_V2_FMT, uid, pid);
+                }
                 writeNode(path, STATE_THAWED_V2);
             } else {
                 writeNode(PATH_FREEZER_V1_STATE, STATE_THAWED_V1);
+                mFrozenPidPaths.remove(pid);
             }
-            mFrozenPids.remove(pid);
         }
     }
 
     private void freezeAllBackgroundCgroupV2(Set<Integer> exemptPids) {
         File cgroupRoot = new File(PATH_FREEZER_V2_ROOT);
-        if (!cgroupRoot.exists() || !cgroupRoot.isDirectory()) {
-            return;
-        }
-
         File[] uidDirs = cgroupRoot.listFiles();
         if (uidDirs == null) {
             return;
@@ -128,64 +128,47 @@ public final class AxFreezerController {
             if (!uidDir.isDirectory() || !uidDir.getName().startsWith(PREFIX_UID)) {
                 continue;
             }
-            try {
-                int uid = Integer.parseInt(uidDir.getName().substring(PREFIX_UID.length()));
-                if (uid < FIRST_APP_UID) {
-                    continue;
-                }
-            } catch (Exception e) {
-                Slog.w(TAG, "Failed to parse uid: " + e.getMessage());
+            int uid = parseIdFromPrefix(uidDir.getName(), PREFIX_UID);
+            if (uid < FIRST_APP_UID) {
                 continue;
             }
+            freezeUidPidDirs(uidDir, exemptPids);
+        }
+    }
 
-            File[] pidDirs = uidDir.listFiles();
-            if (pidDirs == null) {
+    private void freezeUidPidDirs(File uidDir, Set<Integer> exemptPids) {
+        File[] pidDirs = uidDir.listFiles();
+        if (pidDirs == null) {
+            return;
+        }
+        for (File pidDir : pidDirs) {
+            if (!pidDir.isDirectory() || !pidDir.getName().startsWith(PREFIX_PID)) {
                 continue;
             }
-
-            for (File pidDir : pidDirs) {
-                if (!pidDir.isDirectory() || !pidDir.getName().startsWith(PREFIX_PID)) {
-                    continue;
-                }
-                File freezeFile = new File(pidDir, FILE_NAME_FREEZE);
-                if (freezeFile.exists()) {
-                    try {
-                        int pid = Integer.parseInt(pidDir.getName().substring(PREFIX_PID.length()));
-                        if (exemptPids != null && exemptPids.contains(pid)) {
-                            continue;
-                        }
-                        if (writeNode(freezeFile.getAbsolutePath(), STATE_FROZEN_V2)) {
-                            mFrozenPids.add(pid);
-                        }
-                    } catch (Exception e) {
-                        Slog.w(TAG, "Failed to freeze pid: " + e.getMessage());
-                    }
-                }
+            int pid = parseIdFromPrefix(pidDir.getName(), PREFIX_PID);
+            if (pid <= 0 || (exemptPids != null && exemptPids.contains(pid))) {
+                continue;
+            }
+            File freezeFile = new File(pidDir, FILE_NAME_FREEZE);
+            if (freezeFile.exists() && writeNode(freezeFile.getAbsolutePath(), STATE_FROZEN_V2)) {
+                mFrozenPidPaths.put(pid, freezeFile.getAbsolutePath());
             }
         }
     }
 
-    private void thawAllBackgroundCgroupV2() {
-        for (Integer pid : mFrozenPids) {
-            File cgroupRoot = new File(PATH_FREEZER_V2_ROOT);
-            File[] uidDirs = cgroupRoot.listFiles();
-            if (uidDirs == null) {
-                break;
-            }
-            for (File uidDir : uidDirs) {
-                if (!uidDir.getName().startsWith(PREFIX_UID)) {
-                    continue;
-                }
-                File pidDir = new File(uidDir, PREFIX_PID + pid);
-                if (pidDir.exists() && pidDir.isDirectory()) {
-                    File freezeFile = new File(pidDir, FILE_NAME_FREEZE);
-                    if (freezeFile.exists()) {
-                        writeNode(freezeFile.getAbsolutePath(), STATE_THAWED_V2);
-                    }
-                }
-            }
+    private int parseIdFromPrefix(String name, String prefix) {
+        try {
+            return Integer.parseInt(name.substring(prefix.length()));
+        } catch (NumberFormatException ignored) {
+            return -1;
         }
-        mFrozenPids.clear();
+    }
+
+    private void thawAllBackgroundCgroupV2() {
+        for (String path : mFrozenPidPaths.values()) {
+            writeNode(path, STATE_THAWED_V2);
+        }
+        mFrozenPidPaths.clear();
     }
 
     private static boolean writeNode(String path, String value) {

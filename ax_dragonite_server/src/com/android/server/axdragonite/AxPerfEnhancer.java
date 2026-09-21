@@ -48,6 +48,8 @@ public final class AxPerfEnhancer {
     public static final String PATH_STUNE_TOP_APP_BOOST = "/dev/stune/top-app/schedtune.boost";
     public static final String PATH_CPUCTL_TOP_APP_UCLAMP = "/dev/cpuctl/top-app/cpu.uclamp.min";
     public static final String PATH_CPUCTL_TOP_APP_LATENCY_SENSITIVE = "/dev/cpuctl/top-app/cpu.uclamp.latency_sensitive";
+    public static final String PATH_CPUCTL_SYSTEM_UCLAMP = "/dev/cpuctl/system/cpu.uclamp.min";
+    public static final String PATH_CPUCTL_SYSTEM_LATENCY_SENSITIVE = "/dev/cpuctl/system/cpu.uclamp.latency_sensitive";
     public static final String PATH_CPUCTL_TOP_APP_SHARES = "/dev/cpuctl/top-app/cpu.shares";
     public static final String PATH_CPUCTL_BG_SHARES = "/dev/cpuctl/background/cpu.shares";
     public static final String PATH_CPUCTL_TOP_APP_PROCS = "/dev/cpuctl/top-app/cgroup.procs";
@@ -89,8 +91,10 @@ public final class AxPerfEnhancer {
     public static final String VALUE_STUNE_LIGHT = "20";
     public static final String VALUE_STUNE_ZERO = "0";
 
-    public static final String VALUE_UCLAMP_HEAVY = "50";
-    public static final String VALUE_UCLAMP_LIGHT = "25";
+    public static final String VALUE_UCLAMP_TOP_APP_HEAVY = "60";
+    public static final String VALUE_UCLAMP_TOP_APP_LIGHT = "50";
+    public static final String VALUE_UCLAMP_SYSTEM_HEAVY = "40";
+    public static final String VALUE_UCLAMP_SYSTEM_LIGHT = "35";
     public static final String VALUE_UCLAMP_ZERO = "0";
 
     public static final String VALUE_LATENCY_SENSITIVE_ON = "1";
@@ -106,6 +110,7 @@ public final class AxPerfEnhancer {
 
     private final AxCpuClusterManager mClusterManager;
     private final Map<Integer, String> mOriginalMinFreqs = new HashMap<>();
+    private int mCurrentBoostLevel = AxDragoniteConstants.BOOST_LEVEL_NONE;
 
     private IBinder mSurfaceFlinger;
     private PowerManagerInternal mPowerManagerInternal;
@@ -133,22 +138,27 @@ public final class AxPerfEnhancer {
     }
 
     public void sendSurfaceFlingerBoost(boolean enable) {
-        getSurfaceFlinger();
-        if (mSurfaceFlinger == null) {
-            return;
+        if (enable) {
+            writeNode(PATH_DEV_CPUSET_SYSTEM_BACKGROUND, mClusterManager.getSystemBackgroundCpusString());
         }
-        Parcel data = Parcel.obtain();
-        Parcel reply = Parcel.obtain();
-        try {
-            data.writeInterfaceToken(DESCRIPTOR_SURFACE_COMPOSER);
-            data.writeInt(enable ? SF_BOOST_ENABLE : SF_BOOST_DISABLE);
-            data.writeInt(enable ? (int) mClusterManager.getBoostMask() : 0xff);
-            mSurfaceFlinger.transact(TRANSACTION_SF_BOOST, data, reply, 0);
-        } catch (Exception e) {
-            Slog.e(TAG, "sendSurfaceFlingerBoost failed: " + e.getMessage());
-        } finally {
-            data.recycle();
-            reply.recycle();
+        getSurfaceFlinger();
+        if (mSurfaceFlinger != null) {
+            Parcel data = Parcel.obtain();
+            Parcel reply = Parcel.obtain();
+            try {
+                data.writeInterfaceToken(DESCRIPTOR_SURFACE_COMPOSER);
+                data.writeInt(enable ? SF_BOOST_ENABLE : SF_BOOST_DISABLE);
+                data.writeInt(enable ? (int) mClusterManager.getBigMask() : 0xff);
+                mSurfaceFlinger.transact(TRANSACTION_SF_BOOST, data, reply, 0);
+            } catch (Exception e) {
+                Slog.e(TAG, "sendSurfaceFlingerBoost failed: " + e.getMessage());
+            } finally {
+                data.recycle();
+                reply.recycle();
+            }
+        }
+        if (!enable) {
+            writeNode(PATH_DEV_CPUSET_SYSTEM_BACKGROUND, mClusterManager.getRestrictedSystemBgCpusString());
         }
     }
 
@@ -173,12 +183,19 @@ public final class AxPerfEnhancer {
     }
 
     public void applyCpuBoost(int level) {
+        if (level <= AxDragoniteConstants.BOOST_LEVEL_NONE || level == mCurrentBoostLevel) {
+            return;
+        }
+        mCurrentBoostLevel = level;
+
         PowerManagerInternal pmi = getPowerManagerInternal();
         if (pmi != null) {
-            int duration = level > BOOST_LEVEL_HEAVY_THRESHOLD ? DURATION_HEAVY_MS : DURATION_LIGHT_MS;
+            int duration = level >= BOOST_LEVEL_HEAVY_THRESHOLD ? DURATION_HEAVY_MS : DURATION_LIGHT_MS;
             try {
                 pmi.setPowerBoost(Boost.INTERACTION, duration);
-                if (level > BOOST_LEVEL_HEAVY_THRESHOLD) {
+                pmi.setPowerBoost(Boost.DISPLAY_UPDATE_IMMINENT, duration);
+                pmi.setPowerMode(Mode.EXPENSIVE_RENDERING, true);
+                if (level >= BOOST_LEVEL_HEAVY_THRESHOLD) {
                     pmi.setPowerMode(Mode.LAUNCH, true);
                 }
             } catch (Throwable t) {
@@ -201,20 +218,28 @@ public final class AxPerfEnhancer {
             }
         }
 
-        writeNode(PATH_STUNE_TOP_APP_BOOST, level > BOOST_LEVEL_HEAVY_THRESHOLD ? VALUE_STUNE_HEAVY : VALUE_STUNE_LIGHT);
-        writeNode(PATH_CPUCTL_TOP_APP_UCLAMP, level > BOOST_LEVEL_HEAVY_THRESHOLD ? VALUE_UCLAMP_HEAVY : VALUE_UCLAMP_LIGHT);
+        writeNode(PATH_STUNE_TOP_APP_BOOST, level >= BOOST_LEVEL_HEAVY_THRESHOLD ? VALUE_STUNE_HEAVY : VALUE_STUNE_LIGHT);
+        writeNode(PATH_CPUCTL_TOP_APP_UCLAMP, level >= BOOST_LEVEL_HEAVY_THRESHOLD ? VALUE_UCLAMP_TOP_APP_HEAVY : VALUE_UCLAMP_TOP_APP_LIGHT);
         writeNode(PATH_CPUCTL_TOP_APP_LATENCY_SENSITIVE, VALUE_LATENCY_SENSITIVE_ON);
-        writeNode(PATH_CPUCTL_TOP_APP_SHARES, level > BOOST_LEVEL_HEAVY_THRESHOLD ? VALUE_SHARES_BOOST_HEAVY : VALUE_SHARES_BOOST_LIGHT);
-        if (level > BOOST_LEVEL_HEAVY_THRESHOLD) {
+        writeNode(PATH_CPUCTL_SYSTEM_UCLAMP, level >= BOOST_LEVEL_HEAVY_THRESHOLD ? VALUE_UCLAMP_SYSTEM_HEAVY : VALUE_UCLAMP_SYSTEM_LIGHT);
+        writeNode(PATH_CPUCTL_SYSTEM_LATENCY_SENSITIVE, VALUE_LATENCY_SENSITIVE_ON);
+        writeNode(PATH_CPUCTL_TOP_APP_SHARES, level >= BOOST_LEVEL_HEAVY_THRESHOLD ? VALUE_SHARES_BOOST_HEAVY : VALUE_SHARES_BOOST_LIGHT);
+        if (level >= BOOST_LEVEL_HEAVY_THRESHOLD) {
             writeNode(PATH_CPUCTL_BG_SHARES, VALUE_SHARES_BG_THROTTLE);
         }
         sendSurfaceFlingerBoost(true);
     }
 
     public void restoreCpuBoost() {
+        if (mCurrentBoostLevel == AxDragoniteConstants.BOOST_LEVEL_NONE) {
+            return;
+        }
+        mCurrentBoostLevel = AxDragoniteConstants.BOOST_LEVEL_NONE;
+
         PowerManagerInternal pmi = getPowerManagerInternal();
         if (pmi != null) {
             try {
+                pmi.setPowerMode(Mode.EXPENSIVE_RENDERING, false);
                 pmi.setPowerMode(Mode.LAUNCH, false);
             } catch (Throwable t) {
                 Slog.w(TAG, "PowerManagerInternal restore failed: " + t.getMessage());
@@ -229,6 +254,8 @@ public final class AxPerfEnhancer {
         writeNode(PATH_STUNE_TOP_APP_BOOST, VALUE_STUNE_ZERO);
         writeNode(PATH_CPUCTL_TOP_APP_UCLAMP, VALUE_UCLAMP_ZERO);
         writeNode(PATH_CPUCTL_TOP_APP_LATENCY_SENSITIVE, VALUE_LATENCY_SENSITIVE_OFF);
+        writeNode(PATH_CPUCTL_SYSTEM_UCLAMP, VALUE_UCLAMP_ZERO);
+        writeNode(PATH_CPUCTL_SYSTEM_LATENCY_SENSITIVE, VALUE_LATENCY_SENSITIVE_OFF);
         writeNode(PATH_CPUCTL_TOP_APP_SHARES, VALUE_SHARES_DEFAULT);
         writeNode(PATH_CPUCTL_BG_SHARES, VALUE_SHARES_DEFAULT);
         sendSurfaceFlingerBoost(false);
@@ -322,7 +349,7 @@ public final class AxPerfEnhancer {
             writeNode(AxDragoniteConstants.PATH_DEV_CPUCTL_RESTRICTED_LATENCY_SENSITIVE, VALUE_LATENCY_SENSITIVE_ON);
             writeNode(AxDragoniteConstants.PATH_DEV_CPUSET_RESTRICTED_CPUS, mClusterManager.getBoostCpusString());
         } else {
-            writeNode(AxDragoniteConstants.PATH_DEV_CPUCTL_ROOT_PROCS, String.valueOf(pid));
+            writeNode(PATH_CPUCTL_TOP_APP_PROCS, String.valueOf(pid));
             writeNode(AxDragoniteConstants.PATH_DEV_CPUCTL_RESTRICTED_UCLAMP_MIN, VALUE_UCLAMP_ZERO);
             writeNode(AxDragoniteConstants.PATH_DEV_CPUSET_RESTRICTED_CPUS, mClusterManager.getAllCpusString());
         }

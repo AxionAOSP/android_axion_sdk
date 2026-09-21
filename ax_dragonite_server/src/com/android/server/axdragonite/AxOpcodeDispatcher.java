@@ -72,18 +72,18 @@ public final class AxOpcodeDispatcher {
         if (tid <= 0) return;
 
         if (opcode == OPCODE_THREAD_BOOST || opcode == OPCODE_LEGACY_BOOST_SCHED) {
-            if (session != null) session.boostedTids.add(tid);
+            if (session != null) session.boostedTids().add(tid);
             Process.setThreadPriority(tid, Process.THREAD_PRIORITY_URGENT_DISPLAY);
             applyBoostSched(tid);
             return;
         }
         if (opcode == OPCODE_THREAD_AFFINITY || opcode == OPCODE_LEGACY_CPU_AFFINITY) {
-            if (session != null) session.boostedTids.add(tid);
+            if (session != null) session.boostedTids().add(tid);
             mBoostAdjuster.setThreadAffinity(tid, AFFINITY_TYPE_BIG_CORES);
             return;
         }
         if (opcode == OPCODE_PROCESS_AFFINITY || opcode == OPCODE_LEGACY_SCHED_PRIORITY) {
-            if (session != null) session.boostedTids.add(tid);
+            if (session != null) session.boostedTids().add(tid);
             mAffinityFeature.applyNamedAffinityForPid(tid);
             return;
         }

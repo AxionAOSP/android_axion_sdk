@@ -80,61 +80,63 @@ public final class AxDragonite {
 
     private AxDragonite() {
         mClusterManager = AxCpuClusterManager.getInstance();
+        mProcessTracker = new AxProcessTracker();
         mPerfEnhancer = new AxPerfEnhancer(mClusterManager);
-        mAffinityFeature = new AxNamedThreadAffinityFeature(mClusterManager);
+        mAffinityFeature = new AxNamedThreadAffinityFeature(mClusterManager, mProcessTracker);
         mUIBooster = new AxUIBooster(mPerfEnhancer, mClusterManager);
         mFrameInsertManager = new AxFrameInsertManager();
         mTraceManager = new AxPerfTraceManager();
         mBoostAdjuster = new AxBoostAdjuster(mPerfEnhancer, mClusterManager);
 
         mSceneRegistry = new AxSceneRegistry();
-        mProcessTracker = new AxProcessTracker();
         mSessionManager = new AxBoostSessionManager();
         mOpcodeDispatcher = new AxOpcodeDispatcher(mPerfEnhancer, mBoostAdjuster, mAffinityFeature);
 
         mWorkerThread = new HandlerThread(WORKER_THREAD_NAME, Process.THREAD_PRIORITY_FOREGROUND);
         mWorkerThread.start();
-        try {
-            Process.setThreadScheduler(mWorkerThread.getThreadId(), BOOST_SCHED_POLICY, BOOST_SCHED_PRIORITY);
-        } catch (Throwable ignored) {
-        }
         mWorkerHandler = new Handler(mWorkerThread.getLooper());
+        mWorkerHandler.post(() -> mAffinityFeature.applyNamedAffinityForPid(Process.myPid()));
 
         Slog.i(TAG, "AxDragonite subsystem initialized");
     }
 
+    public record BoostRequest(
+            int targetPid,
+            String packageName,
+            int durationMs,
+            int handle,
+            String params
+    ) {
+        public static BoostRequest parse(Bundle data, int defaultTimeout, int fallbackPid) {
+            if (data == null) {
+                return new BoostRequest(fallbackPid, null, defaultTimeout, INVALID_HANDLE, null);
+            }
+            int pid = data.getInt(KEY_TARGET_PID, data.getInt(KEY_PID, fallbackPid));
+            if (pid <= 0) {
+                pid = fallbackPid;
+            }
+            String pkg = data.getString(KEY_PACKAGE, data.getString(KEY_PACKAGE_NAME, data.getString(KEY_PKG, null)));
+            int reqDur = data.getInt(KEY_DURATION, INVALID_DURATION);
+            int duration = reqDur > 0 ? reqDur : defaultTimeout;
+            int handle = data.getInt(KEY_HANDLE, INVALID_HANDLE);
+            String params = data.getString(KEY_PARAMS);
+            return new BoostRequest(pid, pkg, duration, handle, params);
+        }
+    }
+
     public int sceneBoostAcquire(int sceneId, Bundle data) {
         AxSceneRegistry.ScenarioConfig config = mSceneRegistry.getConfig(sceneId);
+        BoostRequest request = BoostRequest.parse(data, config.defaultTimeoutMs(), Binder.getCallingPid());
 
-        int targetPid = INVALID_PID;
-        String pkgName = null;
-        int customDuration = config.defaultTimeoutMs;
-
-        if (data != null) {
-            targetPid = data.getInt(KEY_TARGET_PID, data.getInt(KEY_PID, INVALID_PID));
-            pkgName = data.getString(KEY_PACKAGE, data.getString(KEY_PACKAGE_NAME, data.getString(KEY_PKG, null)));
-            int reqDuration = data.getInt(KEY_DURATION, INVALID_DURATION);
-            if (reqDuration > 0) {
-                customDuration = reqDuration;
-            }
-            int reqHandle = data.getInt(KEY_HANDLE, INVALID_HANDLE);
-            if (reqHandle > 0 && mSessionManager.extendSession(reqHandle, customDuration)) {
-                return reqHandle;
-            }
-        }
-        if (targetPid <= 0) {
-            targetPid = Binder.getCallingPid();
+        if (request.handle() > 0 && mSessionManager.extendSession(request.handle(), request.durationMs())) {
+            return request.handle();
         }
 
-        customDuration = mSceneRegistry.resolveDuration(sceneId, pkgName, customDuration);
-
-        final int finalTargetPid = targetPid;
-        final String finalPkgName = pkgName;
-        final String params = data != null ? data.getString(KEY_PARAMS) : null;
+        int duration = mSceneRegistry.resolveDuration(sceneId, request.packageName(), request.durationMs());
 
         int handle = mSessionManager.startSession(
                 sceneId, Binder.getCallingPid(), Binder.getCallingUid(),
-                pkgName, targetPid, config, customDuration,
+                request.packageName(), request.targetPid(), config, duration,
                 this::sceneBoostRelease
         );
 
@@ -143,26 +145,27 @@ public final class AxDragonite {
             mFrameInsertManager.onSceneStart(sceneId);
 
             mSessionManager.forEachActiveSession(s -> {
-                if (s.handle == handle) {
-                    mOpcodeDispatcher.parseAndApply(params, s);
+                if (s.handle() == handle) {
+                    mOpcodeDispatcher.parseAndApply(request.params(), s);
                 }
             });
 
-            mPerfEnhancer.applyCpuBoost(config.boostLevel);
+            mPerfEnhancer.applyCpuBoost(config.boostLevel());
             if (mSceneRegistry.isTransitionScene(sceneId)) {
-                applyAnimationBoost(finalTargetPid, config.boostLevel, true);
-            } else if (config.boostRenderThread && finalTargetPid > 0) {
-                mUIBooster.boostProcess(finalTargetPid, config.boostLevel);
-                mAffinityFeature.applyNamedAffinityForPid(finalTargetPid);
+                applyAnimationBoost(sceneId, request.targetPid(), config.boostLevel(), true);
+                mPerfEnhancer.restrictBackgroundCpusets(true);
+            } else if (config.boostRenderThread() && request.targetPid() > 0) {
+                mUIBooster.boostProcess(request.targetPid(), config.boostLevel());
+                mAffinityFeature.applyNamedAffinityForPid(request.targetPid());
             }
 
-            if (config.pinKswapd) {
+            if (config.pinKswapd()) {
                 mPerfEnhancer.pinKswapd(mClusterManager.getLittleMask());
             }
 
             if (sceneId == SCENE_APP_LAUNCH_COLD || sceneId == SCENE_CAMERA_OPEN || sceneId == SCENE_AX_APP_START) {
                 Set<Integer> exempt = new HashSet<>();
-                if (finalTargetPid > 0) exempt.add(finalTargetPid);
+                if (request.targetPid() > 0) exempt.add(request.targetPid());
                 int lPid = mProcessTracker.getLauncherPid();
                 int sPid = mProcessTracker.getSystemUiPid();
                 if (lPid > 0) exempt.add(lPid);
@@ -176,7 +179,7 @@ public final class AxDragonite {
                 mPerfEnhancer.limitAxForeground(true);
             }
 
-            if (mSceneRegistry.isSurfaceFlingerBoostScene(sceneId) || config.boostRenderThread) {
+            if (mSceneRegistry.isSurfaceFlingerBoostScene(sceneId) || config.boostRenderThread()) {
                 mPerfEnhancer.sendSurfaceFlingerBoost(true);
             }
         });
@@ -191,32 +194,33 @@ public final class AxDragonite {
         }
 
         mWorkerHandler.post(() -> {
-            mTraceManager.reportSceneRelease(session.sceneId, handle);
-            mFrameInsertManager.onSceneEnd(session.sceneId);
+            mTraceManager.reportSceneRelease(session.sceneId(), handle);
+            mFrameInsertManager.onSceneEnd(session.sceneId());
 
-            if (mSceneRegistry.isTransitionScene(session.sceneId)) {
-                applyAnimationBoost(session.targetPid, session.config.boostLevel, false);
-            } else if (session.config.boostRenderThread && session.targetPid > 0) {
-                mUIBooster.restoreProcess(session.targetPid);
-                mAffinityFeature.resetAffinityForPid(session.targetPid);
+            if (mSceneRegistry.isTransitionScene(session.sceneId())) {
+                applyAnimationBoost(session.sceneId(), session.targetPid(), session.config().boostLevel(), false);
+                if (!mSessionManager.hasActiveTransitionScene(mSceneRegistry)) {
+                    mPerfEnhancer.restrictBackgroundCpusets(false);
+                }
+            } else if (session.config().boostRenderThread() && session.targetPid() > 0) {
+                mUIBooster.restoreProcess(session.targetPid());
             }
 
-            for (int tid : session.boostedTids) {
+            for (int tid : session.boostedTids()) {
                 try {
                     Process.setThreadScheduler(tid, Process.SCHED_OTHER, 0);
                     Process.setThreadPriority(tid, Process.THREAD_PRIORITY_DEFAULT);
-                    Process.setThreadAffinity(tid, (int) mClusterManager.getAllMask());
                 } catch (Throwable ignored) {
                 }
             }
 
-            if (session.sceneId == SCENE_APP_LAUNCH_COLD || session.sceneId == SCENE_CAMERA_OPEN || session.sceneId == SCENE_AX_APP_START) {
+            if (session.sceneId() == SCENE_APP_LAUNCH_COLD || session.sceneId() == SCENE_CAMERA_OPEN || session.sceneId() == SCENE_AX_APP_START) {
                 mBoostAdjuster.freezeBackgroundProcesses(false);
             }
 
-            if (session.sceneId == SCENE_GAME_MODE) {
+            if (session.sceneId() == SCENE_GAME_MODE) {
                 applyGameMode(false);
-            } else if (session.sceneId == SCENE_CAMERA_OPEN) {
+            } else if (session.sceneId() == SCENE_CAMERA_OPEN) {
                 mPerfEnhancer.limitAxForeground(false);
             }
 
@@ -245,42 +249,38 @@ public final class AxDragonite {
         sceneBoostAcquire(AxDragoniteConstants.SCENE_APP_EXIT_ANIM, bundle);
     }
 
-    private void applyAnimationBoost(int targetPid, int boostLevel, boolean enable) {
-        int sysUiPid = mProcessTracker.getSystemUiPid();
-        int launcherPid = mProcessTracker.getLauncherPid();
-
+    private void setProcessTransitionState(int pid, int boostLevel, boolean enable) {
+        if (pid <= 0) {
+            return;
+        }
         if (enable) {
-            if (targetPid > 0) {
-                mUIBooster.boostProcess(targetPid, boostLevel);
-                mAffinityFeature.applyNamedAffinityForPid(targetPid);
-                mBoostAdjuster.migrateToRestrictedCpuctl(targetPid, true);
-            }
-            if (sysUiPid > 0 && sysUiPid != targetPid) {
-                mUIBooster.boostProcess(sysUiPid, boostLevel);
-                mAffinityFeature.applyNamedAffinityForPid(sysUiPid);
-                mBoostAdjuster.migrateToRestrictedCpuctl(sysUiPid, true);
-            }
-            if (launcherPid > 0 && launcherPid != targetPid) {
-                mUIBooster.boostProcess(launcherPid, boostLevel);
-                mAffinityFeature.applyNamedAffinityForPid(launcherPid);
-                mBoostAdjuster.migrateToRestrictedCpuctl(launcherPid, true);
-            }
+            mUIBooster.boostProcess(pid, boostLevel);
+            mAffinityFeature.applyNamedAffinityForPid(pid);
         } else {
-            if (targetPid > 0) {
-                mUIBooster.restoreProcess(targetPid);
-                mAffinityFeature.resetAffinityForPid(targetPid);
-                mBoostAdjuster.migrateToRestrictedCpuctl(targetPid, false);
+            mUIBooster.restoreProcess(pid);
+        }
+    }
+
+    private void applyAnimationBoost(int sceneId, int targetPid, int boostLevel, boolean enable) {
+        setProcessTransitionState(targetPid, boostLevel, enable);
+        int sysUiPid = mProcessTracker.getSystemUiPid();
+        if (sysUiPid != targetPid) {
+            setProcessTransitionState(sysUiPid, boostLevel, enable);
+        }
+        int launcherPid = mProcessTracker.getLauncherPid();
+        if (launcherPid > 0 && launcherPid != targetPid) {
+            if (sceneId == SCENE_AX_NOTIFICATION_EXPAND || sceneId == SCENE_AX_SYSTEMUI_ANIMATION) {
+                if (enable) {
+                    mAffinityFeature.yieldPidToLittleCores(launcherPid);
+                } else {
+                    mAffinityFeature.applyNamedAffinityForPid(launcherPid);
+                }
+            } else {
+                setProcessTransitionState(launcherPid, boostLevel, enable);
             }
-            if (sysUiPid > 0 && sysUiPid != targetPid) {
-                mUIBooster.restoreProcess(sysUiPid);
-                mAffinityFeature.resetAffinityForPid(sysUiPid);
-                mBoostAdjuster.migrateToRestrictedCpuctl(sysUiPid, false);
-            }
-            if (launcherPid > 0 && launcherPid != targetPid) {
-                mUIBooster.restoreProcess(launcherPid);
-                mAffinityFeature.resetAffinityForPid(launcherPid);
-                mBoostAdjuster.migrateToRestrictedCpuctl(launcherPid, false);
-            }
+        }
+        if (enable) {
+            mAffinityFeature.applyNamedAffinityForPid(Process.myPid());
         }
     }
 
@@ -345,8 +345,8 @@ public final class AxDragonite {
             mAffinityFeature.applyNamedAffinityForPid(pid);
 
             mSessionManager.forEachActiveSession(s -> {
-                if (mSceneRegistry.isTransitionScene(s.sceneId) && pkg != null && pkg.equals(s.packageName)) {
-                    mUIBooster.boostProcess(pid, s.config.boostLevel);
+                if (mSceneRegistry.isTransitionScene(s.sceneId()) && pkg != null && pkg.equals(s.packageName())) {
+                    mUIBooster.boostProcess(pid, s.config().boostLevel());
                 }
             });
         });
@@ -356,6 +356,7 @@ public final class AxDragonite {
         mWorkerHandler.post(() -> {
             mProcessTracker.onProcessKilled(pid);
             mBoostAdjuster.onProcessKilled(pid, pkg);
+            mUIBooster.onProcessKilled(pid);
             mUIBooster.restoreProcess(pid);
             mAffinityFeature.resetAffinityForPid(pid);
         });

@@ -101,7 +101,7 @@ public final class AxUIBooster {
             } else {
                 Process.setThreadPriority(tid, Process.THREAD_PRIORITY_TOP_APP_BOOST);
             }
-            Process.setThreadAffinity(tid, (int) mClusterManager.getBoostMask());
+            Process.setThreadAffinity(tid, (int) mClusterManager.getBigMask());
         } catch (Throwable t) {
             Slog.w(TAG, "Failed to boost thread " + tid + ": " + t.getMessage());
         }
@@ -115,7 +115,6 @@ public final class AxUIBooster {
         int currentCount = mBoostPidCountMap.getOrDefault(pid, MIN_REF_COUNT) - 1;
         if (currentCount <= MIN_REF_COUNT) {
             mBoostPidCountMap.remove(pid);
-            mHwuiThreadCache.remove(pid);
             mPerfEnhancer.setTaskBoost(pid, BOOST_LEVEL_RESTORE);
 
             List<Integer> hwuiTids = findHwuiThreadTids(pid);
@@ -128,6 +127,14 @@ public final class AxUIBooster {
         }
     }
 
+    public synchronized void onProcessKilled(int pid) {
+        if (pid <= INVALID_PID) {
+            return;
+        }
+        mHwuiThreadCache.remove(pid);
+        mBoostPidCountMap.remove(pid);
+    }
+
     public synchronized void restoreThread(int tid) {
         if (tid <= INVALID_PID) {
             return;
@@ -138,7 +145,6 @@ public final class AxUIBooster {
             try {
                 Process.setThreadScheduler(tid, Process.SCHED_OTHER, SCHED_DEFAULT_PRIORITY);
                 Process.setThreadPriority(tid, origPrio);
-                Process.setThreadAffinity(tid, (int) mClusterManager.getAllMask());
             } catch (Throwable t) {
                 Slog.w(TAG, "Failed to restore thread " + tid + ": " + t.getMessage());
             }
@@ -147,7 +153,7 @@ public final class AxUIBooster {
 
     private List<Integer> findHwuiThreadTids(int pid) {
         List<Integer> cached = mHwuiThreadCache.get(pid);
-        if (cached != null) {
+        if (cached != null && !cached.isEmpty()) {
             return cached;
         }
 
@@ -156,29 +162,51 @@ public final class AxUIBooster {
         if (tids == null) {
             return result;
         }
+
         for (int tid : tids) {
-            if (tid <= 0) break;
-            File commFile = new File(PATH_PROC_PREFIX + pid + PATH_TASK_SUFFIX + "/" + tid + "/" + FILE_NAME_COMM);
-            if (commFile.exists()) {
-                try (FileInputStream fis = new FileInputStream(commFile)) {
-                    byte[] buf = new byte[COMM_BUFFER_SIZE];
-                    int len = fis.read(buf);
-                    if (len > 0) {
-                        if (buf[len - 1] == '\n') len--;
-                        String trimmed = new String(buf, 0, len, StandardCharsets.UTF_8).trim();
-                        if (trimmed.equals(THREAD_NAME_RENDER_THREAD)
-                                || trimmed.startsWith(PREFIX_HWUI_TASK)
-                                || trimmed.startsWith(PREFIX_HWUI_TASK_UPPER)
-                                || trimmed.contains(KEYWORD_WMSHELL)
-                                || trimmed.contains(KEYWORD_SPLASH)) {
-                            result.add(tid);
-                        }
-                    }
-                } catch (Exception ignored) {
-                }
+            if (tid <= 0) {
+                break;
+            }
+            String comm = readThreadComm(pid, tid);
+            if (isHwuiOrAnimThread(comm)) {
+                result.add(tid);
             }
         }
-        mHwuiThreadCache.put(pid, result);
+
+        if (!result.isEmpty()) {
+            mHwuiThreadCache.put(pid, result);
+        }
         return result;
+    }
+
+    private boolean isHwuiOrAnimThread(String comm) {
+        if (comm == null || comm.isEmpty()) {
+            return false;
+        }
+        return comm.equals(THREAD_NAME_RENDER_THREAD)
+                || comm.startsWith(PREFIX_HWUI_TASK)
+                || comm.startsWith(PREFIX_HWUI_TASK_UPPER)
+                || comm.contains(KEYWORD_WMSHELL)
+                || comm.contains(KEYWORD_SPLASH);
+    }
+
+    private String readThreadComm(int pid, int tid) {
+        File commFile = new File(PATH_PROC_PREFIX + pid + PATH_TASK_SUFFIX + "/" + tid + "/" + FILE_NAME_COMM);
+        if (!commFile.exists()) {
+            return null;
+        }
+        try (FileInputStream fis = new FileInputStream(commFile)) {
+            byte[] buf = new byte[COMM_BUFFER_SIZE];
+            int len = fis.read(buf);
+            if (len <= 0) {
+                return null;
+            }
+            if (buf[len - 1] == '\n') {
+                len--;
+            }
+            return new String(buf, 0, len, StandardCharsets.UTF_8).trim();
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 }

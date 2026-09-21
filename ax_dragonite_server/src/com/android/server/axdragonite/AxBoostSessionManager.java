@@ -35,30 +35,22 @@ import java.util.function.Consumer;
  */
 public final class AxBoostSessionManager {
 
-    public static final class BoostSession {
-        public final int handle;
-        public final int sceneId;
-        public final int callingPid;
-        public final int callingUid;
-        public final String packageName;
-        public final long acquireTimeMs;
-        public final int targetPid;
-        public final AxSceneRegistry.ScenarioConfig config;
-        public final Runnable timeoutRunnable;
-        public final Set<Integer> boostedTids = new HashSet<>();
-
+    public record BoostSession(
+            int handle,
+            int sceneId,
+            int callingPid,
+            int callingUid,
+            String packageName,
+            long acquireTimeMs,
+            int targetPid,
+            AxSceneRegistry.ScenarioConfig config,
+            Runnable timeoutRunnable,
+            Set<Integer> boostedTids
+    ) {
         public BoostSession(int handle, int sceneId, int callingPid, int callingUid,
                             String pkg, long acquireTime, int targetPid,
                             AxSceneRegistry.ScenarioConfig config, Runnable timeoutRunnable) {
-            this.handle = handle;
-            this.sceneId = sceneId;
-            this.callingPid = callingPid;
-            this.callingUid = callingUid;
-            this.packageName = pkg;
-            this.acquireTimeMs = acquireTime;
-            this.targetPid = targetPid;
-            this.config = config;
-            this.timeoutRunnable = timeoutRunnable;
+            this(handle, sceneId, callingPid, callingUid, pkg, acquireTime, targetPid, config, timeoutRunnable, new HashSet<>());
         }
     }
 
@@ -70,12 +62,8 @@ public final class AxBoostSessionManager {
     private final Handler mTimerHandler;
 
     public AxBoostSessionManager() {
-        mTimerThread = new HandlerThread(TIMER_THREAD_NAME, Process.THREAD_PRIORITY_URGENT_DISPLAY);
+        mTimerThread = new HandlerThread(TIMER_THREAD_NAME, Process.THREAD_PRIORITY_FOREGROUND);
         mTimerThread.start();
-        try {
-            Process.setThreadScheduler(mTimerThread.getThreadId(), BOOST_SCHED_POLICY, BOOST_SCHED_PRIORITY);
-        } catch (Throwable ignored) {
-        }
         mTimerHandler = new Handler(mTimerThread.getLooper());
     }
 
@@ -86,8 +74,8 @@ public final class AxBoostSessionManager {
         synchronized (mLock) {
             BoostSession existing = mActiveSessions.get(handle);
             if (existing != null) {
-                mTimerHandler.removeCallbacks(existing.timeoutRunnable);
-                mTimerHandler.postDelayed(existing.timeoutRunnable, durationMs);
+                mTimerHandler.removeCallbacks(existing.timeoutRunnable());
+                mTimerHandler.postDelayed(existing.timeoutRunnable(), durationMs);
                 return true;
             }
         }
@@ -120,7 +108,7 @@ public final class AxBoostSessionManager {
             }
         }
         if (session != null) {
-            mTimerHandler.removeCallbacks(session.timeoutRunnable);
+            mTimerHandler.removeCallbacks(session.timeoutRunnable());
         }
         return session;
     }
@@ -129,7 +117,7 @@ public final class AxBoostSessionManager {
         synchronized (mLock) {
             int maxLevel = BOOST_LEVEL_NONE;
             for (int i = 0; i < mActiveSessions.size(); i++) {
-                int level = mActiveSessions.valueAt(i).config.boostLevel;
+                int level = mActiveSessions.valueAt(i).config().boostLevel();
                 if (level > maxLevel) {
                     maxLevel = level;
                 }
@@ -141,7 +129,7 @@ public final class AxBoostSessionManager {
     public boolean hasActivePinKswapd() {
         synchronized (mLock) {
             for (int i = 0; i < mActiveSessions.size(); i++) {
-                if (mActiveSessions.valueAt(i).config.pinKswapd) {
+                if (mActiveSessions.valueAt(i).config().pinKswapd()) {
                     return true;
                 }
             }
@@ -153,7 +141,19 @@ public final class AxBoostSessionManager {
         synchronized (mLock) {
             for (int i = 0; i < mActiveSessions.size(); i++) {
                 BoostSession session = mActiveSessions.valueAt(i);
-                if (sceneRegistry.isSurfaceFlingerBoostScene(session.sceneId) || session.config.boostRenderThread) {
+                if (sceneRegistry.isSurfaceFlingerBoostScene(session.sceneId()) || session.config().boostRenderThread()) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    public boolean hasActiveTransitionScene(AxSceneRegistry sceneRegistry) {
+        synchronized (mLock) {
+            for (int i = 0; i < mActiveSessions.size(); i++) {
+                BoostSession session = mActiveSessions.valueAt(i);
+                if (sceneRegistry.isTransitionScene(session.sceneId())) {
                     return true;
                 }
             }
@@ -180,7 +180,7 @@ public final class AxBoostSessionManager {
             pw.println("  Active Boost Sessions: " + mActiveSessions.size());
             for (int i = 0; i < mActiveSessions.size(); i++) {
                 BoostSession s = mActiveSessions.valueAt(i);
-                pw.println("    Handle=" + s.handle + " Scene=" + s.sceneId + " PID=" + s.targetPid + " Pkg=" + s.packageName);
+                pw.println("    Handle=" + s.handle() + " Scene=" + s.sceneId() + " PID=" + s.targetPid() + " Pkg=" + s.packageName());
             }
         }
     }
