@@ -143,8 +143,13 @@ constructor(
         setZoom(WallpaperZoomOwner.NOTIFICATION_SHADE, zoomOut, "notificationShade")
     }
 
+    fun setLauncherWallpaperZoom(ownerId: Int, zoomOut: Float) {
+        val owner = WallpaperZoomOwner.fromId(ownerId)
+        setZoom(owner, zoomOut, "aidl:$ownerId")
+    }
+
     fun setLauncherWallpaperZoom(zoomOut: Float) {
-        setZoom(WallpaperZoomOwner.LAUNCHER_ANIM, zoomOut, "launcherAnim")
+        setZoom(WallpaperZoomOwner.APP_ZOOM, zoomOut, "launcherAppZoom")
     }
 
     fun setZoom(owner: WallpaperZoomOwner, zoomOut: Float, reason: String = "") {
@@ -198,18 +203,21 @@ constructor(
     }
 
     fun clearLauncherZoom() {
-        clearZoom(WallpaperZoomOwner.LAUNCHER_ANIM, "clearLauncher")
+        clearZoom(WallpaperZoomOwner.APP_ZOOM, "clearAppZoom")
+        clearZoom(WallpaperZoomOwner.BASE_DEPTH, "clearBaseDepth")
     }
 
     fun setLauncherZoomEnabled(enabled: Boolean) {
         if (launcherZoomEnabled == enabled) return
         launcherZoomEnabled = enabled
-        val current = ownerStates[WallpaperZoomOwner.LAUNCHER_ANIM] ?: OwnerState()
-        ownerStates[WallpaperZoomOwner.LAUNCHER_ANIM] = current.copy(
-            enabled = enabled,
-            zoom = if (!enabled) WallpaperZoomOwner.LAUNCHER_ANIM.restingZoom else current.zoom,
-            reason = if (!enabled) "launcherZoomDisabled" else current.reason,
-        )
+        for (owner in listOf(WallpaperZoomOwner.APP_ZOOM, WallpaperZoomOwner.BASE_DEPTH)) {
+            val current = ownerStates[owner] ?: continue
+            ownerStates[owner] = current.copy(
+                enabled = enabled,
+                zoom = if (!enabled) owner.restingZoom else current.zoom,
+                reason = if (!enabled) "launcherZoomDisabled" else current.reason,
+            )
+        }
         updateZoom("launcherZoomEnabled=$enabled")
     }
 
@@ -257,54 +265,33 @@ constructor(
         val now = SystemClock.uptimeMillis()
         reconcileStuckOwners(now)
 
-        val effectiveWmZoom: Float
-        val activeOwner: WallpaperZoomOwner?
-
-        if (wallpaperZoomDisabled) {
-            effectiveWmZoom = 1.0f
-            activeOwner = null
-        } else if (launcherZoomEnabled) {
-            val launcherProgress = ownerStates[WallpaperZoomOwner.LAUNCHER_ANIM]?.takeIf { it.enabled }?.zoom ?: 0f
-            val launcherWmZoom = (1.0f - launcherProgress).coerceIn(0f, 1f)
-            val keyguardWakeZoom = ownerStates[WallpaperZoomOwner.KEYGUARD_WAKE_ANIM]?.takeIf { it.enabled }?.zoom ?: 1.0f
-            val shadeZoom = ownerStates[WallpaperZoomOwner.NOTIFICATION_SHADE]?.takeIf { it.enabled }?.zoom ?: 0f
-            val unfoldZoom = ownerStates[WallpaperZoomOwner.UNFOLD]?.takeIf { it.enabled }?.zoom ?: 0f
-            val maxOverlayZoom = maxOf(shadeZoom, unfoldZoom)
-
-            val baseZoom = if (keyguardWakeZoom < 1.0f && launcherProgress == 0f) {
-                keyguardWakeZoom
-            } else {
-                launcherWmZoom
-            }
-
-            effectiveWmZoom = if (maxOverlayZoom > 0f) {
-                maxOf(baseZoom, maxOverlayZoom)
-            } else {
-                baseZoom
-            }
-            activeOwner = when {
-                shadeZoom > 0f -> WallpaperZoomOwner.NOTIFICATION_SHADE
-                unfoldZoom > 0f -> WallpaperZoomOwner.UNFOLD
-                keyguardWakeZoom < 1.0f && launcherProgress == 0f -> WallpaperZoomOwner.KEYGUARD_WAKE_ANIM
-                launcherProgress > 0f -> WallpaperZoomOwner.LAUNCHER_ANIM
-                else -> null
-            }
+        val activeOwner = if (wallpaperZoomDisabled) {
+            null
         } else {
-            val keyguardWakeZoom = ownerStates[WallpaperZoomOwner.KEYGUARD_WAKE_ANIM]?.takeIf { it.enabled }?.zoom ?: 1.0f
-            val shadeZoom = ownerStates[WallpaperZoomOwner.NOTIFICATION_SHADE]?.takeIf { it.enabled }?.zoom ?: 0f
-            val unfoldZoom = ownerStates[WallpaperZoomOwner.UNFOLD]?.takeIf { it.enabled }?.zoom ?: 0f
+            WallpaperZoomOwner.values()
+                .sortedByDescending { it.priority }
+                .firstOrNull { owner ->
+                    val state = ownerStates[owner] ?: return@firstOrNull false
+                    if (!state.enabled) return@firstOrNull false
+                    if (owner == WallpaperZoomOwner.APP_ZOOM || owner == WallpaperZoomOwner.BASE_DEPTH) {
+                        if (!launcherZoomEnabled) return@firstOrNull false
+                    }
+                    state.zoom != owner.restingZoom
+                }
+        }
 
-            effectiveWmZoom = if (shadeZoom > 0f || unfoldZoom > 0f) {
-                maxOf(keyguardWakeZoom, maxOf(shadeZoom, unfoldZoom))
-            } else {
-                keyguardWakeZoom
+        val effectiveWmZoom = if (wallpaperZoomDisabled || activeOwner == null) {
+            1.0f
+        } else when (activeOwner) {
+            WallpaperZoomOwner.APP_ZOOM -> {
+                val progress = ownerStates[WallpaperZoomOwner.APP_ZOOM]?.zoom ?: 0f
+                (1.0f - progress).coerceIn(0f, 1f)
             }
-            activeOwner = when {
-                shadeZoom > 0f -> WallpaperZoomOwner.NOTIFICATION_SHADE
-                unfoldZoom > 0f -> WallpaperZoomOwner.UNFOLD
-                keyguardWakeZoom < 1.0f -> WallpaperZoomOwner.KEYGUARD_WAKE_ANIM
-                else -> null
+            WallpaperZoomOwner.BASE_DEPTH -> {
+                val depth = ownerStates[WallpaperZoomOwner.BASE_DEPTH]?.zoom ?: 0f
+                (1.0f - depth).coerceIn(0f, 1f)
             }
+            else -> ownerStates[activeOwner]?.zoom ?: 1.0f
         }
 
         val previousEffectiveZoom = currentEffectiveZoom

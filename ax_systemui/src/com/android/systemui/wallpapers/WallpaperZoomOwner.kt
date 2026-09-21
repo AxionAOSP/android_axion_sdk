@@ -17,47 +17,71 @@
 package com.android.systemui.wallpapers
 
 enum class WallpaperZoomOwner(
+    val id: Int,
     val priority: Int,
     val description: String,
     val restingZoom: Float = 0f,
     val maxHoldingDurationMs: Long = DEFAULT_MAX_HOLDING_DURATION_MS,
 ) {
+    SYSTEM_OVERRIDE(
+        id = 0,
+        priority = 100,
+        description = "System Override",
+        restingZoom = 0.0f,
+        maxHoldingDurationMs = 10_000L,
+    ),
+
     KEYGUARD_WAKE_ANIM(
-        priority = 50,
-        description = "Keyguard Wake Reveal",
+        id = 1,
+        priority = 80,
+        description = "Keyguard Wake / Unlock",
         restingZoom = 1.0f,
         maxHoldingDurationMs = 3_000L,
     ),
 
     NOTIFICATION_SHADE(
-        priority = 40,
+        id = 2,
+        priority = 60,
         description = "Notification Shade",
         restingZoom = 0.0f,
         maxHoldingDurationMs = 60_000L,
     ),
 
     UNFOLD(
-        priority = 30,
+        id = 3,
+        priority = 50,
         description = "Unfold Transition",
         restingZoom = 0.0f,
         maxHoldingDurationMs = 5_000L,
     ),
 
-    LAUNCHER_ANIM(
-        priority = 20,
-        description = "Launcher App/Home Anim",
+    APP_ZOOM(
+        id = 4,
+        priority = 30,
+        description = "Launcher App Open / Close",
         restingZoom = 0.0f,
         maxHoldingDurationMs = 5_000L,
     ),
 
-    SYSTEM_OVERRIDE(
-        priority = 100,
-        description = "System Override",
+    BASE_DEPTH(
+        id = 5,
+        priority = 10,
+        description = "Launcher Base Depth",
         restingZoom = 0.0f,
         maxHoldingDurationMs = 10_000L,
     );
 
     companion object {
         const val DEFAULT_MAX_HOLDING_DURATION_MS = 10_000L
+
+        fun fromId(id: Int): WallpaperZoomOwner = when (id) {
+            0 -> SYSTEM_OVERRIDE
+            1 -> KEYGUARD_WAKE_ANIM
+            2 -> NOTIFICATION_SHADE
+            3 -> UNFOLD
+            4 -> APP_ZOOM
+            5 -> BASE_DEPTH
+            else -> APP_ZOOM
+        }
     }
 }
