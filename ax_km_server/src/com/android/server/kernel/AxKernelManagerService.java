@@ -227,9 +227,19 @@ public final class AxKernelManagerService {
             pmi.clearNodeCeiling(control.path);
             return;
         }
-        long maxCeiling = isMaxFreq(control.type) ? value : 0L;
-        long minFloor = isMinFreq(control.type) ? value : 0L;
+        long rawValue = parseRawValue(control, value);
+        long maxCeiling = isMaxFreq(control.type) ? rawValue : 0L;
+        long minFloor = isMinFreq(control.type) ? rawValue : 0L;
         pmi.setNodeCeiling(control.path, maxCeiling, minFloor);
+    }
+
+    private static long parseRawValue(KernelControlNode control, int value) {
+        String fileVal = control.toFileValue(value);
+        try {
+            return Long.parseLong(fileVal);
+        } catch (NumberFormatException e) {
+            return value;
+        }
     }
 
     private static boolean isMaxFreq(int type) {

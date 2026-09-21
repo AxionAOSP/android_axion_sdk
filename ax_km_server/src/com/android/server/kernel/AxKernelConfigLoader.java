@@ -219,8 +219,10 @@ final class AxKernelConfigLoader {
         if (freqs.length > 0 && canUse(minPath) && canUse(maxPath)) {
             int defMin = AxKernelUtils.readSysfsInt(minPath, freqs[0]);
             int defMax = AxKernelUtils.readSysfsInt(maxPath, freqs[freqs.length - 1]);
-            controls.add(new KernelControlNode(minId, group, AxKernelControl.TYPE_CPU_MIN_FREQ, minPath, defMin, freqs));
-            controls.add(new KernelControlNode(maxId, group, AxKernelControl.TYPE_CPU_MAX_FREQ, maxPath, defMax, freqs));
+            String[] labels = AxKernelUtils.formatFrequencyLabels(freqs);
+            String[] writeValues = AxKernelUtils.toStringValues(freqs);
+            controls.add(new KernelControlNode(minId, group, AxKernelControl.TYPE_CPU_MIN_FREQ, minPath, defMin, freqs, labels, writeValues));
+            controls.add(new KernelControlNode(maxId, group, AxKernelControl.TYPE_CPU_MAX_FREQ, maxPath, defMax, freqs, labels, writeValues));
         }
 
         String[] govs = AxKernelUtils.readSysfsTokens(govAvail);
@@ -249,15 +251,20 @@ final class AxKernelConfigLoader {
         String curPath = resolveGpuPath(parser, ATTR_CURRENT_NODE, ATTR_CUR_FREQ_PATH, baseNode, NODE_CUR_FREQ);
         String busyPath = resolveGpuPath(parser, ATTR_USAGE_NODE, ATTR_BUSY_PATH, baseNode, NODE_LOAD);
 
+        long multiplier = parseMultiplier(parser);
         int[] freqs = resolveGpuFrequencies(parser, baseNode);
         if (freqs.length > 0 && canUse(minPath) && canUse(maxPath)) {
-            int defMin = AxKernelUtils.readSysfsInt(minPath, freqs[0]);
-            int defMax = AxKernelUtils.readSysfsInt(maxPath, freqs[freqs.length - 1]);
-            controls.add(new KernelControlNode(minId, group, AxKernelControl.TYPE_GPU_MIN_FREQ, minPath, defMin, freqs));
-            controls.add(new KernelControlNode(maxId, group, AxKernelControl.TYPE_GPU_MAX_FREQ, maxPath, defMax, freqs));
+            int rawDefMin = AxKernelUtils.readSysfsInt(minPath, freqs[0]);
+            int rawDefMax = AxKernelUtils.readSysfsInt(maxPath, freqs[freqs.length - 1]);
+            int[] availableKhz = AxKernelUtils.toKhzList(freqs, multiplier);
+            String[] writeValues = AxKernelUtils.toStringValues(freqs);
+            String[] labels = AxKernelUtils.formatFrequencyLabels(availableKhz);
+            int defMinKhz = AxKernelUtils.toKhz(rawDefMin, multiplier);
+            int defMaxKhz = AxKernelUtils.toKhz(rawDefMax, multiplier);
+            controls.add(new KernelControlNode(minId, group, AxKernelControl.TYPE_GPU_MIN_FREQ, minPath, defMinKhz, availableKhz, labels, writeValues));
+            controls.add(new KernelControlNode(maxId, group, AxKernelControl.TYPE_GPU_MAX_FREQ, maxPath, defMaxKhz, availableKhz, labels, writeValues));
         }
 
-        long multiplier = parseMultiplier(parser);
         metricsConfig.addGpu(new AxKernelMetricsReader.GpuConfig(curPath, minPath, maxPath, busyPath, multiplier));
     }
 
@@ -283,7 +290,7 @@ final class AxKernelConfigLoader {
     }
 
     private static long parseMultiplier(TypedXmlPullParser parser) {
-        String mult = parser.getAttributeValue(null, ATTR_FREQ_MULTIPLIER);
+        String mult = getAttr(parser, ATTR_FREQ_MULTIPLIER, "frequencymultiplier");
         if (TextUtils.isEmpty(mult)) return MULTIPLIER_DIRECT;
         int val = AxKernelUtils.extractNumber(mult);
         return val > 0 ? val : MULTIPLIER_DIRECT;
@@ -348,8 +355,10 @@ final class AxKernelConfigLoader {
         String maxPath = new File(policyDir, NODE_SCALING_MAX_FREQ).getAbsolutePath();
         int defMin = AxKernelUtils.readSysfsInt(minPath, freqs[0]);
         int defMax = AxKernelUtils.readSysfsInt(maxPath, freqs[freqs.length - 1]);
-        controls.add(new KernelControlNode(ID_POLICY_PREFIX + policyIndex + SUFFIX_MIN_FREQ, group, AxKernelControl.TYPE_CPU_MIN_FREQ, minPath, defMin, freqs));
-        controls.add(new KernelControlNode(ID_POLICY_PREFIX + policyIndex + SUFFIX_MAX_FREQ, group, AxKernelControl.TYPE_CPU_MAX_FREQ, maxPath, defMax, freqs));
+        String[] labels = AxKernelUtils.formatFrequencyLabels(freqs);
+        String[] writeValues = AxKernelUtils.toStringValues(freqs);
+        controls.add(new KernelControlNode(ID_POLICY_PREFIX + policyIndex + SUFFIX_MIN_FREQ, group, AxKernelControl.TYPE_CPU_MIN_FREQ, minPath, defMin, freqs, labels, writeValues));
+        controls.add(new KernelControlNode(ID_POLICY_PREFIX + policyIndex + SUFFIX_MAX_FREQ, group, AxKernelControl.TYPE_CPU_MAX_FREQ, maxPath, defMax, freqs, labels, writeValues));
     }
 
     private static void addPolicyGovControls(int policyIndex, String group, File policyDir, List<KernelControlNode> controls) {
@@ -374,12 +383,17 @@ final class AxKernelConfigLoader {
         return minF == maxF ? new int[] { minF } : new int[] { minF, maxF };
     }
 
-    private static void addGpuControlsIfPresent(File minFreq, File maxFreq, int[] freqs, List<KernelControlNode> controls) {
+    private static void addGpuControlsIfPresent(File minFreq, File maxFreq, int[] freqs, List<KernelControlNode> controls, long multiplier) {
         if (freqs.length == 0 || !minFreq.isFile() || !maxFreq.isFile()) return;
-        int defMin = AxKernelUtils.readSysfsInt(minFreq.getAbsolutePath(), freqs[0]);
-        int defMax = AxKernelUtils.readSysfsInt(maxFreq.getAbsolutePath(), freqs[freqs.length - 1]);
-        controls.add(new KernelControlNode(ID_GPU_MIN_FREQ, GROUP_GPU, AxKernelControl.TYPE_GPU_MIN_FREQ, minFreq.getAbsolutePath(), defMin, freqs));
-        controls.add(new KernelControlNode(ID_GPU_MAX_FREQ, GROUP_GPU, AxKernelControl.TYPE_GPU_MAX_FREQ, maxFreq.getAbsolutePath(), defMax, freqs));
+        int rawDefMin = AxKernelUtils.readSysfsInt(minFreq.getAbsolutePath(), freqs[0]);
+        int rawDefMax = AxKernelUtils.readSysfsInt(maxFreq.getAbsolutePath(), freqs[freqs.length - 1]);
+        int[] availableKhz = AxKernelUtils.toKhzList(freqs, multiplier);
+        String[] writeValues = AxKernelUtils.toStringValues(freqs);
+        String[] labels = AxKernelUtils.formatFrequencyLabels(availableKhz);
+        int defMinKhz = AxKernelUtils.toKhz(rawDefMin, multiplier);
+        int defMaxKhz = AxKernelUtils.toKhz(rawDefMax, multiplier);
+        controls.add(new KernelControlNode(ID_GPU_MIN_FREQ, GROUP_GPU, AxKernelControl.TYPE_GPU_MIN_FREQ, minFreq.getAbsolutePath(), defMinKhz, availableKhz, labels, writeValues));
+        controls.add(new KernelControlNode(ID_GPU_MAX_FREQ, GROUP_GPU, AxKernelControl.TYPE_GPU_MAX_FREQ, maxFreq.getAbsolutePath(), defMaxKhz, availableKhz, labels, writeValues));
     }
 
     private static void findGpuFallback(ArrayList<KernelControlNode> controls, AxKernelMetricsReader.Config metricsConfig) {
@@ -396,7 +410,7 @@ final class AxKernelConfigLoader {
             File busy = new File(kgslDir, NODE_KGSL_BUSY);
 
             int[] freqs = AxKernelUtils.readSysfsIntList(availFreq.getAbsolutePath());
-            addGpuControlsIfPresent(minFreq, maxFreq, freqs, controls);
+            addGpuControlsIfPresent(minFreq, maxFreq, freqs, controls, MULTIPLIER_DIRECT);
             metricsConfig.addGpu(new AxKernelMetricsReader.GpuConfig(
                     curFreq.isFile() ? curFreq.getAbsolutePath() : null,
                     minFreq.isFile() ? minFreq.getAbsolutePath() : null,
@@ -420,7 +434,7 @@ final class AxKernelConfigLoader {
                         File load = new File(file, NODE_LOAD);
 
                         int[] freqs = AxKernelUtils.readSysfsIntList(availFreq.getAbsolutePath());
-                        addGpuControlsIfPresent(minFreq, maxFreq, freqs, controls);
+                        addGpuControlsIfPresent(minFreq, maxFreq, freqs, controls, MULTIPLIER_DIRECT);
                         metricsConfig.addGpu(new AxKernelMetricsReader.GpuConfig(
                                 curFreq.isFile() ? curFreq.getAbsolutePath() : null,
                                 minFreq.isFile() ? minFreq.getAbsolutePath() : null,

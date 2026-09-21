@@ -30,6 +30,7 @@ import java.util.List;
 public final class AxKernelMetricsReader {
     private static final String TAG = "AxKernelMetricsReader";
     private static final String PROC_STAT = "/proc/stat";
+    private static final int HZ_THRESHOLD = 10_000_000;
 
     private final Object mLock = new Object();
     private Config mConfig = new Config();
@@ -212,7 +213,11 @@ public final class AxKernelMetricsReader {
 
     private static long readFrequency(String path, long multiplier) {
         long val = AxKernelUtils.readSysfsLong(path, 0L);
-        return val > 0L ? val * multiplier : 0L;
+        if (val <= 0L) return 0L;
+        if (val >= HZ_THRESHOLD) {
+            return val;
+        }
+        return multiplier > 1L ? val * multiplier : val * 1000L;
     }
 
     private static int readBusy(String path) {

@@ -61,6 +61,12 @@ final class KernelControlNode {
         for (int val : availableValues) {
             if (val == value) return value;
         }
+        if (value >= 10_000_000) {
+            int khz = value / 1000;
+            for (int val : availableValues) {
+                if (val == khz) return khz;
+            }
+        }
         return defaultValue;
     }
 

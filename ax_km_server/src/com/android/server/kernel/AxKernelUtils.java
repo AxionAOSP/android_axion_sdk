@@ -41,6 +41,8 @@ final class AxKernelUtils {
     private static final int KHZ_PER_GHZ = 1_000_000;
     private static final int KHZ_PER_MHZ = 1000;
     private static final float KHZ_PER_GHZ_FLOAT = 1_000_000.0f;
+    private static final int HZ_THRESHOLD = 10_000_000;
+    private static final int KHZ_THRESHOLD = 10_000;
 
     private AxKernelUtils() {
     }
@@ -185,5 +187,37 @@ final class AxKernelUtils {
             labels[i] = formatFrequency(frequenciesKhz[i]);
         }
         return labels;
+    }
+
+    static int toKhz(int rawFreq, long multiplier) {
+        if (rawFreq <= 0) return 0;
+        if (rawFreq >= HZ_THRESHOLD) {
+            return rawFreq / KHZ_PER_MHZ;
+        }
+        if (multiplier > 1L) {
+            return (int) ((rawFreq * multiplier) / KHZ_PER_MHZ);
+        }
+        if (rawFreq >= KHZ_THRESHOLD) {
+            return rawFreq;
+        }
+        return rawFreq * KHZ_PER_MHZ;
+    }
+
+    static int[] toKhzList(int[] rawFreqs, long multiplier) {
+        if (rawFreqs == null || rawFreqs.length == 0) return new int[0];
+        int[] result = new int[rawFreqs.length];
+        for (int i = 0; i < rawFreqs.length; i++) {
+            result[i] = toKhz(rawFreqs[i], multiplier);
+        }
+        return result;
+    }
+
+    static String[] toStringValues(int[] values) {
+        if (values == null || values.length == 0) return new String[0];
+        String[] result = new String[values.length];
+        for (int i = 0; i < values.length; i++) {
+            result[i] = Integer.toString(values[i]);
+        }
+        return result;
     }
 }
