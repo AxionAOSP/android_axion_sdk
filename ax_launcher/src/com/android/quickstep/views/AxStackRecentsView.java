@@ -313,14 +313,6 @@ public abstract class AxStackRecentsView<
     }
 
     @Override
-    public void loadVisibleTaskData(int dataChanges) {
-        if (mStackTransformsActive && (isHandlingTouch() || !mScroller.isFinished())) {
-            return;
-        }
-        super.loadVisibleTaskData(dataChanges);
-    }
-
-    @Override
     protected void updateTaskViewDeadZoneRects(
             Rect taskViewRect, Rect topRowRect, Rect bottomRowRect) {
         if (!mStackTransformsActive) {
@@ -585,7 +577,9 @@ public abstract class AxStackRecentsView<
             }
             float normalDelta = anchorDelta + reflowTranslation;
             float distance = (anchorDelta + reflowTranslation) / pageDistance;
-            if ((distance > 3.5f || distance < -1.8f) && taskView.getVisibility() == INVISIBLE) {
+            if (!taskView.isRunningTask()
+                    && (distance > 3.5f || distance < -1.8f)
+                    && taskView.getVisibility() == INVISIBLE) {
                 continue;
             }
             STACK_LAYOUT.getTransform(distance, normalDelta, reflowTranslation,
@@ -642,7 +636,7 @@ public abstract class AxStackRecentsView<
         if (!stackWasActive) {
             loadVisibleTaskData(TaskView.FLAG_UPDATE_ALL);
         }
-        if (redrawLiveTile && canDrawStack() && !getEnableDrawingLiveTile()) {
+        if (redrawLiveTile && canDrawStack()) {
             redrawLiveTile();
         }
     }
