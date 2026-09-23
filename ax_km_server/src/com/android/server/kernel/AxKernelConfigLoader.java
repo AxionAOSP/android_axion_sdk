@@ -133,7 +133,12 @@ final class AxKernelConfigLoader {
 
     static void load(ArrayList<KernelControlNode> controls, AxKernelMetricsReader.Config metricsConfig) {
         for (File file : CONFIG_FILES) {
-            if (file.isFile()) parseConfigFile(file, controls, metricsConfig);
+            if (file.isFile()) {
+                parseConfigFile(file, controls, metricsConfig);
+                if (hasCpuControls(controls) || hasGpuControls(controls)) {
+                    break;
+                }
+            }
         }
         if (!hasCpuControls(controls)) {
             findCpuFallback(controls, metricsConfig);
