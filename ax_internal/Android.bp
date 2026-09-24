@@ -1,0 +1,21 @@
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+filegroup {
+    name: "ax_internal_sources",
+    srcs: [
+        "src/**/*.java",
+        "src/**/*.kt",
+    ],
+    visibility: ["//visibility:public"],
+}
+
+filegroup {
+    name: "ax_android_internal_sources",
+    srcs: [
+        "src/**/*.java",
+        "src/**/*.kt",
+    ],
+    visibility: ["//visibility:public"],
+}
