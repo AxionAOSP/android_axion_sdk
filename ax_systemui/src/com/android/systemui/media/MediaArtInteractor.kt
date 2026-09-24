@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package com.android.systemui.media
 
 import android.graphics.drawable.Drawable
@@ -20,19 +21,21 @@ import com.android.systemui.Dumpable
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.dump.DumpManager
-import com.android.systemui.plugins.statusbar.StatusBarStateController
+import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
+import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
+import com.android.systemui.keyguard.shared.model.BiometricUnlockMode
+import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
-import com.android.systemui.statusbar.policy.KeyguardStateController
 import java.io.PrintWriter
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 
 const val MEDIA_ART_STYLE_BLUR = 0
 const val MEDIA_ART_STYLE_CONCEPT = 1
@@ -51,164 +54,107 @@ class MediaArtInteractor @Inject constructor(
     @Application private val scope: CoroutineScope,
     private val repository: MediaArtSettingsRepository,
     private val mediaSessionManager: MediaSessionManager,
-    private val keyguardStateController: KeyguardStateController,
-    private val statusBarStateController: StatusBarStateController,
+    private val keyguardTransitionInteractor: KeyguardTransitionInteractor,
+    private val keyguardInteractor: KeyguardInteractor,
     private val shadeInteractor: ShadeInteractor,
     private val dumpManager: DumpManager,
-) : MediaSessionManager.MediaDataListener,
-    KeyguardStateController.Callback,
-    StatusBarStateController.StateListener,
-    Dumpable {
-
-    private val _uiState = MutableStateFlow(MediaArtUiState())
-    val uiState: StateFlow<MediaArtUiState> = _uiState.asStateFlow()
-
-    private var artworkDrawable: Drawable? = null
-    private var featureEnabled = false
+) : Dumpable {
 
     init {
         dumpManager.registerNormalDumpable(TAG, this)
-        observeSettings()
-        observeShade()
-        keyguardStateController.addCallback(this)
-        statusBarStateController.addCallback(this)
-        mediaSessionManager.addListener(this)
-        _uiState.update { it.copy(isDozing = statusBarStateController.isDozing) }
     }
 
-    private fun observeSettings() {
-        scope.launch {
-            repository.settingsFlow.collect { settings ->
-                featureEnabled = settings.isEnabled
-                _uiState.update {
-                    it.copy(
-                        isEnabled = settings.isEnabled,
-                        blurLevel = settings.blurLevel,
-                        artStyle = settings.artStyle
-                    )
-                }
-                updateVisibility()
-            }
+    private val isFeatureEnabled: Flow<Boolean> = repository.settingsFlow
+        .map { it.isEnabled }
+        .distinctUntilChanged()
+
+    private val mediaFlow: Flow<MediaState> = mediaSessionManager.activeSession
+        .map { session ->
+            MediaState(
+                artwork = session?.albumArt,
+                isPlaying = session?.isPlaying ?: false
+            )
         }
-    }
+        .distinctUntilChanged()
 
-    private fun observeShade() {
-        scope.launch {
-            combine(
-                shadeInteractor.isQsExpanded,
-                shadeInteractor.qsExpansion
-            ) { isQsExpanded, qsExpansion ->
-                isQsExpanded || qsExpansion > 0.1f
-            }.distinctUntilChanged().collect {
-                updateVisibility()
-            }
+    private val isShadeCollapsed: Flow<Boolean> = combine(
+        shadeInteractor.isQsExpanded,
+        shadeInteractor.anyExpansion,
+        shadeInteractor.isAnyFullyExpanded
+    ) { isQs, expansion, isFullyExpanded ->
+        !isQs && !isFullyExpanded && expansion <= SHADE_COLLAPSED_EXPANSION_THRESHOLD
+    }.distinctUntilChanged()
+
+    private val isBiometricDismissing: Flow<Boolean> = combine(
+        keyguardInteractor.biometricUnlockState,
+        keyguardTransitionInteractor.startedKeyguardTransitionStep
+    ) { biometric, step ->
+        BiometricUnlockMode.dismissesKeyguard(biometric.mode) || step.to == KeyguardState.GONE
+    }.distinctUntilChanged()
+
+    private val isKeyguardActive: Flow<Boolean> = combine(
+        keyguardTransitionInteractor.currentKeyguardState,
+        keyguardTransitionInteractor.startedKeyguardTransitionStep,
+        keyguardInteractor.isKeyguardGoingAway,
+        keyguardInteractor.isKeyguardOccluded,
+        isBiometricDismissing
+    ) { currentKeyguard, startedStep, isGoingAway, isOccluded, isDismissing ->
+        if (isDismissing || isGoingAway || isOccluded) return@combine false
+        if (startedStep.to == KeyguardState.GONE || currentKeyguard == KeyguardState.GONE) return@combine false
+        if (startedStep.to == KeyguardState.OCCLUDED || currentKeyguard == KeyguardState.OCCLUDED) return@combine false
+        if (startedStep.to == KeyguardState.PRIMARY_BOUNCER || currentKeyguard == KeyguardState.PRIMARY_BOUNCER) return@combine false
+        if (startedStep.to == KeyguardState.ALTERNATE_BOUNCER || currentKeyguard == KeyguardState.ALTERNATE_BOUNCER) return@combine false
+        when (currentKeyguard) {
+            KeyguardState.LOCKSCREEN, KeyguardState.AOD, KeyguardState.DOZING -> true
+            else -> false
         }
-    }
+    }.distinctUntilChanged()
 
-    override fun onAlbumArtChanged(drawable: Drawable?) {
-        artworkDrawable = drawable
-        _uiState.update { it.copy(artworkDrawable = drawable) }
-        updateVisibility()
-    }
+    val isMediaArtVisible: Flow<Boolean> = combine(
+        isFeatureEnabled,
+        mediaFlow,
+        isKeyguardActive,
+        isShadeCollapsed
+    ) { enabled, media, keyguardActive, shadeCollapsed ->
+        enabled && media.isPlaying && media.artwork != null && keyguardActive && shadeCollapsed
+    }.distinctUntilChanged()
 
-    override fun onPlaybackStateChanged(state: Int) {
-        updateVisibility()
-    }
-
-    override fun onKeyguardShowingChanged() {
-        updateVisibility()
-    }
-
-    override fun onPrimaryBouncerShowingChanged() {
-        updateVisibility()
-    }
-
-    override fun onKeyguardGoingAwayChanged() {
-        updateVisibility()
-    }
-
-    override fun onKeyguardFadingAwayChanged() {
-        updateVisibility()
-    }
-
-    override fun onKeyguardDismissAmountChanged() {
-        updateVisibility()
-    }
-
-    override fun onDozingChanged(isDozing: Boolean) {
-        _uiState.update { it.copy(isDozing = isDozing) }
-        updateVisibility()
-    }
-
-    override fun onStateChanged(newState: Int) {
-        updateVisibility()
-    }
-
-    private fun shouldShowMediaArt(): Boolean {
-        val isDozing = statusBarStateController.isDozing
-        val isKeyguardShowing = (keyguardStateController.isShowing || isDozing) &&
-            !keyguardStateController.isOccluded &&
-            !keyguardStateController.isKeyguardGoingAway &&
-            !keyguardStateController.isKeyguardFadingAway
-        val isBouncerShowing = keyguardStateController.isPrimaryBouncerShowing
-        val isQsCollapsed = !shadeInteractor.isQsExpanded.value && shadeInteractor.qsExpansion.value <= 0.1f
-
-        return featureEnabled &&
-            isKeyguardShowing &&
-            !isBouncerShowing &&
-            isQsCollapsed &&
-            mediaSessionManager.isMediaPlaying &&
-            artworkDrawable != null
-    }
-
-    private fun updateVisibility() {
-        val shouldShow = shouldShowMediaArt()
-        _uiState.update { it.copy(isVisible = shouldShow) }
-    }
+    val uiState: StateFlow<MediaArtUiState> = combine(
+        isMediaArtVisible,
+        repository.settingsFlow,
+        mediaFlow,
+        keyguardInteractor.isDozing
+    ) { isVisible, settings, media, isDozing ->
+        MediaArtUiState(
+            isEnabled = settings.isEnabled,
+            isVisible = isVisible,
+            isDozing = isDozing,
+            artworkDrawable = media.artwork,
+            blurLevel = settings.blurLevel,
+            artStyle = settings.artStyle
+        )
+    }.stateIn(
+        scope = scope,
+        started = SharingStarted.Eagerly,
+        initialValue = MediaArtUiState()
+    )
 
     override fun dump(pw: PrintWriter, args: Array<out String>) {
-        val isDozing = statusBarStateController.isDozing
-        val isKeyguardShowing = (keyguardStateController.isShowing || isDozing) &&
-            !keyguardStateController.isOccluded &&
-            !keyguardStateController.isKeyguardGoingAway &&
-            !keyguardStateController.isKeyguardFadingAway
-        val isOccluded = keyguardStateController.isOccluded
-        val isGoingAway = keyguardStateController.isKeyguardGoingAway
-        val isFadingAway = keyguardStateController.isKeyguardFadingAway
-        val isBouncer = keyguardStateController.isPrimaryBouncerShowing
-        val isQsExpanded = shadeInteractor.isQsExpanded.value
-        val qsExpansion = shadeInteractor.qsExpansion.value
-        val isQsCollapsed = !isQsExpanded && qsExpansion <= 0.1f
-        val isPlaying = mediaSessionManager.isMediaPlaying
-        val hasArt = artworkDrawable != null
-        val shouldShow = shouldShowMediaArt()
-
         pw.println("MediaArtInteractor:")
-        pw.println("  shouldShowMediaArt: $shouldShow")
-        pw.println("  uiState.isVisible: ${_uiState.value.isVisible}")
-        pw.println("  Decision Checklist:")
-        pw.println("    [${if (featureEnabled) "X" else " "}] featureEnabled: $featureEnabled")
-        pw.println("    [${if (isKeyguardShowing) "X" else " "}] isKeyguardShowing: $isKeyguardShowing (rawShowing=${keyguardStateController.isShowing}, isDozing=$isDozing)")
-        pw.println("    [${if (!isOccluded) "X" else " "}] !isOccluded: ${!isOccluded}")
-        pw.println("    [${if (!isGoingAway) "X" else " "}] !isKeyguardGoingAway: ${!isGoingAway}")
-        pw.println("    [${if (!isFadingAway) "X" else " "}] !isKeyguardFadingAway: ${!isFadingAway}")
-        pw.println("    [${if (!isBouncer) "X" else " "}] !isPrimaryBouncerShowing: ${!isBouncer}")
-        pw.println("    [${if (isQsCollapsed) "X" else " "}] isQsCollapsed: $isQsCollapsed (isQsExpanded=$isQsExpanded, qsExpansion=$qsExpansion)")
-        pw.println("    [${if (isPlaying) "X" else " "}] isMediaPlaying: $isPlaying")
-        pw.println("    [${if (hasArt) "X" else " "}] hasArtworkDrawable: $hasArt")
-        artworkDrawable?.let {
-            pw.println("  Artwork:")
-            pw.println("    type: ${it::class.java.simpleName}")
-            pw.println("    intrinsicDimensions: ${it.intrinsicWidth}x${it.intrinsicHeight}")
-        }
-        pw.println("  StatusBar & Doze:")
-        pw.println("    isDozing: $isDozing")
-        pw.println("    dozeAmount: ${statusBarStateController.dozeAmount}")
-        pw.println("    statusBarState: ${statusBarStateController.state}")
-        pw.println("  Current uiState: ${_uiState.value}")
+        pw.println("  uiState: ${uiState.value}")
     }
 
     companion object {
+        const val MEDIA_ART_STYLE_BLUR = 0
+        const val MEDIA_ART_STYLE_CONCEPT = 1
+        const val MEDIA_ART_STYLE_GRADIENT = 1
+        const val MEDIA_ART_STYLE_COLOR = 2
+        private const val SHADE_COLLAPSED_EXPANSION_THRESHOLD = 0.1f
         private const val TAG = "MediaArtInteractor"
     }
 }
+
+private data class MediaState(
+    val artwork: Drawable? = null,
+    val isPlaying: Boolean = false
+)
