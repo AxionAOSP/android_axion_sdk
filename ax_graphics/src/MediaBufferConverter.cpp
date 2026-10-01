@@ -24,10 +24,18 @@
 #include <system/graphics.h>
 #include <vndk/hardware_buffer.h>
 
+#ifndef EGL_YUV_COLOR_SPACE_HINT_EXT
+#define EGL_YUV_COLOR_SPACE_HINT_EXT 0x327B
+#define EGL_SAMPLE_RANGE_HINT_EXT 0x327C
+#define EGL_ITU_REC601_EXT 0x327F
+#define EGL_ITU_REC709_EXT 0x3280
+#define EGL_ITU_REC2020_EXT 0x3281
+#define EGL_YUV_FULL_RANGE_EXT 0x3282
+#define EGL_YUV_NARROW_RANGE_EXT 0x3283
+#endif
+
 namespace axion::graphics {
 namespace {
-
-constexpr char kUseOpenGlForMediaProperty[] = "persist.sys.vk_use_ogl_for_media";
 
 bool isVideoOrHdrDataspace(int32_t dataspace) {
     if (dataspace == 0) {
@@ -82,6 +90,19 @@ bool isHdrRgbPixelFormat(uint32_t format) {
     }
 }
 
+bool isStandardSdrRgbFormat(uint32_t format) {
+    switch (format) {
+        case AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM:
+        case AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM:
+        case AHARDWAREBUFFER_FORMAT_R8G8B8_UNORM:
+        case AHARDWAREBUFFER_FORMAT_R5G6B5_UNORM:
+        case HAL_PIXEL_FORMAT_BGRA_8888:
+            return true;
+        default:
+            return false;
+    }
+}
+
 bool hasMediaUsage(uint64_t usage) {
     constexpr uint64_t kMediaUsageMask =
             AHARDWAREBUFFER_USAGE_VIDEO_ENCODE |
@@ -90,8 +111,7 @@ bool hasMediaUsage(uint64_t usage) {
             0x00010000ULL |
             0x00020000ULL |
             0x00040000ULL |
-            0x00400000ULL |
-            0x08000000ULL;
+            0x00400000ULL;
     return (usage & kMediaUsageMask) != 0;
 }
 
@@ -370,13 +390,16 @@ bool MediaBufferConverter::isMediaOrHdrBuffer(uint32_t format, uint64_t usage, i
     if ((usage & AHARDWAREBUFFER_USAGE_PROTECTED_CONTENT) != 0) {
         return false;
     }
+    if (isStandardSdrRgbFormat(format)) {
+        return false;
+    }
     if (isYuvOrMediaPixelFormat(format)) {
         return true;
     }
-    if (hasMediaUsage(usage)) {
+    if (isHdrRgbPixelFormat(format) && isVideoOrHdrDataspace(dataspace)) {
         return true;
     }
-    if (isHdrRgbPixelFormat(format) && isVideoOrHdrDataspace(dataspace)) {
+    if (hasMediaUsage(usage)) {
         return true;
     }
     return isVideoOrHdrDataspace(dataspace);
@@ -387,7 +410,8 @@ bool MediaBufferConverter::isMediaOrHdrBuffer(const AHardwareBuffer_Desc& desc, 
 }
 
 AHardwareBuffer* MediaBufferConverter::convertToRgba8888(AHardwareBuffer* srcBuffer,
-                                                        AHardwareBuffer* existingDst) {
+                                                        AHardwareBuffer* existingDst,
+                                                        int32_t dataspace) {
     if (!srcBuffer) {
         return nullptr;
     }
@@ -441,8 +465,45 @@ AHardwareBuffer* MediaBufferConverter::convertToRgba8888(AHardwareBuffer* srcBuf
         return nullptr;
     }
 
-    AutoEglImage srcEgl(display, eglCreateImageKHR(display, EGL_NO_CONTEXT,
-                                                  EGL_NATIVE_BUFFER_ANDROID, srcClient, nullptr));
+    EGLint srcAttrs[7];
+    int srcAttrIdx = 0;
+    if (dataspace != 0) {
+        const int32_t standard = dataspace & HAL_DATASPACE_STANDARD_MASK;
+        if (standard == HAL_DATASPACE_STANDARD_BT709) {
+            srcAttrs[srcAttrIdx++] = EGL_YUV_COLOR_SPACE_HINT_EXT;
+            srcAttrs[srcAttrIdx++] = EGL_ITU_REC709_EXT;
+        } else if (standard == HAL_DATASPACE_STANDARD_BT2020 ||
+                   standard == HAL_DATASPACE_STANDARD_BT2020_CONSTANT_LUMINANCE) {
+            srcAttrs[srcAttrIdx++] = EGL_YUV_COLOR_SPACE_HINT_EXT;
+            srcAttrs[srcAttrIdx++] = EGL_ITU_REC2020_EXT;
+        } else if (standard == HAL_DATASPACE_STANDARD_BT601_625 ||
+                   standard == HAL_DATASPACE_STANDARD_BT601_525 ||
+                   standard == HAL_DATASPACE_STANDARD_BT601_625_UNADJUSTED ||
+                   standard == HAL_DATASPACE_STANDARD_BT601_525_UNADJUSTED) {
+            srcAttrs[srcAttrIdx++] = EGL_YUV_COLOR_SPACE_HINT_EXT;
+            srcAttrs[srcAttrIdx++] = EGL_ITU_REC601_EXT;
+        }
+
+        const int32_t range = dataspace & HAL_DATASPACE_RANGE_MASK;
+        if (range == HAL_DATASPACE_RANGE_FULL) {
+            srcAttrs[srcAttrIdx++] = EGL_SAMPLE_RANGE_HINT_EXT;
+            srcAttrs[srcAttrIdx++] = EGL_YUV_FULL_RANGE_EXT;
+        } else if (range == HAL_DATASPACE_RANGE_LIMITED) {
+            srcAttrs[srcAttrIdx++] = EGL_SAMPLE_RANGE_HINT_EXT;
+            srcAttrs[srcAttrIdx++] = EGL_YUV_NARROW_RANGE_EXT;
+        }
+    }
+    srcAttrs[srcAttrIdx] = EGL_NONE;
+
+    const EGLint* attrsToUse = (srcAttrIdx > 0) ? srcAttrs : nullptr;
+    EGLImageKHR srcImage = eglCreateImageKHR(display, EGL_NO_CONTEXT,
+                                            EGL_NATIVE_BUFFER_ANDROID, srcClient, attrsToUse);
+    if (srcImage == EGL_NO_IMAGE_KHR && attrsToUse != nullptr) {
+        srcImage = eglCreateImageKHR(display, EGL_NO_CONTEXT,
+                                     EGL_NATIVE_BUFFER_ANDROID, srcClient, nullptr);
+    }
+
+    AutoEglImage srcEgl(display, srcImage);
     AutoEglImage dstEgl(display, eglCreateImageKHR(display, EGL_NO_CONTEXT,
                                                   EGL_NATIVE_BUFFER_ANDROID, dstClient, nullptr));
     if (!srcEgl.isValid() || !dstEgl.isValid()) {

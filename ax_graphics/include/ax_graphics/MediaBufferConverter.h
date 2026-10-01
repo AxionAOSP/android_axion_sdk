@@ -22,6 +22,8 @@
 
 namespace axion::graphics {
 
+inline constexpr const char* kUseOpenGlForMediaProperty = "persist.sys.vk_use_ogl_for_media";
+
 class MediaBufferConverter final {
 public:
     MediaBufferConverter() = delete;
@@ -30,7 +32,8 @@ public:
     static bool isMediaOrHdrBuffer(const AHardwareBuffer_Desc& desc, int32_t dataspace = 0);
     static bool isMediaOrHdrBuffer(uint32_t format, uint64_t usage, int32_t dataspace = 0);
     static AHardwareBuffer* convertToRgba8888(AHardwareBuffer* srcBuffer,
-                                             AHardwareBuffer* existingDst = nullptr);
+                                             AHardwareBuffer* existingDst = nullptr,
+                                             int32_t dataspace = 0);
 };
 
 }
