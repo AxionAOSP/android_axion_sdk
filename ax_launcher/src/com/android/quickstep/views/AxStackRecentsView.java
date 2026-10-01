@@ -409,6 +409,9 @@ public abstract class AxStackRecentsView<
                 if (!useStackAnimation || mLaunchTask != taskView) {
                     return;
                 }
+                if (mLaunchStarted) {
+                    return;
+                }
                 mLaunchStarted = true;
                 mLaunchClipChildren = getClipChildren();
                 mLaunchClipToPadding = getClipToPadding();
@@ -416,12 +419,21 @@ public abstract class AxStackRecentsView<
                 setClipToPadding(false);
                 pinLaunchTaskTransforms();
                 mLaunchTaskTranslationZ = taskView.getTranslationZ();
-                taskView.setTranslationZ(Math.max(
-                        mLaunchTaskTranslationZ, MAX_STACK_DEPTH + TASK_DEPTH));
+                float elevationScale = 16f * getResources().getDisplayMetrics().density;
+                float launchTranslationZ = Math.max(
+                        mLaunchTaskTranslationZ, (MAX_STACK_DEPTH + 1f) * elevationScale);
+                taskView.setTranslationZ(launchTranslationZ);
             }
 
             @Override
             public void onAnimationEnd(Animator animator) {
+                if (useStackAnimation) {
+                    finishLaunchAnimation(taskView);
+                }
+            }
+
+            @Override
+            public void onAnimationCancel(Animator animator) {
                 if (useStackAnimation) {
                     finishLaunchAnimation(taskView);
                 }
@@ -731,6 +743,8 @@ public abstract class AxStackRecentsView<
     }
 
     private void collectLaunchSiblings(TaskView launchTask) {
+        mLaunchSiblings.clear();
+        mLaunchMovedLiveTile = false;
         int childCount = getChildCount();
         for (int index = 0; index < childCount; index++) {
             if (!(getChildAt(index) instanceof TaskView taskView)) {

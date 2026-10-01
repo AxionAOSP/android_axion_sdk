@@ -63,12 +63,16 @@ final class AxRemoteTargetUpdater {
         if (updateInfo.hasCrop()) {
             builder.setWindowCrop(updateInfo.getCrop());
         }
-        builder.setAlpha(updateInfo.getAlpha()).setShow();
+        float alpha = updateInfo.getAlpha();
+        builder.setAlpha(alpha);
+        if (alpha > 0f) {
+            builder.setShow();
+        }
         if (updateInfo.getCornerRadius() >= 0f) {
-            builder.setCornerRadius(updateInfo.getCornerRadius());
+            builder.setCornerRadius(Math.round(updateInfo.getCornerRadius()));
         }
         if (updateInfo.getShadowRadius() >= 0f) {
-            builder.setShadowRadius(updateInfo.getShadowRadius());
+            builder.setShadowRadius(Math.round(updateInfo.getShadowRadius()));
         }
         return true;
     }
