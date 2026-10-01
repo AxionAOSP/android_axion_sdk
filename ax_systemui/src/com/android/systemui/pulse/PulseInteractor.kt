@@ -13,41 +13,31 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package com.android.systemui.pulse
 
 import android.R as AndroidR
 import android.content.Context
 import android.graphics.Color
-import android.media.MediaMetadata
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
-import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
-import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
-import com.android.systemui.keyguard.shared.model.BiometricUnlockMode
-import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.media.MediaSessionManager
+import com.android.systemui.overlay.KeyguardOverlayInteractor
 import com.android.systemui.power.domain.interactor.PowerInteractor
 import com.android.systemui.power.shared.model.ScreenPowerState
-import com.android.systemui.shade.domain.interactor.ShadeInteractor
-import com.android.systemui.utils.coroutines.flow.conflatedCallbackFlow
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-
-private data class MediaState(
-    val isPlaying: Boolean = false,
-    val albumColor: Int? = null
-)
 
 private data class PulseConfig(
     val isEnabled: Boolean = false,
@@ -68,85 +58,75 @@ class PulseInteractor @Inject constructor(
     private val displayRepository: PulseDisplayRepository,
     private val audioProcessor: PulseAudioDataProcessor,
     private val mediaSessionManager: MediaSessionManager,
-    private val keyguardTransitionInteractor: KeyguardTransitionInteractor,
-    private val keyguardInteractor: KeyguardInteractor,
-    private val powerInteractor: PowerInteractor,
-    private val shadeInteractor: ShadeInteractor
+    private val keyguardOverlayInteractor: KeyguardOverlayInteractor,
+    private val powerInteractor: PowerInteractor
 ) {
 
     private val accentColor: Int
         get() = context.getColor(AndroidR.color.system_accent1_100)
 
-    private val mediaFlow: Flow<MediaState> = mediaSessionManager.activeSession
-        .map { session ->
-            MediaState(
-                isPlaying = session?.isPlaying ?: false,
-                albumColor = session?.mediaColor
-            )
+    private fun resolveBarColor(
+        colorMode: PulseColorMode,
+        albumColor: Int?
+    ): Int = when (colorMode) {
+        PulseColorMode.ACCENT -> accentColor
+        PulseColorMode.ALBUM -> albumColor ?: accentColor
+        PulseColorMode.LAVALAMP -> Color.WHITE
+    }
+
+    private fun checkScreenActive(
+        isScreenOn: Boolean,
+        powerState: ScreenPowerState,
+        isPulsing: Boolean
+    ): Boolean {
+        if (!isScreenOn) return false
+        return isPulsing || powerState != ScreenPowerState.SCREEN_OFF
+    }
+
+    private fun checkPulseVisible(
+        isEnabled: Boolean,
+        isPlaying: Boolean,
+        isShadeOk: Boolean,
+        isKeyguardOk: Boolean,
+        isScreenOk: Boolean
+    ): Boolean {
+        if (!isEnabled || !isPlaying) return false
+        if (!isShadeOk || !isKeyguardOk) return false
+        return isScreenOk
+    }
+
+    private fun calculateAlpha(visible: Boolean, alpha: Float): Float =
+        if (visible) alpha else 0f
+
+    private fun getAudioFlow(visible: Boolean): Flow<FloatArray> =
+        if (visible) audioProcessor.audioDataFlow else flowOf(floatArrayOf())
+
+    private fun updateAudioCapture(visible: Boolean) {
+        if (visible) {
+            audioProcessor.startCapture()
+        } else {
+            audioProcessor.stopCapture()
         }
-        .distinctUntilChanged()
-
-    private val isShadeCollapsed: Flow<Boolean> = combine(
-        shadeInteractor.isQsExpanded,
-        shadeInteractor.anyExpansion,
-        shadeInteractor.isAnyFullyExpanded
-    ) { isQs, expansion, isFullyExpanded ->
-        !isQs && !isFullyExpanded && expansion <= 0.1f
-    }.distinctUntilChanged()
-
-    private val isBiometricDismissing: Flow<Boolean> = combine(
-        keyguardInteractor.biometricUnlockState,
-        keyguardTransitionInteractor.startedKeyguardTransitionStep
-    ) { biometric, step ->
-        BiometricUnlockMode.dismissesKeyguard(biometric.mode) || step.to == KeyguardState.GONE
-    }.distinctUntilChanged()
-
-    private val unlockAlpha: Flow<Float> = combine(
-        keyguardTransitionInteractor.transitionValue(KeyguardState.GONE),
-        isBiometricDismissing
-    ) { progress, isDismissing ->
-        if (isDismissing) 0f else (1f - (progress * 2f)).coerceIn(0f, 1f)
-    }.distinctUntilChanged()
-
-    private val isKeyguardActive: Flow<Boolean> = combine(
-        keyguardTransitionInteractor.currentKeyguardState,
-        keyguardTransitionInteractor.startedKeyguardTransitionStep,
-        keyguardInteractor.isKeyguardGoingAway,
-        keyguardInteractor.isPulsing,
-        isBiometricDismissing
-    ) { currentKeyguard, startedStep, isGoingAway, isPulsing, isDismissing ->
-        if (isDismissing || isGoingAway) return@combine false
-        if (startedStep.to == KeyguardState.GONE || currentKeyguard == KeyguardState.GONE) return@combine false
-        when (currentKeyguard) {
-            KeyguardState.LOCKSCREEN, KeyguardState.AOD -> true
-            KeyguardState.DOZING -> isPulsing
-            else -> false
-        }
-    }.distinctUntilChanged()
+    }
 
     private val isScreenActive: Flow<Boolean> = combine(
         displayRepository.displayState,
         powerInteractor.screenPowerState,
-        keyguardInteractor.isPulsing
+        keyguardOverlayInteractor.isPulsing
     ) { display, power, isPulsing ->
-        display.isScreenOn && (isPulsing || power != ScreenPowerState.SCREEN_OFF)
+        checkScreenActive(display.isScreenOn, power, isPulsing)
     }.distinctUntilChanged()
 
     private val configFlow: Flow<PulseConfig> = combine(
         settingsRepository.settingsFlow,
         displayRepository.displayState,
-        mediaFlow
-    ) { settings, display, media ->
-        val barColor = when (settings.colorMode) {
-            PulseColorMode.ACCENT -> accentColor
-            PulseColorMode.ALBUM -> media.albumColor ?: accentColor
-            PulseColorMode.LAVALAMP -> Color.WHITE
-        }
+        mediaSessionManager.activeSession
+    ) { settings, display, session ->
         PulseConfig(
             isEnabled = settings.isEnabled,
             barCount = settings.barCount,
             roundedBars = settings.roundedBars,
-            barColor = barColor,
+            barColor = resolveBarColor(settings.colorMode, session?.mediaColor),
             colorMode = settings.colorMode,
             style = settings.style,
             refreshRate = display.refreshRate
@@ -155,28 +135,27 @@ class PulseInteractor @Inject constructor(
 
     private val isPulseVisible: Flow<Boolean> = combine(
         configFlow.map { it.isEnabled }.distinctUntilChanged(),
-        mediaFlow.map { it.isPlaying }.distinctUntilChanged(),
-        isShadeCollapsed,
-        isKeyguardActive,
+        mediaSessionManager.isPlaying,
+        keyguardOverlayInteractor.isShadeCollapsed,
+        keyguardOverlayInteractor.isPulsingOverlayActive,
         isScreenActive
     ) { isEnabled, isPlaying, isShadeOk, isKeyguardOk, isScreenOk ->
-        isEnabled && isPlaying && isShadeOk && isKeyguardOk && isScreenOk
+        checkPulseVisible(isEnabled, isPlaying, isShadeOk, isKeyguardOk, isScreenOk)
     }.distinctUntilChanged()
 
-    private val barHeightsFlow: Flow<FloatArray> = isPulseVisible.flatMapLatest { visible ->
-        if (visible) audioProcessor.audioDataFlow else flowOf(floatArrayOf())
-    }
+    private val barHeightsFlow: Flow<FloatArray> =
+        isPulseVisible.flatMapLatest(::getAudioFlow)
 
     val uiState: StateFlow<PulseUiState> = combine(
         configFlow,
         isPulseVisible,
-        unlockAlpha,
+        keyguardOverlayInteractor.unlockAlpha,
         barHeightsFlow
     ) { config, visible, alpha, heights ->
         PulseUiState(
             isEnabled = config.isEnabled,
             isVisible = visible,
-            alpha = if (visible) alpha else 0f,
+            alpha = calculateAlpha(visible, alpha),
             barHeights = heights,
             barCount = config.barCount,
             roundedBars = config.roundedBars,
@@ -193,13 +172,7 @@ class PulseInteractor @Inject constructor(
 
     init {
         scope.launch {
-            isPulseVisible.collect { visible ->
-                if (visible) {
-                    audioProcessor.startCapture()
-                } else {
-                    audioProcessor.stopCapture()
-                }
-            }
+            isPulseVisible.collect(::updateAudioCapture)
         }
         scope.launch {
             settingsRepository.settingsFlow
