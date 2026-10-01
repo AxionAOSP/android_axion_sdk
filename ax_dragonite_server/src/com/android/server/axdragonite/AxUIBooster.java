@@ -23,6 +23,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -81,9 +82,13 @@ public final class AxUIBooster {
 
             List<Integer> hwuiTids = findHwuiThreadTids(pid);
             for (int tid : hwuiTids) {
-                boostThread(tid, boostLevel);
+                if (tid > INVALID_PID) {
+                    boostThread(tid, boostLevel);
+                }
             }
-            boostThread(pid, boostLevel);
+            if (pid > INVALID_PID) {
+                boostThread(pid, boostLevel);
+            }
         }
     }
 
@@ -94,16 +99,30 @@ public final class AxUIBooster {
 
         try {
             if (!mBoostedThreads.containsKey(tid)) {
-                mBoostedThreads.put(tid, Process.getThreadPriority(tid));
+                try {
+                    mBoostedThreads.put(tid, Process.getThreadPriority(tid));
+                } catch (IllegalArgumentException e) {
+                    return;
+                }
             }
             if (boostLevel >= BOOST_LEVEL_HEAVY_THRESHOLD) {
-                Process.setThreadScheduler(tid, SCHED_RR_RESET_ON_FORK, SCHED_REALTIME_PRIORITY);
+                try {
+                    Process.setThreadScheduler(tid, SCHED_RR_RESET_ON_FORK, SCHED_REALTIME_PRIORITY);
+                } catch (Throwable t) {
+                    Process.setThreadPriority(tid, Process.THREAD_PRIORITY_TOP_APP_BOOST);
+                }
             } else {
                 Process.setThreadPriority(tid, Process.THREAD_PRIORITY_TOP_APP_BOOST);
             }
-            Process.setThreadAffinity(tid, (int) mClusterManager.getBigMask());
         } catch (Throwable t) {
-            Slog.w(TAG, "Failed to boost thread " + tid + ": " + t.getMessage());
+            Slog.w(TAG, "Failed to boost priority for thread " + tid + ": " + t.getMessage());
+        }
+
+        try {
+            Process.setThreadAffinity(tid, (int) mClusterManager.getBigMask());
+        } catch (IllegalArgumentException ignored) {
+        } catch (Throwable t) {
+            Slog.w(TAG, "Failed to set thread affinity for " + tid + ": " + t.getMessage());
         }
     }
 
@@ -119,9 +138,13 @@ public final class AxUIBooster {
 
             List<Integer> hwuiTids = findHwuiThreadTids(pid);
             for (int tid : hwuiTids) {
-                restoreThread(tid);
+                if (tid > INVALID_PID) {
+                    restoreThread(tid);
+                }
             }
-            restoreThread(pid);
+            if (pid > INVALID_PID) {
+                restoreThread(pid);
+            }
         } else {
             mBoostPidCountMap.put(pid, currentCount);
         }
@@ -131,7 +154,13 @@ public final class AxUIBooster {
         if (pid <= INVALID_PID) {
             return;
         }
-        mHwuiThreadCache.remove(pid);
+        List<Integer> hwuiTids = mHwuiThreadCache.remove(pid);
+        if (hwuiTids != null) {
+            for (int tid : hwuiTids) {
+                mBoostedThreads.remove(tid);
+            }
+        }
+        mBoostedThreads.remove(pid);
         mBoostPidCountMap.remove(pid);
     }
 
@@ -144,17 +173,34 @@ public final class AxUIBooster {
         if (origPrio != null) {
             try {
                 Process.setThreadScheduler(tid, Process.SCHED_OTHER, SCHED_DEFAULT_PRIORITY);
+            } catch (Throwable ignored) {
+            }
+            try {
                 Process.setThreadPriority(tid, origPrio);
             } catch (Throwable t) {
-                Slog.w(TAG, "Failed to restore thread " + tid + ": " + t.getMessage());
+                Slog.w(TAG, "Failed to restore thread priority for " + tid + ": " + t.getMessage());
             }
         }
     }
 
     private List<Integer> findHwuiThreadTids(int pid) {
+        if (pid <= INVALID_PID) {
+            return Collections.emptyList();
+        }
+
         List<Integer> cached = mHwuiThreadCache.get(pid);
         if (cached != null && !cached.isEmpty()) {
-            return cached;
+            boolean hasDeadThread = false;
+            for (int tid : cached) {
+                if (tid <= INVALID_PID || !new File(PATH_PROC_PREFIX + pid + PATH_TASK_SUFFIX + "/" + tid).exists()) {
+                    hasDeadThread = true;
+                    break;
+                }
+            }
+            if (!hasDeadThread) {
+                return cached;
+            }
+            mHwuiThreadCache.remove(pid);
         }
 
         List<Integer> result = new ArrayList<>();
@@ -191,6 +237,9 @@ public final class AxUIBooster {
     }
 
     private String readThreadComm(int pid, int tid) {
+        if (pid <= INVALID_PID || tid <= INVALID_PID) {
+            return null;
+        }
         File commFile = new File(PATH_PROC_PREFIX + pid + PATH_TASK_SUFFIX + "/" + tid + "/" + FILE_NAME_COMM);
         if (!commFile.exists()) {
             return null;

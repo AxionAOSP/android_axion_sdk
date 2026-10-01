@@ -19,6 +19,7 @@ package com.android.server.axdragonite;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Process;
+import android.util.Slog;
 import android.util.SparseArray;
 
 import com.android.internal.dragonite.AxDragoniteConstants;
@@ -82,11 +83,53 @@ public final class AxBoostSessionManager {
         return false;
     }
 
+    public void updateSessionTargetPid(int handle, int targetPid) {
+        synchronized (mLock) {
+            BoostSession existing = mActiveSessions.get(handle);
+            if (existing != null && existing.targetPid() != targetPid) {
+                BoostSession updated = new BoostSession(
+                        existing.handle(),
+                        existing.sceneId(),
+                        existing.callingPid(),
+                        existing.callingUid(),
+                        existing.packageName(),
+                        existing.acquireTimeMs(),
+                        targetPid,
+                        existing.config(),
+                        existing.timeoutRunnable(),
+                        existing.boostedTids()
+                );
+                mActiveSessions.put(handle, updated);
+            }
+        }
+    }
+
+    public boolean hasActiveSessionForPackage(String pkg) {
+        if (pkg == null || pkg.isEmpty()) {
+            return false;
+        }
+        synchronized (mLock) {
+            for (int i = 0; i < mActiveSessions.size(); i++) {
+                BoostSession session = mActiveSessions.valueAt(i);
+                if (pkg.equals(session.packageName())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     public int startSession(int sceneId, int callingPid, int callingUid, String pkg,
                             int targetPid, AxSceneRegistry.ScenarioConfig config,
                             int durationMs, Consumer<Integer> onTimeout) {
         final int handle = mNextHandle.getAndIncrement();
-        Runnable timeoutRunnable = () -> onTimeout.accept(handle);
+        Runnable timeoutRunnable = () -> {
+            try {
+                onTimeout.accept(handle);
+            } catch (Throwable t) {
+                Slog.e(TAG, "Uncaught error during session timeout callback for handle " + handle, t);
+            }
+        };
 
         BoostSession session = new BoostSession(handle, sceneId, callingPid, callingUid,
                 pkg, System.currentTimeMillis(), targetPid, config, timeoutRunnable);
@@ -111,6 +154,27 @@ public final class AxBoostSessionManager {
             mTimerHandler.removeCallbacks(session.timeoutRunnable());
         }
         return session;
+    }
+
+    public BoostSession endSessionForPackage(String pkg, int sceneId) {
+        if (pkg == null || pkg.isEmpty()) {
+            return null;
+        }
+        BoostSession foundSession = null;
+        synchronized (mLock) {
+            for (int i = 0; i < mActiveSessions.size(); i++) {
+                BoostSession s = mActiveSessions.valueAt(i);
+                if (pkg.equals(s.packageName()) && (sceneId <= 0 || s.sceneId() == sceneId)) {
+                    foundSession = s;
+                    mActiveSessions.removeAt(i);
+                    break;
+                }
+            }
+        }
+        if (foundSession != null) {
+            mTimerHandler.removeCallbacks(foundSession.timeoutRunnable());
+        }
+        return foundSession;
     }
 
     public int getActiveMaxBoostLevel() {

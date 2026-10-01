@@ -19,21 +19,33 @@ package com.android.axion.dragonite
 import android.app.ActivityManager
 import android.app.IActivityManager
 import android.os.Bundle
+import android.os.Looper
 import android.os.Process
 import android.util.Log
 import com.android.internal.dragonite.AxDragoniteConstants.*
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.jvm.JvmOverloads
 import kotlin.jvm.JvmStatic
 
 object AxDragonite {
     private val activeHandles = ConcurrentHashMap<Int, Int>()
+    private val nextHandle = AtomicInteger(1000)
+    private val bgExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "AxDragonite-Worker").apply { isDaemon = true }
+    }
 
     val amService: IActivityManager by lazy { ActivityManager.getService() }
 
     @JvmOverloads
     @JvmStatic
     fun acquire(sceneId: Int, durationMs: Int = DEFAULT_TIMEOUT_MS, bundle: Bundle? = null): Int {
+        val pid = Process.myPid()
+        val tid = Process.myTid()
+        if (pid <= 0 || tid <= 0) {
+            return INVALID_HANDLE
+        }
         val existingHandle = activeHandles[sceneId]
         if (existingHandle != null && existingHandle > MIN_VALID_HANDLE) {
             return existingHandle
@@ -42,13 +54,32 @@ object AxDragonite {
             return activeHandles[SCENE_NOTIFICATION_EXPAND] ?: activeHandles[SCENE_UNLOCK] ?: 0
         }
         val data = bundle ?: Bundle().apply {
-            val pid = Process.myPid()
-            val tid = Process.myTid()
             putInt(KEY_PID, pid)
             putInt(KEY_TARGET_PID, pid)
             putInt(KEY_CALLING_PID, pid)
             putInt(KEY_DURATION, durationMs)
             putString(KEY_PARAMS, "$OPCODE_CPU_AFFINITY:$pid,$tid;$OPCODE_SCHED_PRIORITY:$pid;$OPCODE_BOOST_SCHED:$tid")
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            val syntheticHandle = nextHandle.incrementAndGet()
+            activeHandles[sceneId] = syntheticHandle
+            bgExecutor.execute {
+                val realHandle = try {
+                    amService.sceneBoostAcquire(sceneId, data)
+                } catch (t: Throwable) {
+                    INVALID_HANDLE
+                }
+                if (realHandle > MIN_VALID_HANDLE) {
+                    if (activeHandles.replace(sceneId, syntheticHandle, realHandle) != true) {
+                        try {
+                            amService.sceneBoostRelease(realHandle)
+                        } catch (t: Throwable) {
+                            Log.w(TAG, "failed to release in-flight handle $realHandle: ${t.message}")
+                        }
+                    }
+                }
+            }
+            return syntheticHandle
         }
         val handle = try {
             amService.sceneBoostAcquire(sceneId, data)
@@ -74,10 +105,20 @@ object AxDragonite {
     fun releaseHandle(handle: Int) {
         if (handle <= MIN_VALID_HANDLE) return
         removeActiveHandle(handle)
-        try {
-            amService.sceneBoostRelease(handle)
-        } catch (t: Throwable) {
-            Log.w(TAG, "release failed for handle $handle: ${t.message}")
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            bgExecutor.execute {
+                try {
+                    amService.sceneBoostRelease(handle)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "release failed for handle $handle: ${t.message}")
+                }
+            }
+        } else {
+            try {
+                amService.sceneBoostRelease(handle)
+            } catch (t: Throwable) {
+                Log.w(TAG, "release failed for handle $handle: ${t.message}")
+            }
         }
     }
 

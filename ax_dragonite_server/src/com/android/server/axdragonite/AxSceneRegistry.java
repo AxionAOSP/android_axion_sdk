@@ -43,9 +43,9 @@ public final class AxSceneRegistry {
         mScenarios.put(SCENE_AX_APP_START, new ScenarioConfig(SCENE_AX_APP_START, DURATION_AX_APP_START_MS, BOOST_LEVEL_HEAVY, true, true));
         mScenarios.put(SCENE_FLING, new ScenarioConfig(SCENE_FLING, DURATION_FLING_MS, BOOST_LEVEL_HEAVY, true, false));
         mScenarios.put(SCENE_SCROLL, new ScenarioConfig(SCENE_SCROLL, DURATION_SCROLL_MS, BOOST_LEVEL_LIGHT, true, false));
-        mScenarios.put(SCENE_DATA_LOADING, new ScenarioConfig(SCENE_DATA_LOADING, DURATION_DEFAULT_FALLBACK_MS, BOOST_LEVEL_LIGHT, true, false));
-        mScenarios.put(SCENE_FOLDER_ANIMATION, new ScenarioConfig(SCENE_FOLDER_ANIMATION, DURATION_DEFAULT_FALLBACK_MS, BOOST_LEVEL_LIGHT, true, false));
-        mScenarios.put(SCENE_DRAG_AND_DROP, new ScenarioConfig(SCENE_DRAG_AND_DROP, DURATION_DEFAULT_FALLBACK_MS, BOOST_LEVEL_LIGHT, true, false));
+        mScenarios.put(SCENE_DATA_LOADING, new ScenarioConfig(SCENE_DATA_LOADING, DURATION_DATA_LOADING_MS, BOOST_LEVEL_HEAVY, false, false));
+        mScenarios.put(SCENE_FOLDER_ANIMATION, new ScenarioConfig(SCENE_FOLDER_ANIMATION, DURATION_FOLDER_ANIMATION_MS, BOOST_LEVEL_HEAVY, true, false));
+        mScenarios.put(SCENE_DRAG_AND_DROP, new ScenarioConfig(SCENE_DRAG_AND_DROP, DURATION_DRAG_AND_DROP_MS, BOOST_LEVEL_HEAVY, true, false));
         mScenarios.put(SCENE_AX_NOTIFICATION_EXPAND, new ScenarioConfig(SCENE_AX_NOTIFICATION_EXPAND, DURATION_AX_NOTIFICATION_EXPAND_MS, BOOST_LEVEL_HEAVY, true, false));
         mScenarios.put(SCENE_AX_UNLOCK, new ScenarioConfig(SCENE_AX_UNLOCK, DURATION_AX_UNLOCK_MS, BOOST_LEVEL_HEAVY, true, true));
         mScenarios.put(SCENE_AX_SYSTEMUI_ANIMATION, new ScenarioConfig(SCENE_AX_SYSTEMUI_ANIMATION, DURATION_AX_SYSTEMUI_ANIMATION_MS, BOOST_LEVEL_LIGHT, true, false));
@@ -85,7 +85,10 @@ public final class AxSceneRegistry {
                 || sceneId == SCENE_FLING_LEVEL_1
                 || sceneId == SCENE_AX_APP_START
                 || sceneId == SCENE_AX_NOTIFICATION_EXPAND
-                || sceneId == SCENE_AX_UNLOCK;
+                || sceneId == SCENE_AX_UNLOCK
+                || sceneId == SCENE_FOLDER_ANIMATION
+                || sceneId == SCENE_ROTATION
+                || sceneId == SCENE_DRAG_AND_DROP;
     }
 
     public boolean isSurfaceFlingerBoostScene(int sceneId) {
@@ -101,8 +104,38 @@ public final class AxSceneRegistry {
                 || sceneId == SCENE_AX_APP_START
                 || sceneId == SCENE_FOLDER_ANIMATION
                 || sceneId == SCENE_ROTATION
+                || sceneId == SCENE_DRAG_AND_DROP
                 || sceneId == SCENE_AX_NOTIFICATION_EXPAND
                 || sceneId == SCENE_AX_UNLOCK;
+    }
+
+    public boolean isShadeScene(int sceneId) {
+        switch (sceneId) {
+            case SCENE_AX_NOTIFICATION_EXPAND:
+            case SCENE_AX_SYSTEMUI_ANIMATION:
+            case SCENE_FLING:
+            case SCENE_FLING_LEVEL_1:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    public boolean isDemoteEligibleScene(int sceneId) {
+        switch (sceneId) {
+            case SCENE_AX_NOTIFICATION_EXPAND:
+            case SCENE_AX_SYSTEMUI_ANIMATION:
+            case SCENE_FLING:
+            case SCENE_FLING_LEVEL_1:
+            case SCENE_APP_LAUNCH_COLD:
+            case SCENE_APP_LAUNCH_WARM:
+            case SCENE_APP_EXIT_ANIM:
+            case SCENE_RECENT_TASK_SLIDE:
+            case SCENE_QUICK_SWITCH_APP:
+                return true;
+            default:
+                return false;
+        }
     }
 
     public int resolveDuration(int sceneId, String pkgName, int customDuration) {
@@ -110,6 +143,9 @@ public final class AxSceneRegistry {
             return AxActivityCustomizationUtil.getLaunchDuration(pkgName, customDuration);
         }
         if (sceneId == SCENE_FLING || sceneId == SCENE_FLING_LEVEL_1) {
+            if (pkgName != null && pkgName.contains(KEYWORD_LAUNCHER)) {
+                return DURATION_LAUNCHER_GESTURE_MS;
+            }
             return AxActivityCustomizationUtil.getFlingDuration(pkgName, customDuration);
         }
         return customDuration;

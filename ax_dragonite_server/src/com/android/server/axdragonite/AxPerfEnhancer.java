@@ -76,9 +76,13 @@ public final class AxPerfEnhancer {
     public static final String DESCRIPTOR_SURFACE_COMPOSER = "android.ui.ISurfaceComposer";
 
     public static final int TRANSACTION_SF_BOOST = 2007;
+    public static final int TRANSACTION_SF_VSYNC_PHASE = 2008;
 
     public static final int SF_BOOST_ENABLE = 1;
     public static final int SF_BOOST_DISABLE = 0;
+    public static final int SF_VSYNC_PHASE_EARLY = 1;
+    public static final int SF_VSYNC_PHASE_EARLY_START = 2;
+    public static final int SF_VSYNC_PHASE_LATE = 0;
 
     public static final int DURATION_HEAVY_MS = 1200;
     public static final int DURATION_LIGHT_MS = 600;
@@ -138,33 +142,55 @@ public final class AxPerfEnhancer {
     }
 
     public void sendSurfaceFlingerBoost(boolean enable) {
+        sendSurfaceFlingerBoost(enable, false);
+    }
+
+    public void sendSurfaceFlingerBoost(boolean enable, boolean urgentComposition) {
         if (enable) {
             writeNode(PATH_DEV_CPUSET_SYSTEM_BACKGROUND, mClusterManager.getSystemBackgroundCpusString());
         }
         getSurfaceFlinger();
         if (mSurfaceFlinger != null) {
             Parcel data = Parcel.obtain();
-            Parcel reply = Parcel.obtain();
             try {
                 data.writeInterfaceToken(DESCRIPTOR_SURFACE_COMPOSER);
                 data.writeInt(enable ? SF_BOOST_ENABLE : SF_BOOST_DISABLE);
                 data.writeInt(enable ? (int) mClusterManager.getBigMask() : 0xff);
-                mSurfaceFlinger.transact(TRANSACTION_SF_BOOST, data, reply, 0);
+                mSurfaceFlinger.transact(TRANSACTION_SF_BOOST, data, null, IBinder.FLAG_ONEWAY);
             } catch (Exception e) {
                 Slog.e(TAG, "sendSurfaceFlingerBoost failed: " + e.getMessage());
             } finally {
                 data.recycle();
-                reply.recycle();
             }
         }
+        int phaseMode = enable ? (urgentComposition ? SF_VSYNC_PHASE_EARLY_START : SF_VSYNC_PHASE_EARLY) : SF_VSYNC_PHASE_LATE;
+        sendSurfaceFlingerVsyncPhase(enable, phaseMode);
         if (!enable) {
             writeNode(PATH_DEV_CPUSET_SYSTEM_BACKGROUND, mClusterManager.getRestrictedSystemBgCpusString());
+        }
+    }
+
+    public void sendSurfaceFlingerVsyncPhase(boolean enable, int phaseMode) {
+        getSurfaceFlinger();
+        if (mSurfaceFlinger != null) {
+            Parcel data = Parcel.obtain();
+            try {
+                data.writeInterfaceToken(DESCRIPTOR_SURFACE_COMPOSER);
+                data.writeInt(enable ? 1 : 0);
+                data.writeInt(phaseMode);
+                mSurfaceFlinger.transact(TRANSACTION_SF_VSYNC_PHASE, data, null, IBinder.FLAG_ONEWAY);
+            } catch (Exception e) {
+                Slog.w(TAG, "sendSurfaceFlingerVsyncPhase failed: " + e.getMessage());
+            } finally {
+                data.recycle();
+            }
         }
     }
 
     public void migrateToTopAppCgroup(int pid) {
         if (pid > 0) {
             writeNode(PATH_CPUCTL_TOP_APP_PROCS, String.valueOf(pid));
+            writeNode(PATH_DEV_CPUSET_TOP_APP_PROCS, String.valueOf(pid));
         }
     }
 
@@ -183,10 +209,9 @@ public final class AxPerfEnhancer {
     }
 
     public void applyCpuBoost(int level) {
-        if (level <= AxDragoniteConstants.BOOST_LEVEL_NONE || level == mCurrentBoostLevel) {
+        if (level <= AxDragoniteConstants.BOOST_LEVEL_NONE) {
             return;
         }
-        mCurrentBoostLevel = level;
 
         PowerManagerInternal pmi = getPowerManagerInternal();
         if (pmi != null) {
@@ -202,6 +227,11 @@ public final class AxPerfEnhancer {
                 Slog.w(TAG, "PowerManagerInternal boost failed: " + t.getMessage());
             }
         }
+
+        if (level == mCurrentBoostLevel) {
+            return;
+        }
+        mCurrentBoostLevel = level;
 
         List<AxCpuClusterManager.ClusterInfo> clusters = mClusterManager.getClusters();
         for (AxCpuClusterManager.ClusterInfo cluster : clusters) {

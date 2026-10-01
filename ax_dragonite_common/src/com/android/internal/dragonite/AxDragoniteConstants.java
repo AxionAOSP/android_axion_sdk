@@ -81,7 +81,11 @@ public final class AxDragoniteConstants {
     public static final int DURATION_UNLOCK_MS = 800;
     public static final int DURATION_NOTIFICATION_STACK_SCROLL_MS = 400;
     public static final int DURATION_FLING_MS = 600;
+    public static final int DURATION_LAUNCHER_GESTURE_MS = 1000;
     public static final int DURATION_SCROLL_MS = 400;
+    public static final int DURATION_DATA_LOADING_MS = 1000;
+    public static final int DURATION_FOLDER_ANIMATION_MS = 400;
+    public static final int DURATION_DRAG_AND_DROP_MS = 600;
     public static final int DURATION_APP_LAUNCH_COLD_MS = 1200;
     public static final int DURATION_APP_LAUNCH_WARM_MS = 800;
     public static final int DURATION_APP_EXIT_ANIM_MS = 400;

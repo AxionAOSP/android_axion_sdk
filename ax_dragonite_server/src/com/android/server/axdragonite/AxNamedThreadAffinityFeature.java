@@ -54,9 +54,75 @@ public final class AxNamedThreadAffinityFeature {
     public static final String KEYWORD_SYSUI_BG = "SystemUIBg";
     public static final String KEYWORD_SYS_UI_BG = "SysUiBg";
     public static final String KEYWORD_SHADE_GC = "ShadeGC";
+    public static final String KEYWORD_HWUI_TASK = "hwuiTask";
+    public static final String KEYWORD_DAEMON_LOWER = "daemon";
+    public static final String KEYWORD_DAEMON_UPPER = "Daemon";
+
+    public static final String PREFIX_POOL = "pool-";
+    public static final String PREFIX_COROUTINES_DEFAULT = "DefaultDispatch";
+    public static final String PREFIX_SCRIM_UTILS = "ScrimUtils-bg";
+    public static final String PREFIX_RX = "Rx";
+    public static final String PREFIX_MEDIA_CODEC = "NDK MediaCodec_";
+    public static final String PREFIX_BINDER = "binder:";
+    public static final String PREFIX_AUDIO_OUT = "AudioOut_";
+    public static final String PREFIX_EXOPLAYER = "ExoPlayer:";
+    public static final String PREFIX_AUDIO_TRACK = "AudioTrack";
+
+    public static final String COMM_FAST_MIXER = "FastMixer";
     public static final String COMM_JIT_THREAD_POOL = "Jit thread pool";
     public static final String COMM_HEAP_TASK_DAEMON = "HeapTaskDaemon";
-    public static final String PREFIX_BINDER = "binder:";
+    public static final String COMM_SIGNAL_CATCHER = "Signal Catcher";
+    public static final String COMM_REFERENCE_QUEUE_SHORT = "ReferenceQueueD";
+    public static final String COMM_REFERENCE_QUEUE_DAEMON = "ReferenceQueueDaemon";
+    public static final String COMM_FINALIZER_DAEMON = "FinalizerDaemon";
+    public static final String COMM_FINALIZER_WATCHDOG_SHORT = "FinalizerWatchd";
+    public static final String COMM_FINALIZER_WATCHDOG_DAEMON = "FinalizerWatchdogDaemon";
+    public static final String COMM_TRACING_MUXER = "TracingMuxer";
+    public static final String COMM_QUEUED_WORK_SHORT = "queued-work-loo";
+    public static final String COMM_QUEUED_WORK_LOOP = "queued-work-loop";
+    public static final String COMM_WIFI_PICKER = "WifiPickerTrack";
+    public static final String COMM_CALLBACK_HANDLER = "callbackHandler";
+    public static final String COMM_WMSHELL_DESKTOP = "wmshell.desktop";
+    public static final String COMM_HWUI_TASK_0 = "hwuiTask0";
+    public static final String COMM_HWUI_TASK_1 = "hwuiTask1";
+    public static final String COMM_COMPOSER_SERVICE = "composer-servic";
+    public static final String COMM_SDM_EVENT = "SDM_EventThread";
+    public static final String PREFIX_HWBINDER = "HwBinder:";
+
+    private static final String[] LITTLE_AFFINITY_PREFIXES = {
+        KEYWORD_LAUNCHER_BG,
+        KEYWORD_LAUNCHER_LOADER,
+        KEYWORD_SYSUI_BG,
+        KEYWORD_SYS_UI_BG,
+        PREFIX_POOL,
+        PREFIX_COROUTINES_DEFAULT,
+        PREFIX_SCRIM_UTILS,
+        PREFIX_RX,
+        PREFIX_MEDIA_CODEC,
+        PREFIX_AUDIO_OUT,
+        PREFIX_EXOPLAYER,
+        PREFIX_AUDIO_TRACK
+    };
+
+    private static final String[] LITTLE_AFFINITY_KEYWORDS = {
+        KEYWORD_PRIMES,
+        KEYWORD_LOWPOOL,
+        KEYWORD_HIGHPOOL,
+        KEYWORD_DAEMON_LOWER,
+        KEYWORD_DAEMON_UPPER,
+        COMM_FAST_MIXER
+    };
+
+    private static final String[] BOOST_AFFINITY_KEYWORDS = {
+        KEYWORD_WMSHELL,
+        KEYWORD_SPLASH,
+        KEYWORD_THUMBNAIL,
+        KEYWORD_HWUI_TASK,
+        COMM_COMPOSER_SERVICE,
+        COMM_SDM_EVENT,
+        PREFIX_HWBINDER
+    };
+
     public static final int PID_BUFFER_CAPACITY = 1024;
     public static final int COMM_BUFFER_SIZE = 32;
 
@@ -102,8 +168,23 @@ public final class AxNamedThreadAffinityFeature {
         mDefaultCommRules.put(COMM_UI_THREAD_HELPER, mClusterManager.getBoostMask());
         mDefaultCommRules.put(COMM_JIT_THREAD_POOL, mClusterManager.getLittleMask());
         mDefaultCommRules.put(COMM_HEAP_TASK_DAEMON, mClusterManager.getLittleMask());
+        mDefaultCommRules.put(COMM_FAST_MIXER, mClusterManager.getLittleMask());
         mDefaultCommRules.put(KEYWORD_PRIMES, mClusterManager.getLittleMask());
         mDefaultCommRules.put(KEYWORD_LOWPOOL, mClusterManager.getLittleMask());
+        mDefaultCommRules.put(COMM_SIGNAL_CATCHER, mClusterManager.getLittleMask());
+        mDefaultCommRules.put(COMM_REFERENCE_QUEUE_SHORT, mClusterManager.getLittleMask());
+        mDefaultCommRules.put(COMM_REFERENCE_QUEUE_DAEMON, mClusterManager.getLittleMask());
+        mDefaultCommRules.put(COMM_FINALIZER_DAEMON, mClusterManager.getLittleMask());
+        mDefaultCommRules.put(COMM_FINALIZER_WATCHDOG_SHORT, mClusterManager.getLittleMask());
+        mDefaultCommRules.put(COMM_FINALIZER_WATCHDOG_DAEMON, mClusterManager.getLittleMask());
+        mDefaultCommRules.put(COMM_TRACING_MUXER, mClusterManager.getLittleMask());
+        mDefaultCommRules.put(COMM_QUEUED_WORK_SHORT, mClusterManager.getLittleMask());
+        mDefaultCommRules.put(COMM_QUEUED_WORK_LOOP, mClusterManager.getLittleMask());
+        mDefaultCommRules.put(COMM_WIFI_PICKER, mClusterManager.getLittleMask());
+        mDefaultCommRules.put(COMM_CALLBACK_HANDLER, mClusterManager.getLittleMask());
+        mDefaultCommRules.put(COMM_WMSHELL_DESKTOP, mClusterManager.getBoostMask());
+        mDefaultCommRules.put(COMM_HWUI_TASK_0, mClusterManager.getBoostMask());
+        mDefaultCommRules.put(COMM_HWUI_TASK_1, mClusterManager.getBoostMask());
     }
 
     public void applyNamedAffinityForPid(int pid) {
@@ -125,20 +206,31 @@ public final class AxNamedThreadAffinityFeature {
         Integer prevTaskCount = mPidTaskCountMap.get(pid);
         boolean isSystemServer = (pid == Process.myPid());
         if (cachedRules != null && cachedRules.size() > 1 && (!isSystemServer || (prevTaskCount != null && prevTaskCount == activeCount))) {
-            for (Map.Entry<Integer, Long> entry : cachedRules.entrySet()) {
-                setThreadAffinity(entry.getKey(), entry.getValue());
+            boolean hasDeadThread = false;
+            for (int tid : cachedRules.keySet()) {
+                if (tid <= INVALID_PID || !new File(PATH_PROC_PREFIX + pid + PATH_TASK_SUFFIX + "/" + tid).exists()) {
+                    hasDeadThread = true;
+                    break;
+                }
             }
-            return;
+            if (!hasDeadThread) {
+                for (Map.Entry<Integer, Long> entry : cachedRules.entrySet()) {
+                    setThreadAffinity(entry.getKey(), entry.getValue());
+                }
+                return;
+            }
+            mPidThreadAffinityCache.remove(pid);
+            mPidTaskCountMap.remove(pid);
         }
 
+        boolean isUiSystemProc = (mProcessTracker != null
+                && (pid == mProcessTracker.getLauncherPid() || pid == mProcessTracker.getSystemUiPid() || pid == mProcessTracker.getComposerPid()));
         Map<Integer, Long> rulesToCache = new HashMap<>();
         for (int tid : tids) {
             if (tid <= 0) {
                 break;
             }
             if (tid == pid) {
-                boolean isUiSystemProc = (mProcessTracker != null
-                        && (pid == mProcessTracker.getLauncherPid() || pid == mProcessTracker.getSystemUiPid()));
                 long mask = isUiSystemProc ? mClusterManager.getBigMask() : mClusterManager.getBoostMask();
                 rulesToCache.put(tid, mask);
                 setThreadAffinity(tid, mask);
@@ -147,7 +239,7 @@ public final class AxNamedThreadAffinityFeature {
             String comm = readComm(tid);
             Long mask = resolveThreadMask(comm);
             if (mask == null) {
-                if (isSystemServer && comm != null && comm.startsWith(PREFIX_BINDER)) {
+                if ((isSystemServer || isUiSystemProc) && comm != null && comm.startsWith(PREFIX_BINDER)) {
                     mask = mClusterManager.getBoostMask();
                 } else {
                     continue;
@@ -184,25 +276,31 @@ public final class AxNamedThreadAffinityFeature {
         if (mask != null) {
             return mask;
         }
-        if (comm.contains(KEYWORD_PRIMES)
-                || comm.contains(KEYWORD_LOWPOOL)
-                || comm.contains(KEYWORD_HIGHPOOL)
-                || comm.startsWith(KEYWORD_LAUNCHER_BG)
-                || comm.startsWith(KEYWORD_LAUNCHER_LOADER)
-                || comm.startsWith(KEYWORD_SYSUI_BG)
-                || comm.startsWith(KEYWORD_SYS_UI_BG)
-                || comm.equals(KEYWORD_SHADE_GC)) {
+        if (comm.equals(KEYWORD_SHADE_GC)) {
             return mClusterManager.getLittleMask();
         }
-        if (comm.contains(KEYWORD_WMSHELL)
-                || comm.contains(KEYWORD_SPLASH)
-                || comm.contains(KEYWORD_THUMBNAIL)) {
-            return mClusterManager.getBoostMask();
+        for (int i = 0; i < LITTLE_AFFINITY_PREFIXES.length; i++) {
+            if (comm.startsWith(LITTLE_AFFINITY_PREFIXES[i])) {
+                return mClusterManager.getLittleMask();
+            }
+        }
+        for (int i = 0; i < LITTLE_AFFINITY_KEYWORDS.length; i++) {
+            if (comm.contains(LITTLE_AFFINITY_KEYWORDS[i])) {
+                return mClusterManager.getLittleMask();
+            }
+        }
+        for (int i = 0; i < BOOST_AFFINITY_KEYWORDS.length; i++) {
+            if (comm.contains(BOOST_AFFINITY_KEYWORDS[i])) {
+                return mClusterManager.getBoostMask();
+            }
         }
         return null;
     }
 
     private void elevateThreadPriority(int tid) {
+        if (tid <= INVALID_PID) {
+            return;
+        }
         try {
             Process.setThreadPriority(tid, Process.THREAD_PRIORITY_URGENT_DISPLAY);
         } catch (Throwable ignored) {
@@ -213,6 +311,8 @@ public final class AxNamedThreadAffinityFeature {
         if (pid <= INVALID_PID) {
             return;
         }
+        mPidThreadAffinityCache.remove(pid);
+        mPidTaskCountMap.remove(pid);
         long littleMask = mClusterManager.getLittleMask();
         setThreadAffinity(pid, littleMask);
         int[] tids = Process.getPids(PATH_PROC_PREFIX + pid + PATH_TASK_SUFFIX, new int[PID_BUFFER_CAPACITY]);
@@ -224,6 +324,78 @@ public final class AxNamedThreadAffinityFeature {
                 break;
             }
             setThreadAffinity(tid, littleMask);
+        }
+    }
+
+    public void promoteLoaderThreadsForPid(int pid) {
+        if (pid <= INVALID_PID) {
+            return;
+        }
+        int[] tids = Process.getPids(PATH_PROC_PREFIX + pid + PATH_TASK_SUFFIX, new int[PID_BUFFER_CAPACITY]);
+        if (tids == null) {
+            return;
+        }
+        long bigMask = mClusterManager.getBigMask();
+        for (int tid : tids) {
+            if (tid <= 0) {
+                break;
+            }
+            String comm = readComm(tid);
+            if (comm != null && (comm.startsWith(KEYWORD_LAUNCHER_LOADER) || comm.startsWith(KEYWORD_LAUNCHER_BG))) {
+                setThreadAffinity(tid, bigMask);
+                elevateThreadPriority(tid);
+            }
+        }
+    }
+
+    public void restoreLoaderThreadsForPid(int pid) {
+        if (pid <= INVALID_PID) {
+            return;
+        }
+        int[] tids = Process.getPids(PATH_PROC_PREFIX + pid + PATH_TASK_SUFFIX, new int[PID_BUFFER_CAPACITY]);
+        if (tids == null) {
+            return;
+        }
+        long littleMask = mClusterManager.getLittleMask();
+        for (int tid : tids) {
+            if (tid <= 0) {
+                break;
+            }
+            String comm = readComm(tid);
+            if (comm != null && (comm.startsWith(KEYWORD_LAUNCHER_LOADER) || comm.startsWith(KEYWORD_LAUNCHER_BG))) {
+                setThreadAffinity(tid, littleMask);
+                resetThreadPriority(tid);
+            }
+        }
+    }
+
+    private void resetThreadPriority(int tid) {
+        if (tid <= INVALID_PID) {
+            return;
+        }
+        try {
+            Process.setThreadPriority(tid, Process.THREAD_PRIORITY_BACKGROUND);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    public void boostDisplayComposer() {
+        if (mProcessTracker == null) {
+            return;
+        }
+        int composerPid = mProcessTracker.getComposerPid();
+        if (composerPid > INVALID_PID) {
+            applyNamedAffinityForPid(composerPid);
+        }
+    }
+
+    public void restoreDisplayComposer() {
+        if (mProcessTracker == null) {
+            return;
+        }
+        int composerPid = mProcessTracker.getComposerPid();
+        if (composerPid > INVALID_PID) {
+            resetAffinityForPid(composerPid);
         }
     }
 
@@ -248,6 +420,9 @@ public final class AxNamedThreadAffinityFeature {
         for (File threadDir : threads) {
             try {
                 int tid = Integer.parseInt(threadDir.getName());
+                if (tid <= INVALID_PID) {
+                    continue;
+                }
                 setThreadAffinity(tid, allMask);
             } catch (Exception ignored) {
             }
@@ -255,14 +430,21 @@ public final class AxNamedThreadAffinityFeature {
     }
 
     public void setThreadAffinity(int tid, long mask) {
+        if (tid <= INVALID_PID) {
+            return;
+        }
         try {
             Process.setThreadAffinity(tid, (int) mask);
+        } catch (IllegalArgumentException ignored) {
         } catch (Throwable t) {
             Slog.w(TAG, "Failed to set thread affinity for " + tid + ": " + t.getMessage());
         }
     }
 
     private String readComm(int tid) {
+        if (tid <= INVALID_PID) {
+            return null;
+        }
         File file = new File(PATH_PROC_PREFIX + tid + PATH_COMM_SUFFIX);
         if (!file.exists()) {
             return null;

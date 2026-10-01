@@ -17,6 +17,7 @@
 package com.android.server.axdragonite;
 
 import android.os.SystemProperties;
+import com.android.internal.dragonite.AxDragoniteConstants;
 
 /**
  * @hide
@@ -38,7 +39,7 @@ public final class AxFrameInsertManager {
         if (!mEnabled) {
             return;
         }
-        if (sceneId == AxDragonite.SCENE_FLING || sceneId == AxDragonite.SCENE_RECENT_TASK_SLIDE) {
+        if (sceneId == AxDragoniteConstants.SCENE_FLING || sceneId == AxDragoniteConstants.SCENE_RECENT_TASK_SLIDE) {
             SystemProperties.set(PROP_CHOREOGRAPHER_SKIP_WARNING, VALUE_ENABLED);
         }
     }
@@ -47,7 +48,7 @@ public final class AxFrameInsertManager {
         if (!mEnabled) {
             return;
         }
-        if (sceneId == AxDragonite.SCENE_FLING || sceneId == AxDragonite.SCENE_RECENT_TASK_SLIDE) {
+        if (sceneId == AxDragoniteConstants.SCENE_FLING || sceneId == AxDragoniteConstants.SCENE_RECENT_TASK_SLIDE) {
             SystemProperties.set(PROP_CHOREOGRAPHER_SKIP_WARNING, VALUE_DISABLED);
         }
     }

@@ -60,17 +60,22 @@ public final class AxBoostAdjuster {
     private final Handler mTimerHandler;
 
     private final Runnable mRestoreInputBoostRunnable;
-    private boolean mInputBoostActive = false;
+    private final Runnable mOnInputBoostExpired;
 
-    public AxBoostAdjuster(AxPerfEnhancer perfEnhancer, AxCpuClusterManager clusterManager) {
+    public AxBoostAdjuster(AxPerfEnhancer perfEnhancer, AxCpuClusterManager clusterManager, Runnable onInputBoostExpired) {
         this.mPerfEnhancer = perfEnhancer;
         this.mClusterManager = clusterManager;
         this.mFreezerController = new AxFreezerController();
+        this.mOnInputBoostExpired = onInputBoostExpired;
         this.mRestoreInputBoostRunnable = this::restoreInputBoost;
 
         mTimerThread = new HandlerThread(THREAD_NAME_ADJUSTER, Process.THREAD_PRIORITY_URGENT_DISPLAY);
         mTimerThread.start();
         mTimerHandler = new Handler(mTimerThread.getLooper());
+    }
+
+    public AxBoostAdjuster(AxPerfEnhancer perfEnhancer, AxCpuClusterManager clusterManager) {
+        this(perfEnhancer, clusterManager, null);
     }
 
     public void setThreadAffinity(int tid, int affinityType) {
@@ -101,19 +106,16 @@ public final class AxBoostAdjuster {
     }
 
     private synchronized void restoreInputBoost() {
-        mInputBoostActive = false;
         mPerfEnhancer.limitAxForeground(false);
         mPerfEnhancer.restrictBackgroundCpusets(false);
+        if (mOnInputBoostExpired != null) {
+            mOnInputBoostExpired.run();
+        }
     }
 
     public void inputBoost() {
         synchronized (this) {
-            if (mInputBoostActive) {
-                mTimerHandler.removeCallbacks(mRestoreInputBoostRunnable);
-                mTimerHandler.postDelayed(mRestoreInputBoostRunnable, DURATION_INPUT_BOOST_MS);
-                return;
-            }
-            mInputBoostActive = true;
+            mTimerHandler.removeCallbacks(mRestoreInputBoostRunnable);
             mPerfEnhancer.limitAxForeground(true);
             mPerfEnhancer.restrictBackgroundCpusets(true);
             mTimerHandler.postDelayed(mRestoreInputBoostRunnable, DURATION_INPUT_BOOST_MS);

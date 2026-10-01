@@ -36,21 +36,6 @@ import java.util.Set;
 public final class AxDragonite {
     private static final String TAG = AxDragoniteConstants.TAG;
 
-    public static final int SCENE_FLING = AxDragoniteConstants.SCENE_FLING;
-    public static final int SCENE_SCROLL = AxDragoniteConstants.SCENE_SCROLL;
-    public static final int SCENE_APP_LAUNCH_COLD = AxDragoniteConstants.SCENE_APP_LAUNCH_COLD;
-    public static final int SCENE_APP_LAUNCH_WARM = AxDragoniteConstants.SCENE_APP_LAUNCH_WARM;
-    public static final int SCENE_ROTATION = AxDragoniteConstants.SCENE_ROTATION;
-    public static final int SCENE_RECENT_TASK_SLIDE = AxDragoniteConstants.SCENE_RECENT_TASK_SLIDE;
-    public static final int SCENE_CAMERA_OPEN = AxDragoniteConstants.SCENE_CAMERA_OPEN;
-    public static final int SCENE_GAME_MODE = AxDragoniteConstants.SCENE_GAME_MODE;
-    public static final int SCENE_AX_APP_START = AxDragoniteConstants.SCENE_AX_APP_START;
-    public static final int SCENE_AX_FLING = AxDragoniteConstants.SCENE_AX_FLING;
-
-    public static final int BOOST_LEVEL_NONE = AxDragoniteConstants.BOOST_LEVEL_NONE;
-    public static final int BOOST_LEVEL_LIGHT = AxDragoniteConstants.BOOST_LEVEL_LIGHT;
-    public static final int BOOST_LEVEL_HEAVY = AxDragoniteConstants.BOOST_LEVEL_HEAVY;
-
     private static AxDragonite sInstance;
 
     private final AxCpuClusterManager mClusterManager;
@@ -86,7 +71,7 @@ public final class AxDragonite {
         mUIBooster = new AxUIBooster(mPerfEnhancer, mClusterManager);
         mFrameInsertManager = new AxFrameInsertManager();
         mTraceManager = new AxPerfTraceManager();
-        mBoostAdjuster = new AxBoostAdjuster(mPerfEnhancer, mClusterManager);
+        mBoostAdjuster = new AxBoostAdjuster(mPerfEnhancer, mClusterManager, this::onInputBoostExpired);
 
         mSceneRegistry = new AxSceneRegistry();
         mSessionManager = new AxBoostSessionManager();
@@ -95,9 +80,22 @@ public final class AxDragonite {
         mWorkerThread = new HandlerThread(WORKER_THREAD_NAME, Process.THREAD_PRIORITY_FOREGROUND);
         mWorkerThread.start();
         mWorkerHandler = new Handler(mWorkerThread.getLooper());
-        mWorkerHandler.post(() -> mAffinityFeature.applyNamedAffinityForPid(Process.myPid()));
+        postWorkerTask(() -> {
+            mAffinityFeature.applyNamedAffinityForPid(Process.myPid());
+            mProcessTracker.getComposerPid();
+        });
 
         Slog.i(TAG, "AxDragonite subsystem initialized");
+    }
+
+    private void postWorkerTask(Runnable task) {
+        mWorkerHandler.post(() -> {
+            try {
+                task.run();
+            } catch (Throwable t) {
+                Slog.e(TAG, "Uncaught error in AxDragonite worker task", t);
+            }
+        });
     }
 
     public record BoostRequest(
@@ -125,120 +123,173 @@ public final class AxDragonite {
     }
 
     public int sceneBoostAcquire(int sceneId, Bundle data) {
-        AxSceneRegistry.ScenarioConfig config = mSceneRegistry.getConfig(sceneId);
-        BoostRequest request = BoostRequest.parse(data, config.defaultTimeoutMs(), Binder.getCallingPid());
+        try {
+            AxSceneRegistry.ScenarioConfig config = mSceneRegistry.getConfig(sceneId);
+            BoostRequest request = BoostRequest.parse(data, config.defaultTimeoutMs(), Binder.getCallingPid());
 
-        if (request.handle() > 0 && mSessionManager.extendSession(request.handle(), request.durationMs())) {
-            return request.handle();
-        }
+            if (request.handle() > 0 && mSessionManager.extendSession(request.handle(), request.durationMs())) {
+                return request.handle();
+            }
 
-        int duration = mSceneRegistry.resolveDuration(sceneId, request.packageName(), request.durationMs());
+            int duration = mSceneRegistry.resolveDuration(sceneId, request.packageName(), request.durationMs());
+            if (request.targetPid() > 0 && request.targetPid() == mProcessTracker.getLauncherPid() && duration < DURATION_LAUNCHER_GESTURE_MS) {
+                duration = DURATION_LAUNCHER_GESTURE_MS;
+            }
 
-        int handle = mSessionManager.startSession(
-                sceneId, Binder.getCallingPid(), Binder.getCallingUid(),
-                request.packageName(), request.targetPid(), config, duration,
-                this::sceneBoostRelease
-        );
+            int handle = mSessionManager.startSession(
+                    sceneId, Binder.getCallingPid(), Binder.getCallingUid(),
+                    request.packageName(), request.targetPid(), config, duration,
+                    this::sceneBoostRelease
+            );
 
-        mWorkerHandler.post(() -> {
-            mTraceManager.reportSceneAcquire(sceneId, handle);
-            mFrameInsertManager.onSceneStart(sceneId);
+            postWorkerTask(() -> {
+                mTraceManager.reportSceneAcquire(sceneId, handle);
+                mFrameInsertManager.onSceneStart(sceneId);
 
-            mSessionManager.forEachActiveSession(s -> {
-                if (s.handle() == handle) {
-                    mOpcodeDispatcher.parseAndApply(request.params(), s);
+                mSessionManager.forEachActiveSession(s -> {
+                    if (s.handle() == handle) {
+                        mOpcodeDispatcher.parseAndApply(request.params(), s);
+                    }
+                });
+
+                mPerfEnhancer.applyCpuBoost(config.boostLevel());
+                if (mSceneRegistry.isTransitionScene(sceneId)) {
+                    applyAnimationBoost(sceneId, request.targetPid(), config.boostLevel(), true);
+                    mPerfEnhancer.restrictBackgroundCpusets(true);
+                    if (request.targetPid() > 0) {
+                        mAffinityFeature.applyNamedAffinityForPid(request.targetPid());
+                    }
+                } else if (config.boostRenderThread() && request.targetPid() > 0) {
+                    mUIBooster.boostProcess(request.targetPid(), config.boostLevel());
+                    mAffinityFeature.applyNamedAffinityForPid(request.targetPid());
+                }
+
+                if (config.pinKswapd()) {
+                    mPerfEnhancer.pinKswapd(mClusterManager.getLittleMask());
+                }
+
+                if (sceneId == SCENE_APP_LAUNCH_COLD || sceneId == SCENE_CAMERA_OPEN || sceneId == SCENE_AX_APP_START) {
+                    Set<Integer> exempt = new HashSet<>();
+                    if (request.targetPid() > 0) exempt.add(request.targetPid());
+                    int lPid = mProcessTracker.getLauncherPid();
+                    int sPid = mProcessTracker.getSystemUiPid();
+                    if (lPid > 0) exempt.add(lPid);
+                    if (sPid > 0) exempt.add(sPid);
+                    mBoostAdjuster.freezeBackgroundProcesses(true, exempt);
+                }
+
+                if (sceneId == SCENE_GAME_MODE) {
+                    applyGameMode(true);
+                } else if (sceneId == SCENE_CAMERA_OPEN) {
+                    mPerfEnhancer.limitAxForeground(true);
+                } else if (sceneId == SCENE_DATA_LOADING) {
+                    mPerfEnhancer.applyCpuBoost(AxDragoniteConstants.BOOST_LEVEL_HEAVY);
+                    if (request.targetPid() > 0) {
+                        mAffinityFeature.promoteLoaderThreadsForPid(request.targetPid());
+                        mPerfEnhancer.migrateToTopAppCgroup(request.targetPid());
+                    }
+                }
+
+                if (mSceneRegistry.isSurfaceFlingerBoostScene(sceneId) || config.boostRenderThread()) {
+                    boolean isUrgentComposition = mSceneRegistry.isShadeScene(sceneId)
+                            || mSceneRegistry.isTransitionScene(sceneId)
+                            || (request.targetPid() > 0 && request.targetPid() == mProcessTracker.getLauncherPid());
+                    mPerfEnhancer.sendSurfaceFlingerBoost(true, isUrgentComposition);
+                    mAffinityFeature.boostDisplayComposer();
                 }
             });
 
-            mPerfEnhancer.applyCpuBoost(config.boostLevel());
-            if (mSceneRegistry.isTransitionScene(sceneId)) {
-                applyAnimationBoost(sceneId, request.targetPid(), config.boostLevel(), true);
-                mPerfEnhancer.restrictBackgroundCpusets(true);
-            } else if (config.boostRenderThread() && request.targetPid() > 0) {
-                mUIBooster.boostProcess(request.targetPid(), config.boostLevel());
-                mAffinityFeature.applyNamedAffinityForPid(request.targetPid());
-            }
-
-            if (config.pinKswapd()) {
-                mPerfEnhancer.pinKswapd(mClusterManager.getLittleMask());
-            }
-
-            if (sceneId == SCENE_APP_LAUNCH_COLD || sceneId == SCENE_CAMERA_OPEN || sceneId == SCENE_AX_APP_START) {
-                Set<Integer> exempt = new HashSet<>();
-                if (request.targetPid() > 0) exempt.add(request.targetPid());
-                int lPid = mProcessTracker.getLauncherPid();
-                int sPid = mProcessTracker.getSystemUiPid();
-                if (lPid > 0) exempt.add(lPid);
-                if (sPid > 0) exempt.add(sPid);
-                mBoostAdjuster.freezeBackgroundProcesses(true, exempt);
-            }
-
-            if (sceneId == SCENE_GAME_MODE) {
-                applyGameMode(true);
-            } else if (sceneId == SCENE_CAMERA_OPEN) {
-                mPerfEnhancer.limitAxForeground(true);
-            }
-
-            if (mSceneRegistry.isSurfaceFlingerBoostScene(sceneId) || config.boostRenderThread()) {
-                mPerfEnhancer.sendSurfaceFlingerBoost(true);
-            }
-        });
-
-        return handle;
+            return handle;
+        } catch (Throwable t) {
+            Slog.e(TAG, "Uncaught error in sceneBoostAcquire for scene " + sceneId, t);
+            return INVALID_HANDLE;
+        }
     }
 
     public void sceneBoostRelease(int handle) {
-        AxBoostSessionManager.BoostSession session = mSessionManager.endSession(handle);
-        if (session == null) {
+        try {
+            AxBoostSessionManager.BoostSession session = mSessionManager.endSession(handle);
+            if (session == null) {
+                return;
+            }
+            postWorkerTask(() -> handleSessionRelease(session, handle));
+        } catch (Throwable t) {
+            Slog.e(TAG, "Uncaught error in sceneBoostRelease for handle " + handle, t);
+        }
+    }
+
+    public void onWindowsDrawn(String pkg, int pid) {
+        if (pkg == null || pkg.isEmpty()) {
             return;
         }
-
-        mWorkerHandler.post(() -> {
-            mTraceManager.reportSceneRelease(session.sceneId(), handle);
-            mFrameInsertManager.onSceneEnd(session.sceneId());
-
-            if (mSceneRegistry.isTransitionScene(session.sceneId())) {
-                applyAnimationBoost(session.sceneId(), session.targetPid(), session.config().boostLevel(), false);
-                if (!mSessionManager.hasActiveTransitionScene(mSceneRegistry)) {
-                    mPerfEnhancer.restrictBackgroundCpusets(false);
-                }
-            } else if (session.config().boostRenderThread() && session.targetPid() > 0) {
-                mUIBooster.restoreProcess(session.targetPid());
+        postWorkerTask(() -> {
+            AxBoostSessionManager.BoostSession session =
+                    mSessionManager.endSessionForPackage(pkg, SCENE_APP_LAUNCH_WARM);
+            if (session == null) {
+                session = mSessionManager.endSessionForPackage(pkg, SCENE_APP_LAUNCH_COLD);
             }
-
-            for (int tid : session.boostedTids()) {
-                try {
-                    Process.setThreadScheduler(tid, Process.SCHED_OTHER, 0);
-                    Process.setThreadPriority(tid, Process.THREAD_PRIORITY_DEFAULT);
-                } catch (Throwable ignored) {
-                }
-            }
-
-            if (session.sceneId() == SCENE_APP_LAUNCH_COLD || session.sceneId() == SCENE_CAMERA_OPEN || session.sceneId() == SCENE_AX_APP_START) {
-                mBoostAdjuster.freezeBackgroundProcesses(false);
-            }
-
-            if (session.sceneId() == SCENE_GAME_MODE) {
-                applyGameMode(false);
-            } else if (session.sceneId() == SCENE_CAMERA_OPEN) {
-                mPerfEnhancer.limitAxForeground(false);
-            }
-
-            int maxBoostLevel = mSessionManager.getActiveMaxBoostLevel();
-            if (maxBoostLevel > BOOST_LEVEL_NONE) {
-                mPerfEnhancer.applyCpuBoost(maxBoostLevel);
-            } else {
-                mPerfEnhancer.restoreCpuBoost();
-            }
-
-            if (!mSessionManager.hasActivePinKswapd()) {
-                mPerfEnhancer.pinKswapd(mClusterManager.getAllMask());
-            }
-
-            if (!mSessionManager.hasActiveSurfaceFlingerBoost(mSceneRegistry)) {
-                mPerfEnhancer.sendSurfaceFlingerBoost(false);
+            if (session != null) {
+                handleSessionRelease(session, session.handle());
             }
         });
+    }
+
+    private void handleSessionRelease(AxBoostSessionManager.BoostSession session, int handle) {
+        mTraceManager.reportSceneRelease(session.sceneId(), handle);
+        mFrameInsertManager.onSceneEnd(session.sceneId());
+
+        if (mSceneRegistry.isTransitionScene(session.sceneId())) {
+            applyAnimationBoost(session.sceneId(), session.targetPid(), session.config().boostLevel(), false);
+            if (!mSessionManager.hasActiveTransitionScene(mSceneRegistry)) {
+                mPerfEnhancer.restrictBackgroundCpusets(false);
+                if (session.targetPid() > 0) {
+                    mAffinityFeature.resetAffinityForPid(session.targetPid());
+                }
+            }
+        } else if (session.config().boostRenderThread() && session.targetPid() > 0) {
+            mUIBooster.restoreProcess(session.targetPid());
+        }
+
+        if (session.sceneId() == SCENE_DATA_LOADING && session.targetPid() > 0) {
+            mAffinityFeature.restoreLoaderThreadsForPid(session.targetPid());
+        }
+
+        for (int tid : session.boostedTids()) {
+            if (tid <= 0) {
+                continue;
+            }
+            try {
+                Process.setThreadScheduler(tid, Process.SCHED_OTHER, 0);
+                Process.setThreadPriority(tid, Process.THREAD_PRIORITY_DEFAULT);
+            } catch (Throwable ignored) {
+            }
+        }
+
+        if (session.sceneId() == SCENE_APP_LAUNCH_COLD || session.sceneId() == SCENE_CAMERA_OPEN || session.sceneId() == SCENE_AX_APP_START) {
+            mBoostAdjuster.freezeBackgroundProcesses(false);
+        }
+
+        if (session.sceneId() == SCENE_GAME_MODE) {
+            applyGameMode(false);
+        } else if (session.sceneId() == SCENE_CAMERA_OPEN) {
+            mPerfEnhancer.limitAxForeground(false);
+        }
+
+        int maxBoostLevel = mSessionManager.getActiveMaxBoostLevel();
+        if (maxBoostLevel > BOOST_LEVEL_NONE) {
+            mPerfEnhancer.applyCpuBoost(maxBoostLevel);
+        } else {
+            mPerfEnhancer.restoreCpuBoost();
+        }
+
+        if (!mSessionManager.hasActivePinKswapd()) {
+            mPerfEnhancer.pinKswapd(mClusterManager.getAllMask());
+        }
+
+        if (!mSessionManager.hasActiveSurfaceFlingerBoost(mSceneRegistry)) {
+            mPerfEnhancer.sendSurfaceFlingerBoost(false);
+            mAffinityFeature.restoreDisplayComposer();
+        }
     }
 
     public void animationBoost(int pid, long boostDurationMs) {
@@ -261,27 +312,111 @@ public final class AxDragonite {
         }
     }
 
+    private enum SceneRole {
+        LAUNCHER_INTERACTION,
+        SHADE_INTERACTION,
+        APP_TRANSITION,
+        STANDALONE
+    }
+
+    private SceneRole getSceneRole(int sceneId, int targetPid, int sysUiPid, int launcherPid) {
+        if (targetPid > INVALID_PID && targetPid == launcherPid) {
+            return SceneRole.LAUNCHER_INTERACTION;
+        }
+        if (targetPid == sysUiPid || mSceneRegistry.isShadeScene(sceneId)) {
+            return SceneRole.SHADE_INTERACTION;
+        }
+        if (mSceneRegistry.isTransitionScene(sceneId)) {
+            return SceneRole.APP_TRANSITION;
+        }
+        return SceneRole.STANDALONE;
+    }
+
     private void applyAnimationBoost(int sceneId, int targetPid, int boostLevel, boolean enable) {
-        setProcessTransitionState(targetPid, boostLevel, enable);
+        if (targetPid <= INVALID_PID) {
+            return;
+        }
+
         int sysUiPid = mProcessTracker.getSystemUiPid();
-        if (sysUiPid != targetPid) {
-            setProcessTransitionState(sysUiPid, boostLevel, enable);
-        }
         int launcherPid = mProcessTracker.getLauncherPid();
-        if (launcherPid > 0 && launcherPid != targetPid) {
-            if (sceneId == SCENE_AX_NOTIFICATION_EXPAND || sceneId == SCENE_AX_SYSTEMUI_ANIMATION) {
-                if (enable) {
-                    mAffinityFeature.yieldPidToLittleCores(launcherPid);
-                } else {
-                    mAffinityFeature.applyNamedAffinityForPid(launcherPid);
-                }
-            } else {
-                setProcessTransitionState(launcherPid, boostLevel, enable);
-            }
+        SceneRole role = getSceneRole(sceneId, targetPid, sysUiPid, launcherPid);
+
+        setProcessTransitionState(targetPid, boostLevel, enable);
+
+        switch (role) {
+            case LAUNCHER_INTERACTION:
+                handleLauncherInteraction(targetPid, sysUiPid, enable);
+                break;
+            case SHADE_INTERACTION:
+                handleShadeInteraction(targetPid, sysUiPid, launcherPid, enable);
+                break;
+            case APP_TRANSITION:
+                handleAppTransition(targetPid, sysUiPid, launcherPid, boostLevel, enable);
+                break;
+            case STANDALONE:
+            default:
+                break;
         }
+
         if (enable) {
             mAffinityFeature.applyNamedAffinityForPid(Process.myPid());
         }
+    }
+
+    private void handleLauncherInteraction(int launcherPid, int sysUiPid, boolean enable) {
+        demoteBackgroundProcesses(launcherPid, sysUiPid, enable);
+    }
+
+    private void handleShadeInteraction(int targetPid, int sysUiPid, int launcherPid, boolean enable) {
+        int topPid = mProcessTracker.getActiveTopPid();
+
+        if (enable) {
+            mAffinityFeature.applyNamedAffinityForPid(sysUiPid);
+
+            if (topPid > INVALID_PID && topPid != sysUiPid) {
+                mAffinityFeature.yieldPidToLittleCores(topPid);
+            }
+            if (launcherPid > INVALID_PID && launcherPid != sysUiPid && launcherPid != topPid) {
+                mAffinityFeature.yieldPidToLittleCores(launcherPid);
+            }
+        } else {
+            if (topPid > INVALID_PID && topPid != sysUiPid) {
+                restoreProcessAffinity(topPid);
+            }
+            if (launcherPid > INVALID_PID && launcherPid != sysUiPid && launcherPid != topPid) {
+                restoreProcessAffinity(launcherPid);
+            }
+            restoreProcessAffinity(sysUiPid);
+        }
+    }
+
+    private void handleAppTransition(int targetPid, int sysUiPid, int launcherPid, int boostLevel, boolean enable) {
+        if (sysUiPid > INVALID_PID && sysUiPid != targetPid) {
+            setProcessTransitionState(sysUiPid, boostLevel, enable);
+        }
+        if (launcherPid > INVALID_PID && launcherPid != targetPid) {
+            setProcessTransitionState(launcherPid, boostLevel, enable);
+        }
+        demoteBackgroundProcesses(targetPid, sysUiPid, enable);
+    }
+
+    private void demoteBackgroundProcesses(int primaryPid, int secondaryPid, boolean enable) {
+        int topPid = mProcessTracker.getActiveTopPid();
+        if (topPid > INVALID_PID && topPid != primaryPid && topPid != secondaryPid) {
+            if (enable) {
+                mAffinityFeature.yieldPidToLittleCores(topPid);
+            } else {
+                restoreProcessAffinity(topPid);
+            }
+        }
+    }
+
+    private void restoreProcessAffinity(int pid) {
+        if (pid <= INVALID_PID) {
+            return;
+        }
+        mAffinityFeature.resetAffinityForPid(pid);
+        mAffinityFeature.applyNamedAffinityForPid(pid);
     }
 
     public boolean isSceneIdExist(int sceneId) {
@@ -335,25 +470,63 @@ public final class AxDragonite {
     }
 
     public void inputBoost() {
-        mWorkerHandler.post(mBoostAdjuster::inputBoost);
+        postWorkerTask(() -> {
+            mBoostAdjuster.inputBoost();
+            int topPid = mProcessTracker.getActiveTopPid();
+            if (topPid > INVALID_PID) {
+                mAffinityFeature.applyNamedAffinityForPid(topPid);
+            }
+        });
+    }
+
+    private void onInputBoostExpired() {
+        postWorkerTask(() -> {
+            if (!mSessionManager.hasActiveTransitionScene(mSceneRegistry)) {
+                int topPid = mProcessTracker.getActiveTopPid();
+                if (topPid > INVALID_PID) {
+                    mAffinityFeature.resetAffinityForPid(topPid);
+                }
+            }
+        });
     }
 
     public void onProcessStarted(int pid, String pkg, String processName, int uid) {
-        mWorkerHandler.post(() -> {
-            mProcessTracker.onProcessStarted(pid, pkg, processName);
-            mBoostAdjuster.onProcessStarted(pid, pkg, processName, uid);
-            mAffinityFeature.applyNamedAffinityForPid(pid);
+        onProcessStarted(pid, pkg, processName, uid, false);
+    }
 
-            mSessionManager.forEachActiveSession(s -> {
-                if (mSceneRegistry.isTransitionScene(s.sceneId()) && pkg != null && pkg.equals(s.packageName())) {
-                    mUIBooster.boostProcess(pid, s.config().boostLevel());
-                }
-            });
+    public void onProcessStarted(int pid, String pkg, String processName, int uid, boolean isTopApp) {
+        postWorkerTask(() -> handleProcessStarted(pid, pkg, processName, uid, isTopApp));
+    }
+
+    private void handleProcessStarted(int pid, String pkg, String processName, int uid, boolean isTopApp) {
+        mProcessTracker.onProcessStarted(pid, pkg, processName);
+        mBoostAdjuster.onProcessStarted(pid, pkg, processName, uid);
+
+        final boolean hasActiveLaunch = mSessionManager.hasActiveSessionForPackage(pkg);
+        if (!isTopApp && !hasActiveLaunch) {
+            return;
+        }
+
+        mPerfEnhancer.migrateToTopAppCgroup(pid);
+        mAffinityFeature.applyNamedAffinityForPid(pid);
+        bindNewProcessToActiveSessions(pid, pkg);
+    }
+
+    private void bindNewProcessToActiveSessions(int pid, String pkg) {
+        if (pkg == null) {
+            return;
+        }
+        mSessionManager.forEachActiveSession(s -> {
+            if (!mSceneRegistry.isTransitionScene(s.sceneId()) || !pkg.equals(s.packageName())) {
+                return;
+            }
+            mUIBooster.boostProcess(pid, s.config().boostLevel());
+            mSessionManager.updateSessionTargetPid(s.handle(), pid);
         });
     }
 
     public void onProcessKilled(int pid, String pkg) {
-        mWorkerHandler.post(() -> {
+        postWorkerTask(() -> {
             mProcessTracker.onProcessKilled(pid);
             mBoostAdjuster.onProcessKilled(pid, pkg);
             mUIBooster.onProcessKilled(pid);
@@ -363,7 +536,11 @@ public final class AxDragonite {
     }
 
     public void onActivityStart(String pkg, String component, int uid, boolean isCold) {
-        mWorkerHandler.post(() -> {
+        onActivityStart(pkg, component, uid, isCold, -1);
+    }
+
+    public void onActivityStart(String pkg, String component, int uid, boolean isCold, int targetPid) {
+        postWorkerTask(() -> {
             mBoostAdjuster.onActivityStart(pkg, component, uid, isCold);
             boolean isCamera = pkg != null && pkg.toLowerCase().contains(KEYWORD_CAMERA);
             int scene = isCamera ? SCENE_CAMERA_OPEN : (isCold ? SCENE_APP_LAUNCH_COLD : SCENE_APP_LAUNCH_WARM);
@@ -372,6 +549,10 @@ public final class AxDragonite {
             bundle.putString(KEY_PACKAGE_NAME, pkg);
             bundle.putBoolean(KEY_IS_COLD, isCold);
             bundle.putInt(KEY_UID, uid);
+            if (targetPid > 0) {
+                bundle.putInt(KEY_PID, targetPid);
+                bundle.putInt(KEY_TARGET_PID, targetPid);
+            }
             sceneBoostAcquire(scene, bundle);
         });
     }
@@ -385,20 +566,27 @@ public final class AxDragonite {
     }
 
     public void onReportResumedActivity(int pid, String pkg, String component) {
-        mWorkerHandler.post(() -> {
+        int previousTopPid = mProcessTracker.onReportResumedActivity(pid, pkg);
+        postWorkerTask(() -> {
+            if (previousTopPid > 0 && previousTopPid != pid && previousTopPid != mProcessTracker.getSystemUiPid()) {
+                mAffinityFeature.yieldPidToLittleCores(previousTopPid);
+            }
+            if (pid > 0 && pid != mProcessTracker.getSystemUiPid()) {
+                mAffinityFeature.applyNamedAffinityForPid(pid);
+            }
             AxActivityCustomizationUtil.handleActivityResumed(pid, pkg, component);
             mBoostAdjuster.onReportResumedActivity(pid, pkg, component);
         });
     }
 
     public void onAppDied(String pkg, String component, int uid) {
-        mWorkerHandler.post(() -> {
+        postWorkerTask(() -> {
             mBoostAdjuster.onAppDied(pkg, component, uid);
         });
     }
 
     public void onSetVisibility(String pkg, String component, int uid, boolean visible) {
-        mWorkerHandler.post(() -> {
+        postWorkerTask(() -> {
             mBoostAdjuster.onSetVisibility(pkg, component, uid, visible);
         });
     }
