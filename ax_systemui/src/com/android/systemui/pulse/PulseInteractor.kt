@@ -18,11 +18,12 @@ package com.android.systemui.pulse
 import android.R as AndroidR
 import android.content.Context
 import android.graphics.Color
-import android.media.session.PlaybackState
+import android.media.MediaMetadata
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
+import com.android.systemui.keyguard.shared.model.BiometricUnlockMode
 import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.media.MediaSessionManager
 import com.android.systemui.power.domain.interactor.PowerInteractor
@@ -31,64 +32,34 @@ import com.android.systemui.shade.domain.interactor.ShadeInteractor
 import com.android.systemui.utils.coroutines.flow.conflatedCallbackFlow
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-data class PulseUiState(
+private data class MediaState(
+    val isPlaying: Boolean = false,
+    val albumColor: Int? = null
+)
+
+private data class PulseConfig(
     val isEnabled: Boolean = false,
-    val isVisible: Boolean = false,
-    val alpha: Float = 1f,
-    val barHeights: FloatArray = floatArrayOf(),
     val barCount: Int = 32,
     val roundedBars: Boolean = true,
     val barColor: Int = Color.WHITE,
     val colorMode: PulseColorMode = PulseColorMode.LAVALAMP,
     val style: PulseStyle = PulseStyle.BARS,
     val refreshRate: Float = 60f
-) {
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (other !is PulseUiState) return false
-        val same = isEnabled == other.isEnabled &&
-               isVisible == other.isVisible &&
-               alpha == other.alpha &&
-               barHeights.contentEquals(other.barHeights) &&
-               barCount == other.barCount &&
-               roundedBars == other.roundedBars &&
-               barColor == other.barColor &&
-               colorMode == other.colorMode &&
-               style == other.style &&
-               refreshRate == other.refreshRate
-        return same
-    }
+)
 
-    override fun hashCode(): Int {
-        var result = isEnabled.hashCode()
-        result = 31 * result + isVisible.hashCode()
-        result = 31 * result + alpha.hashCode()
-        result = 31 * result + barHeights.contentHashCode()
-        result = 31 * result + barCount
-        result = 31 * result + roundedBars.hashCode()
-        result = 31 * result + barColor
-        result = 31 * result + colorMode.hashCode()
-        result = 31 * result + style.hashCode()
-        result = 31 * result + refreshRate.hashCode()
-        return result
-    }
-}
-
-private sealed interface MediaEvent {
-    data class PlaybackStateChanged(val isPlaying: Boolean) : MediaEvent
-    data class ColorChanged(val color: Int?) : MediaEvent
-}
-
+@OptIn(ExperimentalCoroutinesApi::class)
 @SysUISingleton
 class PulseInteractor @Inject constructor(
     @Application private val context: Context,
@@ -100,184 +71,141 @@ class PulseInteractor @Inject constructor(
     private val keyguardTransitionInteractor: KeyguardTransitionInteractor,
     private val keyguardInteractor: KeyguardInteractor,
     private val powerInteractor: PowerInteractor,
-    private val shadeInteractor: ShadeInteractor,
+    private val shadeInteractor: ShadeInteractor
 ) {
-
-    private val _uiState = MutableStateFlow(PulseUiState())
-    val uiState: StateFlow<PulseUiState> = _uiState.asStateFlow()
 
     private val accentColor: Int
         get() = context.getColor(AndroidR.color.system_accent1_100)
 
-    private var isMediaPlaying = mediaSessionManager.isMediaPlaying
-    private var isPulsing = false
-    private var isKeyguardGoingAway = false
-    private var unlockProgress = 0f
-    private var pulseRunning = false
-
-    private val isKeyguardActive: Boolean
-        get() {
-            if (isKeyguardGoingAway && unlockProgress >= 0.5f) return false
-            val state = keyguardTransitionInteractor.currentKeyguardState.value
-            if (state == KeyguardState.LOCKSCREEN || state == KeyguardState.AOD) return true
-            if (state == KeyguardState.DOZING) return isPulsing
-            return false
+    private val mediaFlow: Flow<MediaState> = mediaSessionManager.activeSession
+        .map { session ->
+            MediaState(
+                isPlaying = session?.isPlaying ?: false,
+                albumColor = session?.mediaColor
+            )
         }
+        .distinctUntilChanged()
 
-    private val isScreenActive: Boolean
-        get() {
-            if (!displayRepository.displayState.value.isScreenOn) return false
-            if (isPulsing) return true
-            return powerInteractor.screenPowerState.value != ScreenPowerState.SCREEN_OFF
+    private val isShadeCollapsed: Flow<Boolean> = combine(
+        shadeInteractor.isQsExpanded,
+        shadeInteractor.anyExpansion,
+        shadeInteractor.isAnyFullyExpanded
+    ) { isQs, expansion, isFullyExpanded ->
+        !isQs && !isFullyExpanded && expansion <= 0.1f
+    }.distinctUntilChanged()
+
+    private val isBiometricDismissing: Flow<Boolean> = combine(
+        keyguardInteractor.biometricUnlockState,
+        keyguardTransitionInteractor.startedKeyguardTransitionStep
+    ) { biometric, step ->
+        BiometricUnlockMode.dismissesKeyguard(biometric.mode) || step.to == KeyguardState.GONE
+    }.distinctUntilChanged()
+
+    private val unlockAlpha: Flow<Float> = combine(
+        keyguardTransitionInteractor.transitionValue(KeyguardState.GONE),
+        isBiometricDismissing
+    ) { progress, isDismissing ->
+        if (isDismissing) 0f else (1f - (progress * 2f)).coerceIn(0f, 1f)
+    }.distinctUntilChanged()
+
+    private val isKeyguardActive: Flow<Boolean> = combine(
+        keyguardTransitionInteractor.currentKeyguardState,
+        keyguardTransitionInteractor.startedKeyguardTransitionStep,
+        keyguardInteractor.isKeyguardGoingAway,
+        keyguardInteractor.isPulsing,
+        isBiometricDismissing
+    ) { currentKeyguard, startedStep, isGoingAway, isPulsing, isDismissing ->
+        if (isDismissing || isGoingAway) return@combine false
+        if (startedStep.to == KeyguardState.GONE || currentKeyguard == KeyguardState.GONE) return@combine false
+        when (currentKeyguard) {
+            KeyguardState.LOCKSCREEN, KeyguardState.AOD -> true
+            KeyguardState.DOZING -> isPulsing
+            else -> false
         }
+    }.distinctUntilChanged()
 
-    private val shouldShowPulse: Boolean
-        get() {
-            if (!_uiState.value.isEnabled) return false
-            if (!isMediaPlaying) return false
-            if (shadeInteractor.isAnyFullyExpanded.value) return false
-            if (!isKeyguardActive && !isPulsing) return false
-            return isScreenActive
+    private val isScreenActive: Flow<Boolean> = combine(
+        displayRepository.displayState,
+        powerInteractor.screenPowerState,
+        keyguardInteractor.isPulsing
+    ) { display, power, isPulsing ->
+        display.isScreenOn && (isPulsing || power != ScreenPowerState.SCREEN_OFF)
+    }.distinctUntilChanged()
+
+    private val configFlow: Flow<PulseConfig> = combine(
+        settingsRepository.settingsFlow,
+        displayRepository.displayState,
+        mediaFlow
+    ) { settings, display, media ->
+        val barColor = when (settings.colorMode) {
+            PulseColorMode.ACCENT -> accentColor
+            PulseColorMode.ALBUM -> media.albumColor ?: accentColor
+            PulseColorMode.LAVALAMP -> Color.WHITE
         }
+        PulseConfig(
+            isEnabled = settings.isEnabled,
+            barCount = settings.barCount,
+            roundedBars = settings.roundedBars,
+            barColor = barColor,
+            colorMode = settings.colorMode,
+            style = settings.style,
+            refreshRate = display.refreshRate
+        )
+    }.distinctUntilChanged()
 
-    private val mediaStateFlow: Flow<MediaEvent> = conflatedCallbackFlow {
-        val listener = object : MediaSessionManager.MediaDataListener {
-            override fun onPlaybackStateChanged(state: Int) {
-                trySend(MediaEvent.PlaybackStateChanged(state == PlaybackState.STATE_PLAYING))
-            }
+    private val isPulseVisible: Flow<Boolean> = combine(
+        configFlow.map { it.isEnabled }.distinctUntilChanged(),
+        mediaFlow.map { it.isPlaying }.distinctUntilChanged(),
+        isShadeCollapsed,
+        isKeyguardActive,
+        isScreenActive
+    ) { isEnabled, isPlaying, isShadeOk, isKeyguardOk, isScreenOk ->
+        isEnabled && isPlaying && isShadeOk && isKeyguardOk && isScreenOk
+    }.distinctUntilChanged()
 
-            override fun onMediaColorsChanged(color: Int?) {
-                trySend(MediaEvent.ColorChanged(color))
-            }
-        }
-        mediaSessionManager.addListener(listener)
-        awaitClose { mediaSessionManager.removeListener(listener) }
+    private val barHeightsFlow: Flow<FloatArray> = isPulseVisible.flatMapLatest { visible ->
+        if (visible) audioProcessor.audioDataFlow else flowOf(floatArrayOf())
     }
+
+    val uiState: StateFlow<PulseUiState> = combine(
+        configFlow,
+        isPulseVisible,
+        unlockAlpha,
+        barHeightsFlow
+    ) { config, visible, alpha, heights ->
+        PulseUiState(
+            isEnabled = config.isEnabled,
+            isVisible = visible,
+            alpha = if (visible) alpha else 0f,
+            barHeights = heights,
+            barCount = config.barCount,
+            roundedBars = config.roundedBars,
+            barColor = config.barColor,
+            colorMode = config.colorMode,
+            style = config.style,
+            refreshRate = config.refreshRate
+        )
+    }.stateIn(
+        scope = scope,
+        started = SharingStarted.Eagerly,
+        initialValue = PulseUiState()
+    )
 
     init {
-        observeSettings()
-        observeDisplayState()
-        observeAudioData()
-        observeKeyguardAndPower()
-        observeMediaState()
-        observeUnlockTransition()
-        observeKeyguardGoingAway()
-    }
-
-    private fun observeUnlockTransition() {
-        val flow = keyguardTransitionInteractor.transitionValue(KeyguardState.GONE)
-        scope.launch { flow.collect(::onUnlockProgressChanged) }
-    }
-
-    private fun onUnlockProgressChanged(progress: Float) {
-        unlockProgress = progress
-        val newAlpha = (1f - (progress * 2f)).coerceIn(0f, 1f)
-        _uiState.update { it.copy(alpha = newAlpha) }
-        if (progress >= 1f || (isKeyguardGoingAway && progress >= 0.5f)) {
-            updatePulseState()
-        }
-    }
-
-    private fun observeKeyguardGoingAway() {
-        val flow = keyguardInteractor.isKeyguardGoingAway
-        scope.launch { flow.collect(::onKeyguardGoingAwayChanged) }
-    }
-
-    private fun onKeyguardGoingAwayChanged(goingAway: Boolean) {
-        isKeyguardGoingAway = goingAway
-        if (!goingAway) {
-            _uiState.update { it.copy(alpha = 1f) }
-        }
-        updatePulseState()
-    }
-
-    private fun observeKeyguardAndPower() {
-        val stateFlow = combine(
-            keyguardTransitionInteractor.currentKeyguardState,
-            keyguardInteractor.isPulsing,
-            powerInteractor.screenPowerState,
-            shadeInteractor.isAnyFullyExpanded
-        ) { _, pulsing, _, _ -> pulsing }
-        scope.launch { stateFlow.collect(::onKeyguardOrPowerChanged) }
-    }
-
-    private fun onKeyguardOrPowerChanged(pulsing: Boolean) {
-        isPulsing = pulsing
-        updatePulseState()
-    }
-
-    private fun observeMediaState() {
-        scope.launch { mediaStateFlow.collect(::onMediaEvent) }
-    }
-
-    private fun onMediaEvent(event: MediaEvent) {
-        when (event) {
-            is MediaEvent.PlaybackStateChanged -> onPlaybackChanged(event.isPlaying)
-            is MediaEvent.ColorChanged -> onColorChanged(event.color)
-        }
-    }
-
-    private fun onPlaybackChanged(isPlaying: Boolean) {
-        isMediaPlaying = isPlaying
-        updatePulseState()
-    }
-
-    private fun onColorChanged(color: Int?) {
-        if (_uiState.value.colorMode != PulseColorMode.ALBUM) return
-        _uiState.update { it.copy(barColor = color ?: accentColor) }
-    }
-
-    private fun observeAudioData() {
         scope.launch {
-            audioProcessor.audioDataFlow.collect { heights ->
-                if (pulseRunning) {
-                    _uiState.update { it.copy(barHeights = heights) }
+            isPulseVisible.collect { visible ->
+                if (visible) {
+                    audioProcessor.startCapture()
+                } else {
+                    audioProcessor.stopCapture()
                 }
             }
         }
-    }
-
-    private fun observeSettings() {
         scope.launch {
-            settingsRepository.settingsFlow.collect { settings ->
-                audioProcessor.setBarCount(settings.barCount)
-                _uiState.update { current ->
-                    current.copy(
-                        isEnabled = settings.isEnabled,
-                        barCount = settings.barCount,
-                        roundedBars = settings.roundedBars,
-                        colorMode = settings.colorMode,
-                        style = settings.style,
-                        barColor = when (settings.colorMode) {
-                            PulseColorMode.ACCENT -> accentColor
-                            else -> current.barColor
-                        }
-                    )
-                }
-                updatePulseState()
-            }
-        }
-    }
-
-    private fun observeDisplayState() {
-        scope.launch {
-            displayRepository.displayState.collect { displayState ->
-                _uiState.update { it.copy(refreshRate = displayState.refreshRate) }
-                updatePulseState()
-            }
-        }
-    }
-
-    private fun updatePulseState() {
-        val shouldShow = shouldShowPulse
-        if (shouldShow != pulseRunning) {
-            pulseRunning = shouldShow
-            if (shouldShow) {
-                audioProcessor.startCapture()
-            } else {
-                audioProcessor.stopCapture()
-            }
-            _uiState.update { it.copy(isVisible = shouldShow) }
+            settingsRepository.settingsFlow
+                .map { it.barCount }
+                .distinctUntilChanged()
+                .collect(audioProcessor::setBarCount)
         }
     }
 }

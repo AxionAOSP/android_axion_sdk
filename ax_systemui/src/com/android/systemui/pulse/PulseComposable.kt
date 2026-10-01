@@ -19,6 +19,7 @@ import android.graphics.Color as AndroidColor
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
@@ -56,7 +57,12 @@ private class BarHeightsState(barCount: Int) {
     var lastFrameNanos = 0L
 
     fun updateTargets(newTargets: FloatArray, mirror: Boolean) {
-        if (newTargets.isEmpty()) return
+        if (newTargets.isEmpty()) {
+            for (i in targetHeights.indices) {
+                targetHeights[i] = 2f
+            }
+            return
+        }
         val incoming = if (mirror) mirrorCenterOut(newTargets) else newTargets
         if (targetHeights.size != incoming.size) {
             currentHeights = FloatArray(incoming.size) { i ->
@@ -83,6 +89,16 @@ private class BarHeightsState(barCount: Int) {
             currentHeights[i] = currentHeights[i] + alpha * (target - currentHeights[i])
         }
     }
+
+    fun reset() {
+        for (i in currentHeights.indices) {
+            currentHeights[i] = 2f
+        }
+        for (i in targetHeights.indices) {
+            targetHeights[i] = 2f
+        }
+        lastFrameNanos = 0L
+    }
 }
 
 @Composable
@@ -103,12 +119,22 @@ fun PulseVisualizer(
     val frameCount = remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(state.isVisible) {
+        if (!state.isVisible) {
+            barHeights.reset()
+            return@LaunchedEffect
+        }
         barHeights.lastFrameNanos = 0L
         while (isActive && state.isVisible) {
             withFrameNanos { nanos: Long ->
                 barHeights.applySmoothing(nanos)
                 frameCount.longValue++
             }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            barHeights.reset()
         }
     }
 

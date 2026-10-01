@@ -45,3 +45,44 @@ object PulseConstants {
     const val BAR_ALPHA = 0.88f
     const val SMOOTHING_SPEED = 30f
 }
+
+data class PulseUiState(
+    val isEnabled: Boolean = false,
+    val isVisible: Boolean = false,
+    val alpha: Float = 1f,
+    val barHeights: FloatArray = floatArrayOf(),
+    val barCount: Int = 32,
+    val roundedBars: Boolean = true,
+    val barColor: Int = android.graphics.Color.WHITE,
+    val colorMode: PulseColorMode = PulseColorMode.LAVALAMP,
+    val style: PulseStyle = PulseStyle.BARS,
+    val refreshRate: Float = 60f
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is PulseUiState) return false
+        return isEnabled == other.isEnabled &&
+            isVisible == other.isVisible &&
+            alpha == other.alpha &&
+            barHeights.contentEquals(other.barHeights) &&
+            barCount == other.barCount &&
+            roundedBars == other.roundedBars &&
+            barColor == other.barColor &&
+            colorMode == other.colorMode &&
+            style == other.style &&
+            refreshRate == other.refreshRate
+    }
+
+    override fun hashCode(): Int = java.util.Objects.hash(
+        isEnabled,
+        isVisible,
+        alpha,
+        barHeights.contentHashCode(),
+        barCount,
+        roundedBars,
+        barColor,
+        colorMode,
+        style,
+        refreshRate
+    )
+}
