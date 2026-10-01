@@ -84,10 +84,10 @@ final class KernelControlNode {
     AxKernelControl snapshot(ContentResolver resolver) {
         if (!canUse() || TextUtils.isEmpty(id)) return null;
         int current = getSavedValue(resolver);
-        return new AxKernelControl(id, group, type, defaultValue, current, availableValues, valueLabels);
+        return new AxKernelControl(id, group, type, current, defaultValue, availableValues, valueLabels);
     }
 
-    private int getSavedValue(ContentResolver resolver) {
+    int getSavedValue(ContentResolver resolver) {
         if (TextUtils.isEmpty(id)) {
             return defaultValue;
         }

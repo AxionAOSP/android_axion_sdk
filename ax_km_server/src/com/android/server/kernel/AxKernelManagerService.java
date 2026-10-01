@@ -59,6 +59,7 @@ public final class AxKernelManagerService {
     private final Object mLock = new Object();
     private final ContentResolver mResolver;
     private final ArrayMap<String, KernelControlNode> mControls = new ArrayMap<>();
+    private final ArrayMap<Uri, KernelControlNode> mUriToControl = new ArrayMap<>();
     private final AxKernelMetricsReader mMetricsReader = new AxKernelMetricsReader();
     private final HandlerThread mHandlerThread;
     private final Handler mHandler;
@@ -86,7 +87,11 @@ public final class AxKernelManagerService {
     public void systemReady() {
         refreshControls();
         applyPersistedValues();
-        registerSettingsObserver();
+        synchronized (mLock) {
+            for (KernelControlNode control : mControls.values()) {
+                registerObserverForControl(control);
+            }
+        }
     }
 
     public List<AxKernelControl> getControls() {
@@ -103,12 +108,12 @@ public final class AxKernelManagerService {
         if (TextUtils.isEmpty(id)) return false;
         long token = Binder.clearCallingIdentity();
         try {
-            KernelControlNode control = findControl(id);
-            if (control == null) return false;
-            int resolvedValue = control.coerce(value);
-            Settings.Secure.putIntForUser(mResolver, control.id, resolvedValue, UserHandle.USER_CURRENT);
-            applyControlUpdate(control, resolvedValue, resolvedValue != control.defaultValue);
-            return true;
+            synchronized (mLock) {
+                KernelControlNode control = mControls.get(id);
+                if (control == null) return false;
+                applyCoordinatedControlValueLocked(control, value);
+                return true;
+            }
         } finally {
             Binder.restoreCallingIdentity(token);
         }
@@ -123,18 +128,6 @@ public final class AxKernelManagerService {
         }
     }
 
-    private void registerSettingsObserver() {
-        synchronized (mLock) {
-            registerObserversLocked();
-        }
-    }
-
-    private void registerObserversLocked() {
-        for (KernelControlNode control : mControls.values()) {
-            registerObserverForControl(control);
-        }
-    }
-
     private void registerObserverForControl(KernelControlNode control) {
         if (control == null || TextUtils.isEmpty(control.id)) return;
         Uri uri = Settings.Secure.getUriFor(control.id);
@@ -142,51 +135,72 @@ public final class AxKernelManagerService {
         mResolver.registerContentObserver(uri, false, mSettingsObserver, UserHandle.USER_ALL);
     }
 
-    private void handleSettingChanged(Uri uri) {
-        if (uri == null) return;
-        KernelControlNode target = findControlByUri(uri);
-        if (target == null || TextUtils.isEmpty(target.id)) return;
-        int value = Settings.Secure.getIntForUser(mResolver, target.id, Integer.MIN_VALUE, UserHandle.USER_CURRENT);
-        if (value == Integer.MIN_VALUE) {
-            applyControlUpdate(target, target.defaultValue, false);
-            return;
-        }
-        applyControlUpdate(target, target.coerce(value), true);
-    }
-
     private KernelControlNode findControlByUri(Uri uri) {
+        if (uri == null) return null;
         synchronized (mLock) {
-            return matchControlUri(uri);
+            return mUriToControl.get(uri);
         }
-    }
-
-    private KernelControlNode matchControlUri(Uri uri) {
-        for (KernelControlNode control : mControls.values()) {
-            if (control == null || TextUtils.isEmpty(control.id)) continue;
-            if (uri.equals(Settings.Secure.getUriFor(control.id))) return control;
-        }
-        return null;
     }
 
     private void applyControlUpdate(KernelControlNode control, int value, boolean isOverride) {
         tryWrite(control, value);
-        synchronized (mLock) {
-            refreshControlsLocked();
-        }
         notifyPowerManager(control, value, isOverride);
+    }
+
+    private void applyCoordinatedControlValueLocked(KernelControlNode control, int value) {
+        int resolvedValue = control.coerce(value);
+        if (isMaxFreq(control.type)) {
+            int companionType = control.type == AxKernelControl.TYPE_CPU_MAX_FREQ
+                    ? AxKernelControl.TYPE_CPU_MIN_FREQ : AxKernelControl.TYPE_GPU_MIN_FREQ;
+            KernelControlNode minNode = findCompanionNodeLocked(control, companionType);
+            if (minNode != null) {
+                int currentMin = minNode.getSavedValue(mResolver);
+                if (resolvedValue < currentMin) {
+                    int adjustedMin = minNode.coerce(resolvedValue);
+                    tryWrite(minNode, adjustedMin);
+                    Settings.Secure.putIntForUser(mResolver, minNode.id, adjustedMin, UserHandle.USER_CURRENT);
+                    notifyPowerManager(minNode, adjustedMin, adjustedMin != minNode.defaultValue);
+                }
+            }
+        } else if (isMinFreq(control.type)) {
+            int companionType = control.type == AxKernelControl.TYPE_CPU_MIN_FREQ
+                    ? AxKernelControl.TYPE_CPU_MAX_FREQ : AxKernelControl.TYPE_GPU_MAX_FREQ;
+            KernelControlNode maxNode = findCompanionNodeLocked(control, companionType);
+            if (maxNode != null) {
+                int currentMax = maxNode.getSavedValue(mResolver);
+                if (resolvedValue > currentMax) {
+                    int adjustedMax = maxNode.coerce(resolvedValue);
+                    tryWrite(maxNode, adjustedMax);
+                    Settings.Secure.putIntForUser(mResolver, maxNode.id, adjustedMax, UserHandle.USER_CURRENT);
+                    notifyPowerManager(maxNode, adjustedMax, adjustedMax != maxNode.defaultValue);
+                }
+            }
+        }
+        tryWrite(control, resolvedValue);
+        Settings.Secure.putIntForUser(mResolver, control.id, resolvedValue, UserHandle.USER_CURRENT);
+        notifyPowerManager(control, resolvedValue, resolvedValue != control.defaultValue);
+    }
+
+    private KernelControlNode findCompanionNodeLocked(KernelControlNode control, int targetType) {
+        for (int i = 0; i < mControls.size(); i++) {
+            KernelControlNode other = mControls.valueAt(i);
+            if (other != null && other != control && other.type == targetType
+                    && TextUtils.equals(other.group, control.group)) {
+                return other;
+            }
+        }
+        return null;
     }
 
     private void refreshControls() {
         long token = Binder.clearCallingIdentity();
         try {
-            executeRefreshControls();
+            synchronized (mLock) {
+                refreshControlsLocked();
+            }
         } finally {
             Binder.restoreCallingIdentity(token);
         }
-    }
-
-    private synchronized void executeRefreshControls() {
-        refreshControlsLocked();
     }
 
     private void refreshControlsLocked() {
@@ -194,8 +208,14 @@ public final class AxKernelManagerService {
         AxKernelMetricsReader.Config metricsConfig = new AxKernelMetricsReader.Config();
         AxKernelConfigLoader.load(controls, metricsConfig);
         mControls.clear();
+        mUriToControl.clear();
         for (KernelControlNode control : controls) {
+            if (control == null || TextUtils.isEmpty(control.id)) continue;
             mControls.put(control.id, control);
+            Uri uri = Settings.Secure.getUriFor(control.id);
+            if (uri != null) {
+                mUriToControl.put(uri, control);
+            }
         }
         mMetricsReader.setConfig(metricsConfig);
         publishMetadata(controls);
@@ -215,8 +235,9 @@ public final class AxKernelManagerService {
         if (control == null || TextUtils.isEmpty(control.id)) return;
         int value = Settings.Secure.getIntForUser(mResolver, control.id, Integer.MIN_VALUE, UserHandle.USER_CURRENT);
         if (value == Integer.MIN_VALUE || !control.canUse()) return;
-        int resolvedValue = control.coerce(value);
-        applyControlUpdate(control, resolvedValue, resolvedValue != control.defaultValue);
+        synchronized (mLock) {
+            applyCoordinatedControlValueLocked(control, value);
+        }
     }
 
     private void notifyPowerManager(KernelControlNode control, int value, boolean isOverride) {
@@ -260,7 +281,6 @@ public final class AxKernelManagerService {
 
     private KernelControlNode findControl(String id) {
         synchronized (mLock) {
-            refreshControlsLocked();
             return mControls.get(id);
         }
     }
@@ -274,9 +294,10 @@ public final class AxKernelManagerService {
         }
     }
 
-    private synchronized ArrayList<KernelControlNode> fetchControlsList() {
-        refreshControlsLocked();
-        return new ArrayList<>(mControls.values());
+    private ArrayList<KernelControlNode> fetchControlsList() {
+        synchronized (mLock) {
+            return new ArrayList<>(mControls.values());
+        }
     }
 
     private void publishMetadata(ArrayList<KernelControlNode> controls) {
@@ -330,7 +351,17 @@ public final class AxKernelManagerService {
 
         @Override
         public void onChange(boolean selfChange, Uri uri) {
-            handleSettingChanged(uri);
+            if (uri == null) return;
+            synchronized (mLock) {
+                KernelControlNode target = mUriToControl.get(uri);
+                if (target == null || TextUtils.isEmpty(target.id)) return;
+                int value = Settings.Secure.getIntForUser(mResolver, target.id, Integer.MIN_VALUE, UserHandle.USER_CURRENT);
+                if (value == Integer.MIN_VALUE) {
+                    applyControlUpdate(target, target.defaultValue, false);
+                    return;
+                }
+                applyCoordinatedControlValueLocked(target, value);
+            }
         }
     }
 }
