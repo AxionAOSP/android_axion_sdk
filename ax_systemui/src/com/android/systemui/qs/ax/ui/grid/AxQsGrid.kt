@@ -16,30 +16,22 @@
 
 package com.android.systemui.qs.ax.ui.grid
 
+import androidx.compose.animation.BoundsTransform
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.animateBounds
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.PagerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.LookaheadScope
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
-import com.android.compose.modifiers.padding
 import com.android.systemui.qs.ax.shared.model.AxQsGridItem
 import com.android.systemui.qs.ax.shared.model.AxQsGridPosition
 import com.android.systemui.qs.ax.shared.model.AxQsSpan
@@ -53,7 +45,6 @@ internal fun <T> AxQsGrid(
     spacing: Dp,
     modifier: Modifier = Modifier,
     maxRows: Int? = null,
-    squareCells: Boolean = false,
     minimumRows: Int = 0,
     animateItemBounds: Boolean = false,
     staticItemId: String? = null,
@@ -67,17 +58,33 @@ internal fun <T> AxQsGrid(
         remember(itemSnapshot, columns, maxRows) { packItems(itemSnapshot, columns, maxRows) }
     LookaheadScope {
         val lookaheadScope = this
+        val boundsTransform = remember {
+            BoundsTransform { _, _ ->
+                spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMediumLow,
+                )
+            }
+        }
         Layout(
             content = {
                 placements.forEach { placement ->
                     key(placement.item.id) {
                         val itemModifier =
                             if (animateItemBounds && placement.item.id != staticItemId) {
-                                Modifier.animateBounds(lookaheadScope)
+                                Modifier.animateBounds(lookaheadScope, boundsTransform = boundsTransform)
                             } else {
                                 Modifier
                             }
-                        Box(itemModifier.fillMaxSize()) { content(placement.item) }
+                        Box(itemModifier.fillMaxSize()) {
+                            key(placement.item.value, placement.column, placement.row) {
+                                content(
+                                    placement.item.copy(
+                                        position = AxQsGridPosition(placement.column, placement.row)
+                                    )
+                                )
+                            }
+                        }
                     }
                 }
             },
@@ -87,7 +94,7 @@ internal fun <T> AxQsGrid(
             val horizontalSpacingPx = spacing.roundToPx()
             val verticalSpacingPx = horizontalSpacingPx
             val availableWidth = (width - horizontalSpacingPx * (columns - 1)).coerceAtLeast(0)
-            val rowHeightPx = if (squareCells) availableWidth / columns else rowHeight.roundToPx()
+            val rowHeightPx = rowHeight.roundToPx()
 
             fun columnStart(column: Int): Int {
                 return availableWidth * column / columns + horizontalSpacingPx * column
@@ -161,14 +168,14 @@ internal fun <T> AxQsGrid(
     }
 }
 
-internal data class AxQsGridCell(val position: AxQsGridPosition, val bounds: Rect)
+data class AxQsGridCell(val position: AxQsGridPosition, val bounds: Rect)
 
 internal fun axQsGridCellWidth(gridWidth: Dp, columns: Int, spacing: Dp): Dp =
-    (gridWidth - spacing * (columns - 1)) / columns
+    calculateAxQsCellConfig(gridWidth, columns, spacing).cellWidth
 
-private data class AxQsPlacement<T>(val item: AxQsGridItem<T>, val column: Int, val row: Int)
+internal data class AxQsPlacement<T>(val item: AxQsGridItem<T>, val column: Int, val row: Int)
 
-private fun <T> packItems(
+internal fun <T> packItems(
     items: List<AxQsGridItem<T>>,
     columns: Int,
     maxRows: Int?,
@@ -181,6 +188,7 @@ private fun <T> packItems(
         val height = item.span.rows
         if (column < 0 || column + width > columns || row < 0) return null
         if (maxRows != null && row + height > maxRows) return null
+        if (height > 1 && row == 1) return null
         val fits =
             (row until row + height).all { candidateRow ->
                 (column until column + width).all { candidateColumn ->
@@ -237,147 +245,5 @@ internal fun <T> canFitAxQsGridItems(
     maxRows: Int,
 ): Boolean = packItems(items, columns, maxRows).size == items.size
 
-internal fun <T> axQsGridRowCount(
-    items: List<AxQsGridItem<T>>,
-    columns: Int,
-    maxRows: Int?,
-): Int = packItems(items, columns, maxRows).maxOfOrNull { it.row + it.item.span.rows } ?: 0
-
-internal data class AxQsGridRows(val controls: Int, val tiles: Int)
-
-internal fun <T> axQsSharedGridRows(
-    controlItems: List<AxQsGridItem<T>>,
-    controlColumns: Int,
-    tileItemCount: Int,
-    tileColumns: Int,
-    maxTileRows: Int = AX_QS_TILE_MAX_ROWS,
-): AxQsGridRows {
-    val controlLimit =
-        if (tileItemCount == 0) AX_QS_SHARED_MAX_ROWS else AX_QS_SHARED_MAX_ROWS - 1
-    val controlRows =
-        axQsGridRowCount(controlItems, controlColumns, null).coerceAtMost(controlLimit)
-    val tileRows =
-        if (tileItemCount == 0) {
-            0
-        } else {
-            axQsVisibleTileRows(tileItemCount, tileColumns, maxTileRows)
-                .coerceAtMost(AX_QS_SHARED_MAX_ROWS - controlRows)
-        }
-    return AxQsGridRows(controls = controlRows, tiles = tileRows)
-}
-
-internal fun <T> canFitAxQsSharedGrid(
-    controlItems: List<AxQsGridItem<T>>,
-    controlColumns: Int,
-    tileItemCount: Int,
-    tileColumns: Int,
-): Boolean {
-    val rows = axQsSharedGridRows(controlItems, controlColumns, tileItemCount, tileColumns)
-    return canFitAxQsGridItems(controlItems, controlColumns, rows.controls) &&
-        (tileItemCount == 0 || rows.tiles > 0)
-}
-
-internal fun axQsVisibleTileRows(
-    itemCount: Int,
-    columns: Int,
-    maxRows: Int = AX_QS_TILE_MAX_ROWS,
-): Int {
-    if (itemCount == 0) return 0
-    return ((itemCount + columns - 1) / columns).coerceAtMost(maxRows.coerceAtLeast(1))
-}
-
-@Composable
-internal fun <T> AxQsTileGrid(
-    items: List<AxQsGridItem<T>>,
-    columns: Int,
-    rows: Int,
-    spacing: Dp,
-    showLabels: Boolean,
-    circleCells: Boolean,
-    pagerState: PagerState,
-    modifier: Modifier = Modifier,
-    content: @Composable (AxQsGridItem<T>) -> Unit,
-    label: @Composable (AxQsGridItem<T>) -> Unit = {},
-) {
-    val pages = remember(items, columns, rows) { items.chunked(columns * rows) }
-    val pageCount = pages.size.coerceAtLeast(1)
-    LaunchedEffect(pageCount) {
-        if (pagerState.currentPage >= pageCount) {
-            pagerState.scrollToPage(pageCount - 1)
-        }
-    }
-    BoxWithConstraints(modifier.fillMaxWidth()) {
-        val cellWidth = axQsGridCellWidth(maxWidth, columns, spacing)
-        val aospTileHeight = AxTileDefaults.TileHeight * LocalTileScale.current
-        val tileHeight = if (circleCells) cellWidth else aospTileHeight
-        val itemHeight = tileHeight + if (showLabels) AX_TILE_LABEL_HEIGHT else 0.dp
-        val pageHeight = itemHeight * rows + spacing * (rows - 1)
-        val pagerPadding = if (pageCount > 1) spacing else 0.dp
-        HorizontalPager(
-            state = pagerState,
-            modifier =
-                Modifier.fillMaxWidth()
-                    .height(pageHeight)
-                    .padding(horizontal = { -pagerPadding.roundToPx() }),
-            contentPadding = PaddingValues(horizontal = pagerPadding),
-            beyondViewportPageCount = 1,
-            pageSpacing = pagerPadding,
-            verticalAlignment = Alignment.Top,
-            overscrollEffect = null,
-        ) { page ->
-            val pageItems = pages.getOrNull(page).orEmpty()
-            AxQsGrid(
-                items = pageItems,
-                columns = columns,
-                rowHeight = itemHeight,
-                spacing = spacing,
-                modifier = Modifier.fillMaxSize(),
-            ) { item ->
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Box(
-                        Modifier.fillMaxWidth().height(tileHeight),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        content(item)
-                    }
-                    if (showLabels) {
-                        Box(
-                            modifier = Modifier.fillMaxWidth().height(AX_TILE_LABEL_HEIGHT),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            label(item)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-internal fun axQsTileGridPageCount(itemCount: Int, columns: Int, rows: Int): Int {
-    if (itemCount == 0 || rows == 0) return 1
-    return ((itemCount + columns * rows - 1) / (columns * rows)).coerceAtLeast(1)
-}
-
-private val AX_TILE_LABEL_HEIGHT = 24.dp
-
-internal fun useAxQsCircleCells(
-    gridWidth: Dp,
-    tileColumns: Int,
-    spacing: Dp,
-    allowCircles: Boolean,
-): Boolean =
-    allowCircles &&
-        axQsGridCellWidth(gridWidth, tileColumns, spacing) <= AX_TILE_MAX_SIZE
-
-internal fun axQsTileIconSize(tileSize: Dp): Dp =
-    AxTileDefaults.IconSize * (tileSize / AxTileDefaults.TileHeight).coerceAtLeast(1f)
-
-internal const val AX_QS_CONTROL_MAX_ROWS = 6
-internal const val AX_QS_TILE_MAX_ROWS = 3
-private const val AX_QS_SHARED_MAX_ROWS = 6
-
-private val AX_TILE_MAX_SIZE = 85.dp
+internal fun <T> axQsGridRowCount(items: List<AxQsGridItem<T>>, columns: Int, maxRows: Int?): Int =
+    packItems(items, columns, maxRows).maxOfOrNull { it.row + it.item.span.rows } ?: 0

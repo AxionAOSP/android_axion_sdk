@@ -16,13 +16,17 @@
 
 package com.android.systemui.qs.ax.ui.grid
 
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
@@ -34,8 +38,10 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,32 +49,29 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.clipRect
-import androidx.compose.ui.graphics.drawscope.inset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.zIndex
-import com.android.compose.modifiers.thenIf
+import com.android.systemui.qs.ax.pressfeedback.axPressFeedback
 import com.android.systemui.qs.ax.shared.model.AxQsSpan
+import com.android.systemui.qs.ax.shared.model.AxQsTokens
 import com.android.systemui.qs.panels.ui.compose.selection.TileState
 import com.android.systemui.qs.panels.ui.compose.selection.TileState.Selected
 import com.android.systemui.qs.ui.compose.borderOnFocus
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
 @Composable
 internal fun AxInteractiveTileContainer(
@@ -76,10 +79,10 @@ internal fun AxInteractiveTileContainer(
     resizeHandleModifier: Modifier,
     selectionColor: Color,
     selectionShape: Shape,
-    selectionHorizontalPadding: Dp,
-    selectionVerticalPadding: Dp,
     resizable: Boolean,
     modifier: Modifier = Modifier,
+    itemModifier: Modifier = Modifier,
+    showRemoveBadge: Boolean = true,
     onRemoveClick: () -> Unit,
     onResizeClick: () -> Unit,
     removeContentDescription: String? = null,
@@ -87,43 +90,69 @@ internal fun AxInteractiveTileContainer(
     content: @Composable BoxScope.() -> Unit,
 ) {
     val selected = tileState == Selected
-    val borderAlpha by animateFloatAsState(if (selected) 1f else 0f)
-    Box(modifier.zIndex(if (selected) 2f else 1f)) {
+    val borderAlpha by
+        animateFloatAsState(
+            targetValue = if (selected) 1f else 0f,
+            label = "AxSelectionBorderAlpha",
+        )
+    Box(
+        modifier = modifier.zIndex(if (selected) 2f else 1f),
+        contentAlignment = Alignment.Center,
+    ) {
         Box(
-            modifier =
-                Modifier.fillMaxSize()
-                    .selectionDecoration(
-                        color = selectionColor,
-                        borderWidth = 3.dp,
-                        handleWidth = 6.dp,
-                        handleExtent = 28.dp,
-                        shape = selectionShape,
-                        horizontalPadding = selectionHorizontalPadding,
-                        verticalPadding = selectionVerticalPadding,
-                        alpha = borderAlpha,
-                    ),
-            content = content,
-        )
-        RemoveBadge(contentDescription = removeContentDescription, onClick = onRemoveClick)
-        ResizeHandle(
-            visible = selected && resizable,
-            modifier = resizeHandleModifier,
-            contentDescription = resizeContentDescription,
-            onClick = onResizeClick,
-        )
+            modifier = itemModifier,
+        ) {
+            Box(
+                modifier =
+                    Modifier.fillMaxSize()
+                        .axSelectionBorder(
+                            color = selectionColor,
+                            borderWidth = 3.dp,
+                            shape = selectionShape,
+                            alpha = { borderAlpha },
+                        ),
+            ) {
+                content()
+            }
+            if (showRemoveBadge) {
+                RemoveBadge(contentDescription = removeContentDescription, onClick = onRemoveClick)
+            }
+            ResizeHandle(
+                visible = selected && resizable,
+                modifier = resizeHandleModifier,
+                contentDescription = resizeContentDescription,
+                onClick = onResizeClick,
+            )
+        }
     }
 }
 
 @Composable
 private fun BoxScope.RemoveBadge(contentDescription: String?, onClick: () -> Unit) {
     val touchSize = LocalMinimumInteractiveComponentSize.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val badgeScale by
+        animateFloatAsState(
+            targetValue = 1f,
+            animationSpec =
+                spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMediumLow,
+                ),
+            label = "AxRemoveBadgeScale",
+        )
     Box(
         modifier =
             Modifier.align(Alignment.TopEnd)
                 .offset(x = RemoveBadgeSize / 2, y = -RemoveBadgeSize / 2)
                 .size(touchSize)
                 .zIndex(2f)
-                .clickable(onClick = onClick)
+                .axPressFeedback(interactionSource)
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = ripple(bounded = false, radius = RemoveBadgeSize / 2),
+                    onClick = onClick,
+                )
                 .semantics { contentDescription?.let { this.contentDescription = it } }
                 .borderOnFocus(MaterialTheme.colorScheme.secondary, CornerSize(50)),
         contentAlignment = Alignment.Center,
@@ -131,6 +160,10 @@ private fun BoxScope.RemoveBadge(contentDescription: String?, onClick: () -> Uni
         Box(
             modifier =
                 Modifier.size(RemoveBadgeSize)
+                    .graphicsLayer {
+                        scaleX = badgeScale
+                        scaleY = badgeScale
+                    }
                     .background(MaterialTheme.colorScheme.primary, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
@@ -151,159 +184,108 @@ private fun BoxScope.ResizeHandle(
     contentDescription: String?,
     onClick: () -> Unit,
 ) {
+    if (!visible) return
     val touchSize = LocalMinimumInteractiveComponentSize.current
-    Spacer(
+    val clickModifier =
+        Modifier.pointerInput(onClick) {
+            detectTapGestures(onTap = { onClick() })
+        }
+    Box(
         modifier =
             Modifier.align(Alignment.BottomEnd)
-                .offset(x = touchSize / 2, y = touchSize / 2)
+                .offset(x = ResizeHandleSize / 2, y = ResizeHandleSize / 2)
                 .size(touchSize)
                 .zIndex(2f)
-                .thenIf(visible) {
-                    Modifier.systemGestureExclusion { Rect(Offset.Zero, it.size.toSize()) }
-                        .then(modifier)
-                        .clickable(onClick = onClick)
-                        .semantics { contentDescription?.let { this.contentDescription = it } }
-                }
-                .borderOnFocus(MaterialTheme.colorScheme.secondary, CornerSize(50))
-    )
-}
-
-private val RemoveBadgeSize = 24.dp
-private val RemoveBadgeIconSize = 16.dp
-
-private fun Modifier.selectionDecoration(
-    color: Color,
-    borderWidth: Dp,
-    handleWidth: Dp,
-    handleExtent: Dp,
-    shape: Shape,
-    horizontalPadding: Dp,
-    verticalPadding: Dp,
-    alpha: Float,
-): Modifier {
-    return drawWithCache {
-        val borderWidthPx = borderWidth.toPx()
-        val handleWidthPx = handleWidth.toPx()
-        val handleExtentPx = handleExtent.toPx()
-        val horizontalPaddingPx = horizontalPadding.toPx() + borderWidthPx / 2
-        val verticalPaddingPx = verticalPadding.toPx() + borderWidthPx / 2
-        onDrawWithContent {
-            drawContent()
-            inset(horizontalPaddingPx, verticalPaddingPx, horizontalPaddingPx, verticalPaddingPx) {
-                val outline = shape.createOutline(size, layoutDirection, this)
-                val handleLeft =
-                    if (layoutDirection == LayoutDirection.Ltr) {
-                        (size.width - handleExtentPx).coerceAtLeast(0f)
-                    } else {
-                        0f
-                    }
-                val handleRight =
-                    if (layoutDirection == LayoutDirection.Ltr) {
-                        size.width
-                    } else {
-                        handleExtentPx.coerceAtMost(size.width)
-                    }
-                val handleTop = (size.height - handleExtentPx).coerceAtLeast(0f)
-                drawOutline(
-                    outline = outline,
-                    color = color,
-                    style = Stroke(borderWidthPx),
-                    alpha = alpha,
+                .systemGestureExclusion { Rect(Offset.Zero, it.size.toSize()) }
+                .then(clickModifier)
+                .then(modifier)
+                .semantics { contentDescription?.let { this.contentDescription = it } }
+                .borderOnFocus(MaterialTheme.colorScheme.secondary, CornerSize(50)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier =
+                Modifier.size(ResizeHandleSize)
+                    .background(MaterialTheme.colorScheme.primary, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            val iconColor = MaterialTheme.colorScheme.onPrimary
+            Canvas(modifier = Modifier.size(ResizeHandleIconSize)) {
+                val strokeWidth = 2.dp.toPx()
+                val w = size.width
+                val h = size.height
+                val arrowArm = 4.dp.toPx()
+                drawLine(iconColor, Offset(0f, 0f), Offset(w, h), strokeWidth, StrokeCap.Round)
+                drawLine(
+                    iconColor,
+                    Offset(0f, 0f),
+                    Offset(arrowArm, 0f),
+                    strokeWidth,
+                    StrokeCap.Round
                 )
-                clipRect(
-                    left = handleLeft,
-                    top = handleTop,
-                    right = handleRight + handleWidthPx,
-                    bottom = size.height + handleWidthPx,
-                ) {
-                    drawOutline(
-                        outline = outline,
-                        color = color,
-                        style =
-                            Stroke(handleWidthPx, cap = StrokeCap.Round, join = StrokeJoin.Round),
-                        alpha = alpha,
-                    )
-                }
-                outline.handleCapCenters(layoutDirection, handleExtentPx)?.let {
-                    drawCircle(
-                        color = color,
-                        radius = handleWidthPx / 2,
-                        center = it.first,
-                        alpha = alpha,
-                    )
-                    drawCircle(
-                        color = color,
-                        radius = handleWidthPx / 2,
-                        center = it.second,
-                        alpha = alpha,
-                    )
-                }
+                drawLine(
+                    iconColor,
+                    Offset(0f, 0f),
+                    Offset(0f, arrowArm),
+                    strokeWidth,
+                    StrokeCap.Round
+                )
+                drawLine(
+                    iconColor,
+                    Offset(w, h),
+                    Offset(w - arrowArm, h),
+                    strokeWidth,
+                    StrokeCap.Round
+                )
+                drawLine(
+                    iconColor,
+                    Offset(w, h),
+                    Offset(w, h - arrowArm),
+                    strokeWidth,
+                    StrokeCap.Round
+                )
             }
         }
     }
 }
 
-private fun Outline.handleCapCenters(
-    layoutDirection: LayoutDirection,
-    handleExtent: Float,
-): Pair<Offset, Offset>? {
-    if (this !is Outline.Rounded) return null
-    val corner =
-        if (layoutDirection == LayoutDirection.Ltr) {
-            roundRect.bottomRightCornerRadius
-        } else {
-            roundRect.bottomLeftCornerRadius
+private val RemoveBadgeSize = AxQsTokens.Badges.RemoveBadgeSize
+private val RemoveBadgeIconSize = AxQsTokens.Badges.RemoveBadgeIconSize
+private val ResizeHandleSize = AxQsTokens.Badges.ResizeHandleSize
+private val ResizeHandleIconSize = AxQsTokens.Badges.ResizeHandleIconSize
+
+internal fun Modifier.axSelectionBorder(
+    color: Color,
+    borderWidth: Dp = AxQsTokens.Badges.SelectionBorderWidth,
+    shape: Shape,
+    alpha: () -> Float = { 1f },
+): Modifier = drawWithCache {
+    val outline = shape.createOutline(size, layoutDirection, this)
+    val strokeWidth = borderWidth.toPx()
+    onDrawWithContent {
+        drawContent()
+        val currentAlpha = alpha()
+        if (currentAlpha > 0f) {
+            drawOutline(
+                outline = outline,
+                color = color,
+                style = Stroke(width = strokeWidth),
+                alpha = currentAlpha,
+            )
         }
-    val top = (roundRect.bottom - handleExtent).coerceAtLeast(roundRect.top)
-    val centerY = roundRect.bottom - corner.y
-    val verticalFactor = ellipseFactor(top - centerY, corner.y)
-    return if (layoutDirection == LayoutDirection.Ltr) {
-        val left = (roundRect.right - handleExtent).coerceAtLeast(roundRect.left)
-        val centerX = roundRect.right - corner.x
-        val verticalX =
-            if (top <= centerY || corner.y == 0f) {
-                roundRect.right
-            } else {
-                centerX + corner.x * verticalFactor
-            }
-        val horizontalY =
-            if (left <= centerX || corner.x == 0f) {
-                roundRect.bottom
-            } else {
-                centerY + corner.y * ellipseFactor(left - centerX, corner.x)
-            }
-        Offset(verticalX, top) to Offset(left, horizontalY)
-    } else {
-        val right = (roundRect.left + handleExtent).coerceAtMost(roundRect.right)
-        val centerX = roundRect.left + corner.x
-        val verticalX =
-            if (top <= centerY || corner.y == 0f) {
-                roundRect.left
-            } else {
-                centerX - corner.x * verticalFactor
-            }
-        val horizontalY =
-            if (right >= centerX || corner.x == 0f) {
-                roundRect.bottom
-            } else {
-                centerY + corner.y * ellipseFactor(centerX - right, corner.x)
-            }
-        Offset(verticalX, top) to Offset(right, horizontalY)
     }
 }
 
-private fun ellipseFactor(offset: Float, radius: Float): Float {
-    if (radius == 0f) return 0f
-    val normalized = (offset / radius).coerceIn(-1f, 1f)
-    return sqrt((1f - normalized * normalized).coerceAtLeast(0f))
-}
+private data class AxResizeDragState(
+    val startSpan: AxQsSpan,
+    val dragOffset: Offset = Offset.Zero,
+)
 
 @Composable
 internal fun Modifier.axQsResizeHandle(
     id: String,
     span: () -> AxQsSpan,
-    itemSize: () -> IntSize,
-    spacing: Dp,
+    cellConfig: AxQsCellConfig,
     resolveSpan: (AxQsSpan, Int, Int) -> AxQsSpan,
     canResize: (AxQsSpan) -> Boolean,
     onResizeStarted: () -> Unit,
@@ -312,7 +294,6 @@ internal fun Modifier.axQsResizeHandle(
     onResizeFinished: (AxQsSpan) -> Unit,
 ): Modifier {
     val currentSpan by rememberUpdatedState(span)
-    val currentItemSize by rememberUpdatedState(itemSize)
     val currentResolveSpan by rememberUpdatedState(resolveSpan)
     val currentCanResize by rememberUpdatedState(canResize)
     val currentOnResizeStarted by rememberUpdatedState(onResizeStarted)
@@ -320,24 +301,21 @@ internal fun Modifier.axQsResizeHandle(
     val currentOnResize by rememberUpdatedState(onResize)
     val currentOnResizeFinished by rememberUpdatedState(onResizeFinished)
     val layoutDirection = LocalLayoutDirection.current
-    val spacingPx = with(LocalDensity.current) { spacing.toPx() }
+    val density = LocalDensity.current
+    val columnStep =
+        with(density) { (cellConfig.cellWidth + cellConfig.spacing).toPx().coerceAtLeast(1f) }
+    val rowStep =
+        with(density) { (cellConfig.rowHeight + cellConfig.spacing).toPx().coerceAtLeast(1f) }
 
-    return pointerInput(id, layoutDirection, spacingPx) {
-        var startSpan = currentSpan()
-        var dragOffset = Offset.Zero
-        var columnStep = 1f
-        var rowStep = 1f
+    return pointerInput(id, layoutDirection, columnStep, rowStep) {
+        val dragRef = AtomicReference(AxResizeDragState(currentSpan()))
         detectDragGestures(
             onDragStart = {
                 currentOnResizeStarted()
-                startSpan = currentSpan()
-                dragOffset = Offset.Zero
-                val size = currentItemSize()
-                columnStep = ((size.width + spacingPx) / startSpan.columns).coerceAtLeast(1f)
-                rowStep = ((size.height + spacingPx) / startSpan.rows).coerceAtLeast(1f)
+                dragRef.set(AxResizeDragState(currentSpan()))
             },
             onDragCancel = {
-                currentOnResize(startSpan)
+                currentOnResize(dragRef.get().startSpan)
                 currentOnResizeStopped()
             },
             onDragEnd = {
@@ -346,16 +324,20 @@ internal fun Modifier.axQsResizeHandle(
             },
         ) { change, amount ->
             change.consume()
-            dragOffset += amount
+            val state =
+                dragRef.updateAndGet { it.copy(dragOffset = it.dragOffset + amount) }
             val horizontalOffset =
-                if (layoutDirection == LayoutDirection.Ltr) dragOffset.x else -dragOffset.x
-            val target =
-                currentResolveSpan(
-                    startSpan,
-                    (horizontalOffset / columnStep).roundToInt(),
-                    (dragOffset.y / rowStep).roundToInt(),
-                )
-            if (target != currentSpan() && currentCanResize(target)) currentOnResize(target)
+                if (layoutDirection == LayoutDirection.Ltr) {
+                    state.dragOffset.x
+                } else {
+                    -state.dragOffset.x
+                }
+            val columnDelta = (horizontalOffset / columnStep).roundToInt()
+            val rowDelta = (state.dragOffset.y / rowStep).roundToInt()
+            val target = currentResolveSpan(state.startSpan, columnDelta, rowDelta)
+            if (target != currentSpan() && currentCanResize(target)) {
+                currentOnResize(target)
+            }
         }
     }
 }

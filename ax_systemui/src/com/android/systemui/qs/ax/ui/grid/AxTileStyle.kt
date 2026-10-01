@@ -17,51 +17,46 @@
 package com.android.systemui.qs.ax.ui.grid
 
 import android.content.Context
+import android.content.res.Resources
 import android.graphics.drawable.Drawable
 import android.service.quicksettings.Tile.STATE_ACTIVE
 import android.service.quicksettings.Tile.STATE_INACTIVE
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.android.compose.modifiers.thenIf
-import com.android.compose.theme.LocalAndroidColorScheme
 import com.android.systemui.Flags
 import com.android.systemui.common.shared.model.Icon
 import com.android.systemui.qs.ax.shared.model.AxQsSpan
-import com.android.systemui.qs.composefragment.LocalBlurEnabled
+import com.android.systemui.qs.ax.shared.model.AxQsTokens
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.CommonTileDefaults
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.CommonTileDefaults.longPressLabelSettings
-import com.android.systemui.qs.panels.ui.compose.infinitegrid.LargeTileLabels
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.SmallTileContent
-import com.android.systemui.qs.panels.ui.compose.infinitegrid.TileColors
-import com.android.systemui.qs.panels.ui.compose.infinitegrid.bounceScale
 import com.android.systemui.qs.panels.ui.viewmodel.AccessibilityUiState
 import com.android.systemui.qs.ui.compose.borderOnFocus
 
@@ -69,39 +64,17 @@ val LocalTileScale = staticCompositionLocalOf { 1f }
 
 @Composable
 fun computeTileScale(): Float {
-    val sw = LocalConfiguration.current.smallestScreenWidthDp
-    return (sw / 411f).coerceAtMost(1f)
-}
-
-object AxTileDefaults {
-    val LargeIconSize = 26.dp
-    val IconSize = 24.dp
-    val TileHeight = 72.dp
-    val TileSpacing = 16.dp
-    val InactiveCornerRadius = 50.dp
-    val DividerWidth = 1.dp
-    val DividerHeight = 16.dp
-    val IconDividerSpacing = 12.dp
-    val DividerLabelSpacing = 14.dp
-    val LargeTileStartPadding = 16.dp
-    val LargeTileEndPadding = 16.dp
-
-    @Composable
-    fun dividerColor(state: Int): Color {
-        return when (state) {
-            STATE_ACTIVE -> MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.2f)
-            STATE_INACTIVE -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
-            else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f)
-        }
-    }
-
-    @Composable
-    fun backgroundColor(): Color {
-        return if (LocalBlurEnabled.current) {
-            LocalAndroidColorScheme.current.surfaceEffect1
-        } else {
-            MaterialTheme.colorScheme.surfaceBright
-        }
+    val configuration = LocalConfiguration.current
+    val density = LocalDensity.current.density
+    val displayMetrics = Resources.getSystem().displayMetrics
+    val physicalWidthPx = minOf(displayMetrics.widthPixels, displayMetrics.heightPixels)
+    val qsRenderDensity = physicalWidthPx / 420f
+    return if (configuration.smallestScreenWidthDp >= 600) {
+        1.0f
+    } else if (density > 0f) {
+        (qsRenderDensity / density).coerceIn(0.85f, 1.15f)
+    } else {
+        1.0f
     }
 }
 
@@ -111,7 +84,7 @@ fun AxLargeTileContent(
     secondaryLabel: String?,
     iconProvider: Context.() -> Icon,
     sideDrawable: Drawable?,
-    colors: TileColors,
+    colors: AxTileColors,
     squishiness: () -> Float,
     tileState: Int,
     span: AxQsSpan,
@@ -122,106 +95,134 @@ fun AxLargeTileContent(
     textScale: () -> Float = { 1f },
     toggleClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
+    isDualTarget: Boolean = toggleClick != null,
+    interactionSource: MutableInteractionSource? = null,
+    showDivider: Boolean = true,
 ) {
+    val cellConfig = LocalAxQsCellConfig.current
+    val scale = cellConfig.densityScale
+    val focusBorderColor = MaterialTheme.colorScheme.secondary
+    val longPressLabel = longPressLabelSettings().takeIf { onLongClick != null }
+
+    val chipColor by
+        animateColorAsState(
+            targetValue = colors.chipBackground,
+            label = "AxLargeTileChipColor",
+        )
+
+    val chipIconColor by
+        animateColorAsState(
+            targetValue = colors.chipIcon,
+            label = "AxLargeTileChipIconColor",
+        )
+
     if (span.rows == 1) {
-        val isDualTarget = toggleClick != null
-        val scale = LocalTileScale.current
-        val longPressLabel = longPressLabelSettings().takeIf { onLongClick != null }
-        val focusBorderColor = MaterialTheme.colorScheme.secondary
+        val clickableIconModifier =
+            if (toggleClick != null) {
+                Modifier.combinedClickable(
+                    onClick = toggleClick,
+                    onLongClick = onLongClick,
+                    onLongClickLabel = longPressLabel,
+                    hapticFeedbackEnabled = !Flags.msdlFeedback(),
+                    interactionSource = interactionSource,
+                )
+            } else {
+                Modifier
+            }
+
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier =
                 modifier.padding(
-                    start = AxTileDefaults.LargeTileStartPadding * scale,
-                    end = AxTileDefaults.LargeTileEndPadding * scale,
+                    start = cellConfig.tileStartPadding.coerceAtLeast(0.dp),
+                    end = cellConfig.tileEndPadding.coerceAtLeast(0.dp),
                 ),
         ) {
             Box(
                 modifier =
-                    Modifier.fillMaxHeight()
-                        .widthIn(min = 48.dp * scale)
+                    Modifier.size(cellConfig.iconContainerSize)
+                        .background(chipColor, CircleShape)
                         .thenIf(isDualTarget) {
-                            Modifier.borderOnFocus(color = focusBorderColor, iconShape.topEnd)
-                                .combinedClickable(
-                                    onClick = toggleClick!!,
-                                    onLongClick = onLongClick,
-                                    onLongClickLabel = longPressLabel,
-                                    hapticFeedbackEnabled = !Flags.msdlFeedback(),
-                                )
-                        },
+                            Modifier.borderOnFocus(color = focusBorderColor, CircleShape.topEnd)
+                        }
+                        .then(clickableIconModifier),
                 contentAlignment = Alignment.Center,
             ) {
                 SmallTileContent(
                     iconProvider = iconProvider,
-                    color = colors.icon,
-                    size = { AxTileDefaults.LargeIconSize * scale },
+                    color = chipIconColor,
+                    size = { cellConfig.iconSize },
                 )
             }
 
-            if (isDualTarget) {
-                Spacer(Modifier.width(AxTileDefaults.IconDividerSpacing * scale))
-                Box(
-                    Modifier.width(AxTileDefaults.DividerWidth)
-                        .height(AxTileDefaults.DividerHeight * scale)
-                        .background(AxTileDefaults.dividerColor(tileState))
-                )
-                Spacer(Modifier.width(AxTileDefaults.DividerLabelSpacing * scale))
-            } else {
-                Spacer(Modifier.width(AxTileDefaults.DividerLabelSpacing * scale))
-            }
+            Spacer(Modifier.width(cellConfig.tileStartPadding))
 
-            LargeTileLabels(
-                label = label,
-                secondaryLabel = secondaryLabel,
-                colors = colors,
-                accessibilityUiState = accessibilityUiState,
-                isVisible = isVisible,
-                modifier =
-                    Modifier.weight(1f)
-                        .bounceScale(TransformOrigin(0f, .5f), textScale),
-            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = colors.label,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (!secondaryLabel.isNullOrBlank()) {
+                    Text(
+                        text = secondaryLabel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.secondaryLabel,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
         return
     }
 
-    val scale = LocalTileScale.current
-    val layoutDirection = LocalLayoutDirection.current
-    val textOrigin = if (layoutDirection == LayoutDirection.Ltr) 1f else 0f
-    val textLayoutDirection =
-        if (layoutDirection == LayoutDirection.Ltr) LayoutDirection.Rtl else LayoutDirection.Ltr
-
     Column(
         modifier =
-            modifier.padding(
-                start = AxTileDefaults.LargeTileStartPadding * scale,
-                top = AxTileDefaults.LargeTileEndPadding * scale,
-                end = AxTileDefaults.LargeTileEndPadding * scale,
-                bottom = AxTileDefaults.LargeTileEndPadding * scale,
-            )
+            modifier
+                .fillMaxSize()
+                .padding(cellConfig.tileEndPadding.coerceAtLeast(0.dp)),
+        verticalArrangement = Arrangement.SpaceBetween,
     ) {
-        AxLargeTileIcon(
-            iconProvider = iconProvider,
-            colors = colors,
-            scale = scale,
-            toggleClick = toggleClick,
-            onLongClick = onLongClick,
-            modifier = Modifier.size(CommonTileDefaults.ToggleTargetSize * scale),
-        )
-        Spacer(Modifier.weight(1f))
-        Box(
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.BottomEnd,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top,
         ) {
-            CompositionLocalProvider(LocalLayoutDirection provides textLayoutDirection) {
-                LargeTileLabels(
-                    label = label,
-                    secondaryLabel = secondaryLabel,
-                    colors = colors,
-                    accessibilityUiState = accessibilityUiState,
-                    isVisible = isVisible,
-                    modifier =
-                        Modifier.fillMaxWidth(0.85f)
-                            .bounceScale(TransformOrigin(textOrigin, 1f), textScale),
+            AxLargeTileIcon(
+                iconProvider = iconProvider,
+                colors = colors,
+                scale = scale,
+                toggleClick = toggleClick,
+                onLongClick = onLongClick,
+                interactionSource = interactionSource,
+                tileState = tileState,
+                modifier = Modifier.size(cellConfig.iconContainerSize),
+            )
+        }
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleMedium,
+                color = colors.label,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (!secondaryLabel.isNullOrBlank()) {
+                Text(
+                    text = secondaryLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.secondaryLabel,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -231,23 +232,26 @@ fun AxLargeTileContent(
 @Composable
 private fun AxLargeTileIcon(
     iconProvider: Context.() -> Icon,
-    colors: TileColors,
+    colors: AxTileColors,
     scale: Float,
     toggleClick: (() -> Unit)?,
     onLongClick: (() -> Unit)?,
+    interactionSource: MutableInteractionSource? = null,
+    tileState: Int = STATE_INACTIVE,
     modifier: Modifier = Modifier,
 ) {
+    val cellConfig = LocalAxQsCellConfig.current
     val longPressLabel = longPressLabelSettings().takeIf { onLongClick != null }
     val focusBorderColor = MaterialTheme.colorScheme.secondary
     val chipColor by
         animateColorAsState(
-            targetValue =
-                if (colors.iconBackground == Color.Transparent) {
-                    colors.icon.copy(alpha = ICON_CHIP_ALPHA)
-                } else {
-                    colors.iconBackground
-                },
+            targetValue = colors.chipBackground,
             label = "AxLargeTileIconBackground",
+        )
+    val chipIconColor by
+        animateColorAsState(
+            targetValue = colors.chipIcon,
+            label = "AxLargeTileIconTint",
         )
     Box(
         modifier =
@@ -258,16 +262,15 @@ private fun AxLargeTileIcon(
                         onLongClick = onLongClick,
                         onLongClickLabel = longPressLabel,
                         hapticFeedbackEnabled = !Flags.msdlFeedback(),
+                        interactionSource = interactionSource,
                     )
             },
         contentAlignment = Alignment.Center,
     ) {
         SmallTileContent(
             iconProvider = iconProvider,
-            color = colors.icon,
-            size = { AxTileDefaults.LargeIconSize * scale },
+            color = chipIconColor,
+            size = { cellConfig.iconSize },
         )
     }
 }
-
-private const val ICON_CHIP_ALPHA = 0.12f

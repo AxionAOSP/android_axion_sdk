@@ -39,8 +39,9 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,6 +68,7 @@ import com.android.systemui.compose.modifiers.sysuiResTag
 import com.android.systemui.privacy.OngoingPrivacyChip
 import com.android.systemui.privacy.PrivacyItem
 import com.android.systemui.qs.ax.shared.model.AxQsLayoutPadding
+import com.android.systemui.qs.ax.ui.grid.AxQsCellConfig
 import com.android.systemui.res.R
 import com.android.systemui.shade.ui.composable.LocalStatusIconContext
 import com.android.systemui.shade.ui.composable.ShadeHeader
@@ -81,6 +83,9 @@ import com.android.systemui.statusbar.systemstatusicons.ui.compose.SystemStatusI
 import com.android.systemui.statusbar.systemstatusicons.ui.compose.SystemStatusIconsLegacy
 import kotlin.math.max
 
+val LocalAxQsModularSidePadding =
+    compositionLocalOf { AxQuickSettingsLayoutDefaults.PortraitSidePadding }
+
 private val AxQuickSettingsHeaderContent = SceneKey("AxQuickSettingsHeader")
 
 @Composable
@@ -93,16 +98,10 @@ fun AxQuickSettingsHeader(
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val landscape =
             LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val sidePadding =
-            maxWidth *
-                if (landscape) {
-                    AxQuickSettingsLayoutDefaults.LANDSCAPE_SIDE_PADDING_FRACTION
-                } else {
-                    AxQuickSettingsLayoutDefaults.PORTRAIT_SIDE_PADDING_FRACTION
-                }
+        val sidePadding = LocalAxQsModularSidePadding.current
         val startContent: @Composable () -> Unit = {
             Row(
-                modifier = Modifier.padding(start = sidePadding),
+                modifier = Modifier.padding(start = sidePadding.coerceAtLeast(0.dp)),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -111,7 +110,7 @@ fun AxQuickSettingsHeader(
         }
         val endContent: @Composable () -> Unit = {
             Row(
-                modifier = Modifier.padding(end = sidePadding),
+                modifier = Modifier.padding(end = sidePadding.coerceAtLeast(0.dp)),
                 horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.End),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -339,6 +338,8 @@ private fun AxHeaderDate(
 private const val AX_CLOCK_DATE_TEXT_SIZE = 18f
 
 object AxQuickSettingsLayoutDefaults {
+    val PortraitSidePadding = AxQsLayoutPadding.PORTRAIT_SIDE_PADDING
+    val LandscapeSidePadding = AxQsLayoutPadding.LANDSCAPE_SIDE_PADDING
     const val PORTRAIT_SIDE_PADDING_FRACTION = AxQsLayoutPadding.PORTRAIT_SIDE_FRACTION
     const val LANDSCAPE_SIDE_PADDING_FRACTION = AxQsLayoutPadding.LANDSCAPE_SIDE_FRACTION
     val LandscapeGridSpacing = 16.dp
@@ -346,6 +347,32 @@ object AxQuickSettingsLayoutDefaults {
     val LandscapeHeaderContentSpacing = 8.dp
     val LandscapeHeaderHeight: Dp
         @Composable get() = ShadeHeader.Dimensions.StatusBarHeight
+
+    fun modularSidePadding(
+        maxWidth: Dp,
+        landscape: Boolean,
+        tileScale: Float = 1f,
+        columns: Int = 4,
+    ): Dp {
+        val minSidePadding =
+            if (landscape) {
+                LandscapeSidePadding
+            } else {
+                PortraitSidePadding
+            }
+        if (maxWidth >= 440.dp || landscape) {
+            return minSidePadding
+        }
+        val targetGridWidth =
+            AxQsCellConfig.Defaults.modularGridWidth(columns, tileScale)
+        val availableWidth = (maxWidth - minSidePadding * 2).coerceAtLeast(0.dp)
+        return if (availableWidth > targetGridWidth) {
+            val extraPadding = ((availableWidth - targetGridWidth) / 2).coerceAtMost(8.dp)
+            minSidePadding + extraPadding
+        } else {
+            minSidePadding
+        }
+    }
 }
 
 @Composable

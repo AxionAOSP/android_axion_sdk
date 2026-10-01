@@ -19,14 +19,20 @@ package com.android.systemui.qs.ax.ui.controls
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon as MaterialIcon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,14 +46,16 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.systemui.brightness.ui.viewmodel.BrightnessSliderViewModel
 import com.android.systemui.common.ui.compose.Icon
+import com.android.systemui.qs.ax.pressfeedback.axPressFeedback
+import com.android.systemui.qs.ax.res.R
 import com.android.systemui.qs.ax.shared.model.AxQsControl
 import com.android.systemui.qs.ax.shared.model.AxQsSpan
 import com.android.systemui.qs.ax.shared.model.AxQsVerticalSliderStyle
-import com.android.systemui.qs.ax.ui.viewmodel.AxMediaViewModel
 import com.android.systemui.qs.ax.tiles.ringer.RingerSliderTileContent
-import com.android.systemui.qs.ax.ui.grid.AxTileDefaults
+import com.android.systemui.qs.ax.ui.grid.LocalAxQsCellConfig
 import com.android.systemui.qs.ax.ui.media.AxMediaPanel
-import com.android.systemui.res.R
+import com.android.systemui.qs.ax.ui.viewmodel.AxMediaViewModel
+import com.android.systemui.res.R as SysuiR
 import com.android.systemui.volume.panel.component.volume.slider.ui.viewmodel.AudioStreamSliderViewModel
 
 @Composable
@@ -57,6 +65,7 @@ internal fun AxQsBrightnessButton(
     modifier: Modifier = Modifier,
 ) {
     val active = viewModel.autoMode
+    val cellConfig = LocalAxQsCellConfig.current
     AxQsButtonControl(
         description = stringResource(R.string.ax_qs_auto_brightness),
         active = active,
@@ -68,14 +77,14 @@ internal fun AxQsBrightnessButton(
             painter =
                 painterResource(
                     if (active) {
-                        R.drawable.ic_qs_brightness_auto_on
+                        SysuiR.drawable.ic_qs_brightness_auto_on
                     } else {
-                        R.drawable.ic_qs_brightness_auto_off
+                        SysuiR.drawable.ic_qs_brightness_auto_off
                     }
                 ),
             contentDescription = null,
             tint = tint,
-            modifier = Modifier.size(AxButtonControlIconSize),
+            modifier = Modifier.size(cellConfig.iconSize),
         )
     }
 }
@@ -88,6 +97,7 @@ internal fun AxQsVolumeMuteButton(
 ) {
     val state by viewModel.slider.collectAsStateWithLifecycle()
     val muted = state.value <= state.valueRange.start
+    val cellConfig = LocalAxQsCellConfig.current
     AxQsButtonControl(
         description = stringResource(R.string.ax_qs_volume_mute),
         active = muted,
@@ -96,7 +106,7 @@ internal fun AxQsVolumeMuteButton(
         modifier = modifier,
     ) { tint ->
         state.icon?.let { icon ->
-            Icon(icon = icon, tint = tint, modifier = Modifier.size(AxButtonControlIconSize))
+            Icon(icon = icon, tint = tint, modifier = Modifier.size(cellConfig.iconSize))
         }
     }
 }
@@ -110,19 +120,24 @@ private fun AxQsButtonControl(
     modifier: Modifier = Modifier,
     icon: @Composable (Color) -> Unit,
 ) {
+    val cellConfig = LocalAxQsCellConfig.current
     val background by
         animateColorAsState(
             targetValue =
-                if (active) MaterialTheme.colorScheme.primary else AxTileDefaults.backgroundColor(),
+                if (active) MaterialTheme.colorScheme.primary else cellConfig.backgroundColor(),
             label = "AxQsButtonBackground",
         )
     val foreground by
         animateColorAsState(
             targetValue =
-                if (active) MaterialTheme.colorScheme.onPrimary
-                else MaterialTheme.colorScheme.onSurface,
+                if (active) {
+                    MaterialTheme.colorScheme.onPrimary
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
             label = "AxQsButtonForeground",
         )
+    val interactionSource = remember { MutableInteractionSource() }
     Box(
         contentAlignment = Alignment.Center,
         modifier =
@@ -130,7 +145,14 @@ private fun AxQsButtonControl(
                 .fillMaxSize()
                 .clip(CircleShape)
                 .background(background)
-                .clickable(enabled = interactive, role = Role.Switch, onClick = onClick)
+                .axPressFeedback(interactionSource, enabled = interactive)
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = ripple(),
+                    enabled = interactive,
+                    role = Role.Switch,
+                    onClick = onClick,
+                )
                 .semantics { contentDescription = description },
     ) {
         icon(foreground)
@@ -139,58 +161,72 @@ private fun AxQsButtonControl(
 
 private val AxButtonControlIconSize = 24.dp
 
+data class AxControlViewModels(
+    val brightnessSliderViewModel: BrightnessSliderViewModel,
+    val volumeViewModel: AudioStreamSliderViewModel,
+    val mediaViewModel: AxMediaViewModel,
+)
+
+val LocalAxControlViewModels = staticCompositionLocalOf<AxControlViewModels?> { null }
+
 @Composable
 fun AxQsControlPreview(
     control: AxQsControl,
     span: AxQsSpan,
-    maxColumns: Int,
     verticalSliderStyle: AxQsVerticalSliderStyle,
-    brightnessViewModel: BrightnessSliderViewModel,
-    volumeViewModel: AudioStreamSliderViewModel,
-    mediaViewModel: AxMediaViewModel,
     modifier: Modifier = Modifier,
+    viewModels: AxControlViewModels? = LocalAxControlViewModels.current,
 ) {
-    when (control) {
-        AxQsControl.BRIGHTNESS,
-        AxQsControl.BRIGHTNESS_HORIZONTAL,
-        AxQsControl.VOLUME,
-        AxQsControl.VOLUME_HORIZONTAL ->
-            AxQsSliderPreview(
-                control = control,
-                verticalStyle = verticalSliderStyle,
-                brightnessViewModel = brightnessViewModel,
-                volumeViewModel = volumeViewModel,
-                modifier = modifier,
-            )
-        AxQsControl.AUTO_BRIGHTNESS ->
-            Box(modifier, contentAlignment = Alignment.Center) {
+    val models = viewModels ?: return
+    val brightnessViewModel = models.brightnessSliderViewModel
+    val volumeViewModel = models.volumeViewModel
+    val mediaViewModel = models.mediaViewModel
+    val cellConfig = LocalAxQsCellConfig.current
+    val isVertical = control.isVerticalSlider
+    val is1x1Widget = span.rows == 1 && span.columns == 1
+    val previewModifier =
+        when {
+            is1x1Widget -> Modifier.size(cellConfig.iconTileSize)
+            isVertical -> Modifier.width(cellConfig.iconTileSize).fillMaxHeight()
+            else -> Modifier.fillMaxSize()
+        }
+    Box(modifier, contentAlignment = Alignment.Center) {
+        when (control) {
+            AxQsControl.BRIGHTNESS,
+            AxQsControl.VOLUME ->
+                AxQsSliderPreview(
+                    control = control,
+                    verticalStyle = verticalSliderStyle,
+                    brightnessViewModel = brightnessViewModel,
+                    volumeViewModel = volumeViewModel,
+                    modifier = previewModifier,
+                )
+            AxQsControl.AUTO_BRIGHTNESS ->
                 AxQsBrightnessButton(
                     viewModel = brightnessViewModel,
                     interactive = false,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = previewModifier,
                 )
-            }
-        AxQsControl.VOLUME_MUTE ->
-            Box(modifier, contentAlignment = Alignment.Center) {
+            AxQsControl.VOLUME_MUTE ->
                 AxQsVolumeMuteButton(
                     viewModel = volumeViewModel,
                     interactive = false,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = previewModifier,
                 )
-            }
-        AxQsControl.RINGER ->
-            RingerSliderTileContent(
-                interactable = false,
-                shape = axQsControlShape(AxQsControl.RINGER, span),
-                modifier = modifier.fillMaxSize(),
-            )
-        AxQsControl.MEDIA ->
-            AxMediaPanel(
-                viewModel = mediaViewModel,
-                span = span,
-                modifier = modifier.fillMaxSize(),
-                showPlaceholder = true,
-                interactive = false,
-            )
+            AxQsControl.RINGER ->
+                RingerSliderTileContent(
+                    interactable = false,
+                    shape = axQsControlShape(AxQsControl.RINGER, span),
+                    modifier = previewModifier,
+                )
+            AxQsControl.MEDIA ->
+                AxMediaPanel(
+                    viewModel = mediaViewModel,
+                    span = span,
+                    modifier = previewModifier,
+                    showPlaceholder = true,
+                    interactive = false,
+                )
+        }
     }
 }

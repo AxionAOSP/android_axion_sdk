@@ -1,5 +1,5 @@
 /*
- * Copyright 2025-2026 AxionOS
+ * Copyright (C) 2025-2026 AxionOS
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
-import com.android.app.tracing.coroutines.launchTraced as launch
 import com.android.internal.jank.Cuj
 import com.android.systemui.animation.Expandable
 import com.android.systemui.classifier.Classifier
@@ -34,12 +32,14 @@ import com.android.systemui.media.remedia.domain.model.MediaActionModel
 import com.android.systemui.media.remedia.domain.model.MediaOutputDeviceModel
 import com.android.systemui.media.remedia.domain.model.MediaSessionModel
 import com.android.systemui.media.remedia.ui.viewmodel.MediaFalsingSystem
-import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
-import com.android.systemui.keyguard.shared.model.KeyguardState
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.plugins.FalsingManager
 import com.android.systemui.qs.ax.data.repository.AxMediaHistoryRepository
+import com.android.systemui.qs.ax.domain.interactor.AxMediaInteractor
+import com.android.systemui.qs.ax.shared.model.AxMediaDismissToken
+import com.android.systemui.qs.ax.shared.model.AxMediaSessionModel
 import com.android.systemui.qs.ax.shared.model.AxMediaSurface
+import com.android.systemui.qs.ax.shared.model.isDisplayable
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
 import javax.inject.Inject
 import kotlin.math.abs
@@ -47,6 +47,7 @@ import kotlin.math.roundToLong
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 
 class AxMediaViewModel
 @Inject
@@ -56,70 +57,107 @@ constructor(
     private val mediaCarouselInteractor: MediaCarouselInteractor,
     private val mediaHistoryRepository: AxMediaHistoryRepository,
     private val activityStarter: ActivityStarter,
-    @Application private val applicationScope: CoroutineScope,
-    @Main private val mainDispatcher: CoroutineDispatcher,
+    private val axMediaInteractor: AxMediaInteractor,
     private val shadeInteractor: ShadeInteractor,
-    private val keyguardTransitionInteractor: KeyguardTransitionInteractor,
+    @Application private val applicationScope: CoroutineScope,
+    @Main private val mainDispatcher: CoroutineDispatcher
 ) {
-    private var scrubbingSessionKey: Any? by mutableStateOf(null)
-    private var gutsSessionKey: Any? by mutableStateOf(null)
-    private var scrubProgress by mutableFloatStateOf(0f)
-    private var dismissedSessions by
+    val isShadeInteracting: StateFlow<Boolean> = shadeInteractor.isUserInteracting
+    private val scrubbingSessionKey = mutableStateOf<Any?>(null)
+    private val gutsSessionKey = mutableStateOf<Any?>(null)
+    private val scrubProgress = mutableFloatStateOf(0f)
+    private val dismissedSessions =
         mutableStateOf(emptyMap<AxMediaSurface, Set<AxMediaDismissToken>>())
-    private val sessions by derivedStateOf { interactor.sessions }
+    private val sessions: List<MediaSessionModel> by derivedStateOf {
+        interactor.sessions.map { raw ->
+            AxMediaSessionModel(raw) {
+                interactor.sessions.firstOrNull { it.key == raw.key }?.positionMs ?: raw.positionMs
+            }
+        }
+    }
 
-    private val activeSessions by derivedStateOf { sessions.filter { it.isDisplayable() } }
+    private val activeSessions: List<MediaSessionModel> by derivedStateOf {
+        axMediaInteractor.sortSessions(sessions, lastMediaPackage.value)
+    }
 
-    val currentSession by derivedStateOf {
-        val selected = sessions.getOrNull(interactor.currentCarouselIndex)
+    val currentSession: MediaSessionModel? by derivedStateOf {
+        val selected = activeSessions.getOrNull(interactor.currentCarouselIndex)
         selected?.takeIf { it.isDisplayable() } ?: activeSessions.firstOrNull()
     }
 
+    fun currentSession(surface: AxMediaSurface): MediaSessionModel? {
+        val visible = visibleSessions(surface)
+        val selected = visible.getOrNull(interactor.currentCarouselIndex)
+        return selected ?: visible.firstOrNull()
+    }
+
     val showOnLockscreen = mediaCarouselInteractor.allowMediaOnLockscreen
-    val isShadeExpanded: StateFlow<Boolean> = shadeInteractor.isAnyExpanded
-    val currentKeyguardState: StateFlow<KeyguardState> = keyguardTransitionInteractor.currentKeyguardState
+
+    fun setDynamicBarExpanded(expanded: Boolean) {}
+
     val lastMediaPackage = mediaHistoryRepository.lastMediaPackage
 
     init {
         mediaHistoryRepository.startListening()
     }
 
+    fun getSessionPackageName(sessionKey: Any): String? =
+        axMediaInteractor.getSessionPackageName(sessionKey)
+
+    fun getSessionLastActive(sessionKey: Any): Long =
+        axMediaInteractor.getSessionLastActive(sessionKey)
+
+    fun compareSessions(keyA: Any, keyB: Any, lastMediaPackage: String?): Int {
+        if (keyA == keyB) return 0
+        val sessionA = sessionForKey(keyA)
+        val sessionB = sessionForKey(keyB)
+        return axMediaInteractor.compareSessions(sessionA, sessionB, keyA, keyB, lastMediaPackage)
+    }
+
     fun synchronizeSession(sessionKey: Any?) {
-        if (scrubbingSessionKey != null && scrubbingSessionKey != sessionKey) {
-            scrubbingSessionKey = null
+        if (scrubbingSessionKey.value != null && scrubbingSessionKey.value != sessionKey) {
+            scrubbingSessionKey.value = null
         }
-        if (gutsSessionKey != null && gutsSessionKey != sessionKey) {
-            gutsSessionKey = null
+        if (gutsSessionKey.value != null && gutsSessionKey.value != sessionKey) {
+            gutsSessionKey.value = null
         }
     }
 
     fun visibleSessions(surface: AxMediaSurface): List<MediaSessionModel> {
-        return activeSessions.filter { it.isVisibleOn(surface) }
+        if (surface == AxMediaSurface.LOCKSCREEN && !showOnLockscreen.value) {
+            return emptyList()
+        }
+        val dismissed = dismissedSessions.value[surface].orEmpty()
+        return activeSessions.filter { axMediaInteractor.isSessionVisible(it, surface, dismissed) }
     }
 
     fun hasVisibleSessions(surface: AxMediaSurface): Boolean = visibleSessions(surface).isNotEmpty()
 
-    fun sessionForKey(sessionKey: Any): MediaSessionModel? {
-        return sessions.firstOrNull { it.key == sessionKey }
-    }
+    fun sessionForKey(sessionKey: Any): MediaSessionModel? =
+        sessions.firstOrNull { it.key == sessionKey }
 
     fun isSessionVisible(sessionKey: Any, surface: AxMediaSurface): Boolean {
-        return sessionForKey(sessionKey)?.isVisibleOn(surface) == true
+        if (surface == AxMediaSurface.LOCKSCREEN && !showOnLockscreen.value) {
+            return false
+        }
+        val session = sessionForKey(sessionKey) ?: return false
+        val dismissed = dismissedSessions.value[surface].orEmpty()
+        return axMediaInteractor.isSessionVisible(session, surface, dismissed)
     }
 
     fun hasVisibleGuts(): Boolean {
-        val sessionKey = gutsSessionKey ?: return false
+        val sessionKey = gutsSessionKey.value ?: return false
         return sessions.any { it.key == sessionKey && it.isDisplayable() }
     }
 
-    fun isGutsVisible(session: MediaSessionModel): Boolean = gutsSessionKey == session.key
+    fun isGutsVisible(session: MediaSessionModel): Boolean = gutsSessionKey.value == session.key
 
     fun showGuts(session: MediaSessionModel) {
-        gutsSessionKey = session.key
+        gutsSessionKey.value = session.key
     }
 
     fun closeGuts() {
-        gutsSessionKey = null
+        gutsSessionKey.value = null
     }
 
     fun cancelGuts() {
@@ -131,8 +169,8 @@ constructor(
 
     fun dismissBySwipe(surface: AxMediaSurface) {
         if (!surface.dismissible) return
-        dismissedSessions =
-            dismissedSessions +
+        dismissedSessions.value =
+            dismissedSessions.value +
                 (surface to activeSessions.mapTo(mutableSetOf()) { it.dismissToken() })
         closeGuts()
     }
@@ -140,8 +178,8 @@ constructor(
     fun dismissFromSurface(session: MediaSessionModel, surface: AxMediaSurface) {
         if (!surface.dismissible) return
         falsingSystem.runIfNotFalseTap(FalsingManager.LOW_PENALTY) {
-            val dismissed = dismissedSessions[surface].orEmpty() + session.dismissToken()
-            dismissedSessions = dismissedSessions + (surface to dismissed)
+            val dismissed = dismissedSessions.value[surface].orEmpty() + session.dismissToken()
+            dismissedSessions.value = dismissedSessions.value + (surface to dismissed)
             closeGuts()
         }
     }
@@ -153,26 +191,29 @@ constructor(
     }
 
     fun progress(session: MediaSessionModel): Float {
-        if (scrubbingSessionKey == session.key) return scrubProgress
+        if (scrubbingSessionKey.value == session.key) return scrubProgress.floatValue
         if (session.durationMs <= 0L) return 0f
         return (session.positionMs.toFloat() / session.durationMs).coerceIn(0f, 1f)
     }
 
     fun onScrubChange(session: MediaSessionModel, progress: Float) {
-        scrubbingSessionKey = session.key
-        scrubProgress = progress.coerceIn(0f, 1f)
+        scrubbingSessionKey.value = session.key
+        scrubProgress.floatValue = progress.coerceIn(0f, 1f)
     }
 
     fun onScrubFinished(session: MediaSessionModel, dragDelta: Offset) {
         if (
             session.canBeScrubbed &&
-                scrubbingSessionKey == session.key &&
+                scrubbingSessionKey.value == session.key &&
                 dragDelta.isHorizontal() &&
                 !falsingSystem.isFalseTouch(Classifier.MEDIA_SEEKBAR)
         ) {
-            interactor.seek(session.key, (scrubProgress * session.durationMs).roundToLong())
+            interactor.seek(
+                session.key,
+                (scrubProgress.floatValue * session.durationMs).roundToLong()
+            )
         }
-        scrubbingSessionKey = null
+        scrubbingSessionKey.value = null
     }
 
     fun openSession(session: MediaSessionModel, expandable: Expandable) {
@@ -186,20 +227,16 @@ constructor(
                 activityStarter.postStartActivityDismissingKeyguard(
                     target.intent,
                     0,
-                    expandable.activityTransitionController(
-                        Cuj.CUJ_SHADE_APP_LAUNCH_FROM_MEDIA_PLAYER
-                    ),
+                    expandable.activityTransitionController(Cuj.CUJ_SHADE_APP_LAUNCH_FROM_MEDIA_PLAYER),
                     null,
-                    target.userHandle,
+                    target.userHandle
                 )
             }
         }
     }
 
     fun openOutput(device: MediaOutputDeviceModel, expandable: Expandable) {
-        falsingSystem.runIfNotFalseTap(FalsingManager.MODERATE_PENALTY) {
-            device.onClick(expandable)
-        }
+        falsingSystem.runIfNotFalseTap(FalsingManager.MODERATE_PENALTY) { device.onClick(expandable) }
     }
 
     fun runAction(action: MediaActionModel.Action) {
@@ -208,20 +245,6 @@ constructor(
 
     private fun Offset.isHorizontal(): Boolean = abs(x) >= abs(y)
 
-    private fun MediaSessionModel.isDisplayable(): Boolean = isActive && title.isNotBlank()
-
-    private fun MediaSessionModel.isVisibleOn(surface: AxMediaSurface): Boolean {
-        return isDisplayable() &&
-            (!surface.dismissible || dismissToken() !in dismissedSessions[surface].orEmpty())
-    }
-
-    private fun MediaSessionModel.dismissToken(): AxMediaDismissToken {
-        return AxMediaDismissToken(key, title, subtitle)
-    }
+    private fun MediaSessionModel.dismissToken(): AxMediaDismissToken =
+        AxMediaDismissToken(key, title, subtitle)
 }
-
-private data class AxMediaDismissToken(
-    val sessionKey: Any,
-    val title: String,
-    val subtitle: String,
-)

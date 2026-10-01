@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.android.compose.theme.LocalAndroidColorScheme
+import com.android.systemui.qs.ax.shared.model.AxQsTokens
 import com.android.systemui.qs.composefragment.LocalBlurEnabled
 import kotlin.math.roundToInt
 
@@ -73,7 +74,11 @@ fun RingerSliderTileContent(
         if (animatedPosition.value != targetPosition) {
             animatedPosition.animateTo(
                 targetValue = targetPosition,
-                animationSpec = tween(durationMillis = 250, easing = LinearOutSlowInEasing)
+                animationSpec =
+                    tween(
+                        durationMillis = AxQsTokens.Animation.RINGER_SLIDE_DURATION_MS,
+                        easing = LinearOutSlowInEasing,
+                    ),
             )
         }
     }
@@ -124,7 +129,7 @@ fun RingerSliderTileContent(
         val availableHeight = (maxHeight - outerPadding * 2).coerceAtLeast(0.dp)
         val availableWidth = (controlWidth - outerPadding * 2).coerceAtLeast(0.dp)
         val slotSize = minOf(availableHeight, availableWidth)
-        val iconSize = (slotSize * 0.42f).coerceIn(minOf(12.dp, slotSize), 28.dp)
+        val iconSize = 24.dp.coerceAtMost((slotSize - 8.dp).coerceAtLeast(12.dp))
         val maxModeIndex = (viewModel.numModes - 1).coerceAtLeast(0)
         val currentIndex = animatedPosition.value.roundToInt().coerceIn(0, maxModeIndex)
         val travelWidth = (controlWidth - outerPadding * 2 - slotSize).coerceAtLeast(0.dp)
@@ -145,10 +150,13 @@ fun RingerSliderTileContent(
                 val dotAlpha by
                     animateFloatAsState(
                         targetValue = if (currentIndex == index) 0f else 0.4f,
-                        animationSpec = tween(durationMillis = 200),
+                        animationSpec =
+                            tween(durationMillis = AxQsTokens.Animation.RINGER_DOT_DURATION_MS),
                         label = "RingerModeDotAlpha",
                     )
-                val dotOffset = (minCenter + dotStep * index - RINGER_DOT_SIZE / 2).coerceAtLeast(0.dp)
+                val dotOffset = (minCenter + dotStep * index - RINGER_DOT_SIZE / 2).coerceAtLeast(
+                    0.dp
+                )
                 Box(
                     modifier =
                         Modifier.offset(x = dotOffset)
@@ -177,5 +185,5 @@ fun RingerSliderTileContent(
     }
 }
 
-private val RINGER_OUTER_PADDING = 3.dp
-private val RINGER_DOT_SIZE = 6.dp
+private val RINGER_OUTER_PADDING = AxQsTokens.Slider.RingerOuterPadding
+private val RINGER_DOT_SIZE = AxQsTokens.Slider.RingerDotSize

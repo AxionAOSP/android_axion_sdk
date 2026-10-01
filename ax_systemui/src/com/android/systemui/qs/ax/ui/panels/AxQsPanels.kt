@@ -16,35 +16,15 @@
 
 package com.android.systemui.qs.ax.ui.panels
 
-import com.android.systemui.qs.ax.ui.grid.AxQsGrid
-import com.android.systemui.qs.ax.ui.grid.AxQsTileGrid
-import com.android.systemui.qs.ax.ui.grid.AxTileDefaults
-import com.android.systemui.qs.ax.ui.grid.LocalTileScale
-import com.android.systemui.qs.ax.ui.grid.axQsTileGridPageCount
-import com.android.systemui.qs.ax.ui.header.AxQuickSettingsDate
-import com.android.systemui.qs.ax.ui.header.AxQuickSettingsHeader
-
-import androidx.compose.foundation.ScrollState
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clipScrollableContainer
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.PagerState
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
@@ -63,13 +43,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import com.android.compose.animation.Expandable
@@ -80,180 +59,18 @@ import com.android.systemui.common.ui.compose.Icon as SystemUiIcon
 import com.android.systemui.common.ui.compose.PagerDots
 import com.android.systemui.compose.modifiers.sysuiResTag
 import com.android.systemui.lifecycle.rememberViewModel
-import com.android.systemui.qs.ax.shared.model.AxQsGridItem
+import com.android.systemui.qs.ax.res.R
+import com.android.systemui.qs.ax.shared.model.AxQsTokens
+import com.android.systemui.qs.ax.ui.grid.LocalAxQsCellConfig
+import com.android.systemui.qs.ax.ui.header.AxQuickSettingsDate
 import com.android.systemui.qs.footer.ui.viewmodel.FooterActionsButtonViewModel
 import com.android.systemui.qs.footer.ui.viewmodel.FooterActionsForegroundServicesButtonViewModel
 import com.android.systemui.qs.panels.ui.viewmodel.toolbar.ToolbarViewModel
-import com.android.systemui.res.R
-import com.android.systemui.shade.ui.composable.ShadeHeader
+import com.android.systemui.res.R as SysuiR
 import com.android.systemui.shade.ui.viewmodel.ShadeHeaderViewModel
 
-private val DragHandleWidth = 56.dp
-private val DragHandleHeight = 4.dp
-
 @Composable
-internal fun <T> ContentScope.AxQQS(
-    toolbarViewModel: ToolbarViewModel,
-    shadeHeaderViewModel: ShadeHeaderViewModel,
-    controlItems: List<AxQsGridItem<T>>,
-    tileItems: List<AxQsGridItem<T>>,
-    controlColumns: Int,
-    controlRows: Int,
-    tileColumns: Int,
-    tileRows: Int,
-    showTileLabels: Boolean,
-    rowHeight: Dp,
-    spacing: Dp,
-    circleCells: Boolean,
-    isFullyVisible: () -> Boolean,
-    editButtonProgress: () -> Float,
-    separateMode: Boolean,
-    modifier: Modifier = Modifier,
-    controlContent: @Composable (AxQsGridItem<T>) -> Unit,
-    tileContent: @Composable (AxQsGridItem<T>) -> Unit,
-) {
-    Column(
-        modifier = modifier.fillMaxWidth().heightIn(ShadeHeader.Dimensions.StatusBarHeight),
-        verticalArrangement = Arrangement.spacedBy(spacing),
-    ) {
-        AxQsDateHeader(
-            toolbarViewModel = toolbarViewModel,
-            shadeHeaderViewModel = shadeHeaderViewModel,
-            showEdit = false,
-            isFullyVisible = isFullyVisible,
-            editButtonProgress = editButtonProgress,
-        )
-        if (!separateMode) {
-            val pagerState = rememberAxQsTilePagerState(tileItems, tileColumns, tileRows)
-            if (controlItems.isNotEmpty()) {
-                AxQsGrid(
-                    items = controlItems,
-                    columns = controlColumns,
-                    rowHeight = rowHeight,
-                    spacing = spacing,
-                    maxRows = controlRows,
-                    squareCells = circleCells,
-                    modifier = Modifier.fillMaxWidth(),
-                    content = controlContent,
-                )
-            }
-            if (tileItems.isNotEmpty()) {
-                AxQsTileGrid(
-                    items = tileItems,
-                    columns = tileColumns,
-                    rows = tileRows,
-                    spacing = spacing,
-                    showLabels = showTileLabels,
-                    circleCells = circleCells,
-                    pagerState = pagerState,
-                    modifier = Modifier.fillMaxWidth(),
-                    content = tileContent,
-                )
-            }
-            Box(
-                Modifier.fillMaxWidth(),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    Modifier.width(DragHandleWidth)
-                        .height(DragHandleHeight)
-                        .background(
-                            colorResource(R.color.ax_qqs_drag_handle),
-                            RoundedCornerShape(2.dp),
-                        )
-                )
-            }
-        }
-    }
-}
-
-@Composable
-internal fun <T> ContentScope.AxQS(
-    toolbarViewModel: ToolbarViewModel,
-    shadeHeaderViewModel: ShadeHeaderViewModel,
-    isFullyVisible: () -> Boolean,
-    controlItems: List<AxQsGridItem<T>>,
-    tileItems: List<AxQsGridItem<T>>,
-    controlColumns: Int,
-    controlRows: Int,
-    tileColumns: Int,
-    tileRows: Int,
-    showTileLabels: Boolean,
-    rowHeight: Dp,
-    spacing: Dp,
-    editButtonProgress: () -> Float,
-    scrollState: ScrollState,
-    circleCells: Boolean,
-    showDate: Boolean = true,
-    modifier: Modifier = Modifier,
-    controlContent: @Composable (AxQsGridItem<T>) -> Unit,
-    tileContent: @Composable (AxQsGridItem<T>) -> Unit,
-    tileLabel: @Composable (AxQsGridItem<T>) -> Unit,
-) {
-    val pagerState = rememberAxQsTilePagerState(tileItems, tileColumns, tileRows)
-    Column(modifier = modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(spacing)) {
-        AxQsDateHeader(
-            toolbarViewModel = toolbarViewModel,
-            shadeHeaderViewModel = shadeHeaderViewModel,
-            showEdit = true,
-            showDate = showDate,
-            isFullyVisible = isFullyVisible,
-            editButtonProgress = editButtonProgress,
-        )
-        Column(
-            modifier =
-                Modifier.weight(1f)
-                    .fillMaxWidth()
-                    .clipScrollableContainer(Orientation.Vertical)
-                    .verticalScroll(scrollState, overscrollEffect = null),
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(spacing)) {
-                if (controlItems.isNotEmpty()) {
-                    AxQsGrid(
-                        items = controlItems,
-                        columns = controlColumns,
-                        rowHeight = rowHeight,
-                        spacing = spacing,
-                        maxRows = controlRows,
-                        squareCells = circleCells,
-                        modifier = Modifier.fillMaxWidth(),
-                        content = controlContent,
-                    )
-                }
-                if (tileItems.isNotEmpty()) {
-                    Column {
-                        AxQsTileGrid(
-                            items = tileItems,
-                            columns = tileColumns,
-                            rows = tileRows,
-                            spacing = spacing,
-                            showLabels = showTileLabels,
-                            circleCells = circleCells,
-                            pagerState = pagerState,
-                            modifier = Modifier.fillMaxWidth(),
-                            content = tileContent,
-                            label = tileLabel,
-                        )
-                        AxQsPagerIndicator(
-                            pagerState = pagerState,
-                            modifier = Modifier.fillMaxWidth().padding(top = spacing),
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun <T> rememberAxQsTilePagerState(
-    items: List<AxQsGridItem<T>>,
-    columns: Int,
-    rows: Int,
-): PagerState = rememberPagerState { axQsTileGridPageCount(items.size, columns, rows) }
-
-@Composable
-private fun ContentScope.AxQsDateHeader(
+internal fun ContentScope.AxQsDateHeader(
     toolbarViewModel: ToolbarViewModel,
     shadeHeaderViewModel: ShadeHeaderViewModel,
     showEdit: Boolean,
@@ -292,7 +109,7 @@ internal fun ContentScope.AxQsHeaderActions(
         }
         FooterIconButton(
             model = viewModel.settingsButtonViewModel,
-            containerColor = AxTileDefaults.backgroundColor(),
+            containerColor = LocalAxQsCellConfig.current.backgroundColor(),
             modifier =
                 Modifier.sysuiResTag("settings_button_container").minimumInteractiveComponentSize(),
         )
@@ -330,14 +147,25 @@ private fun AxEditButton(
     }
     Box(
         modifier =
-            Modifier.graphicsLayer { alpha = editButtonProgress().coerceIn(0f, 1f) }
+            Modifier.graphicsLayer {
+                val progress = editButtonProgress().coerceIn(0f, 1f)
+                val minScale = AxQsTokens.Animation.TILE_REVEAL_MIN_SCALE
+                val scale = minScale + (1f - minScale) * progress
+                alpha = progress
+                scaleX = scale
+                scaleY = scale
+                transformOrigin = TransformOrigin.Center
+            }
                 .then(
-                    if (editEnabled) Modifier
-                    else Modifier.gesturesDisabled().clearAndSetSemantics {}
+                    if (editEnabled) {
+                        Modifier
+                    } else {
+                        Modifier.gesturesDisabled().clearAndSetSemantics {}
+                    }
                 )
     ) {
         Expandable(
-            color = AxTileDefaults.backgroundColor(),
+            color = LocalAxQsCellConfig.current.backgroundColor(),
             shape = CircleShape,
             onClick = { editModeButtonViewModel.onButtonClick() },
             modifier =
@@ -347,7 +175,9 @@ private fun AxEditButton(
             Box(modifier = Modifier.size(36.dp), contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = Icons.Default.Edit,
-                    contentDescription = stringResource(R.string.accessibility_quick_settings_edit),
+                    contentDescription = stringResource(
+                        SysuiR.string.accessibility_quick_settings_edit
+                    ),
                     tint = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(18.dp),
                 )
@@ -362,10 +192,12 @@ private fun AxFooterOverflowMenu(viewModel: ToolbarViewModel) {
     var expandable by remember { mutableStateOf<SystemUiExpandable?>(null) }
     val context = LocalContext.current
     val menuColor =
-        AxTileDefaults.backgroundColor().compositeOver(MaterialTheme.colorScheme.surface)
+        LocalAxQsCellConfig.current.backgroundColor().compositeOver(
+            MaterialTheme.colorScheme.surface
+        )
     Box {
         Expandable(
-            color = AxTileDefaults.backgroundColor(),
+            color = LocalAxQsCellConfig.current.backgroundColor(),
             shape = CircleShape,
             onClick = {
                 expandable = it
@@ -377,7 +209,9 @@ private fun AxFooterOverflowMenu(viewModel: ToolbarViewModel) {
             Box(modifier = Modifier.size(36.dp), contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = Icons.Default.MoreVert,
-                    contentDescription = stringResource(R.string.qs_edit_menu_content_description),
+                    contentDescription = stringResource(
+                        SysuiR.string.qs_edit_menu_content_description
+                    ),
                     tint = MaterialTheme.colorScheme.onSurface,
                 )
             }
@@ -442,7 +276,7 @@ private fun AxPowerMenuItem(model: FooterActionsButtonViewModel, onClick: () -> 
     DropdownMenuItem(
         text = {
             Text(
-                text = stringResource(R.string.accessibility_quick_settings_power_menu),
+                text = stringResource(SysuiR.string.accessibility_quick_settings_power_menu),
                 style = MaterialTheme.typography.labelLarge,
             )
         },

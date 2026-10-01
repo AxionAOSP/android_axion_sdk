@@ -44,6 +44,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
@@ -56,15 +57,15 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.android.axion.compose.preferences.PreferenceGroup
 import com.android.axion.compose.preferences.SliderPreference
-import com.android.axion.compose.preferences.SwitchPreference
+import com.android.systemui.qs.ax.res.R
 import com.android.systemui.qs.ax.shared.model.AxQsGridLayout
-import com.android.systemui.qs.ax.shared.model.AxQsGridSection
+import com.android.systemui.qs.ax.shared.model.AxQsLayout
 import com.android.systemui.qs.ax.shared.model.AxQsPanelMode
-import com.android.systemui.qs.ax.ui.grid.AxTileDefaults
+import com.android.systemui.qs.ax.ui.grid.LocalAxQsCellConfig
 import com.android.systemui.qs.ax.ui.header.AxQuickSettingsLayoutDefaults
 import com.android.systemui.qs.ax.ui.viewmodel.AxQsViewModel
 import com.android.systemui.qs.ui.composable.QuickSettingsTheme
-import com.android.systemui.res.R
+import com.android.systemui.res.R as SysuiR
 import kotlin.math.roundToInt
 
 @Composable
@@ -79,16 +80,15 @@ internal fun AxQsPanelSettings(
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
             BoxWithConstraints(modifier.fillMaxSize()) {
                 val sidePadding =
-                    maxWidth *
-                        if (landscape) {
-                            AxQuickSettingsLayoutDefaults.LANDSCAPE_SIDE_PADDING_FRACTION
-                        } else {
-                            AxQuickSettingsLayoutDefaults.PORTRAIT_SIDE_PADDING_FRACTION
-                        }
+                    if (landscape) {
+                        AxQuickSettingsLayoutDefaults.LandscapeSidePadding
+                    } else {
+                        AxQuickSettingsLayoutDefaults.PortraitSidePadding
+                    }
                 Column(
                     modifier =
                         Modifier.fillMaxSize()
-                            .padding(horizontal = sidePadding)
+                            .padding(horizontal = sidePadding.coerceAtLeast(0.dp))
                             .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -96,7 +96,9 @@ internal fun AxQsPanelSettings(
                         IconButton(onClick = onDismiss) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = stringResource(R.string.accessibility_back),
+                                contentDescription = stringResource(
+                                    SysuiR.string.accessibility_back
+                                ),
                             )
                         }
                         Text(
@@ -150,7 +152,10 @@ private fun PanelModeRow(selected: Boolean, title: String, summary: String, onCl
     Row(
         modifier =
             Modifier.fillMaxWidth()
-                .background(AxTileDefaults.backgroundColor(), RoundedCornerShape(24.dp))
+                .background(
+                    LocalAxQsCellConfig.current.backgroundColor(),
+                    RoundedCornerShape(24.dp)
+                )
                 .clickable(onClick = onClick)
                 .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -182,56 +187,64 @@ private fun SettingSwitchRow(label: String, checked: Boolean, onCheckedChange: (
 
 @Composable
 internal fun AxQsGridSettings(
-    controlLayout: AxQsGridLayout,
-    tileLayout: AxQsGridLayout,
+    layout: AxQsGridLayout,
     viewModel: AxQsViewModel,
 ) {
+    val isSplitShade = layout == AxQsGridLayout.SPLIT_SHADE
     val colorScheme = MaterialTheme.colorScheme.copy(surfaceBright = Color.Transparent)
     MaterialTheme(colorScheme = colorScheme) {
         PreferenceGroup {
-            if (tileLayout.supportsTileLabels) {
+            item {
+                GridColumnSlider(
+                    layout = layout,
+                    viewModel = viewModel,
+                )
+            }
+            if (viewModel.panelMode != AxQsPanelMode.SEPARATE && !isSplitShade) {
                 item {
-                    SwitchPreference(
-                        title = stringResource(R.string.ax_qs_show_tile_labels),
-                        checked = viewModel.showTileLabels(tileLayout),
-                        onCheckedChange = { viewModel.setTileLabels(tileLayout, it) },
+                    QqsMaxRowsSlider(
+                        viewModel = viewModel,
                     )
                 }
-            }
-            item { GridColumnSlider(layout = controlLayout, viewModel = viewModel) }
-            item { GridColumnSlider(layout = tileLayout, viewModel = viewModel) }
-            if (viewModel.rowRange(tileLayout) != null) {
-                item { GridRowSlider(layout = tileLayout, viewModel = viewModel) }
             }
         }
     }
 }
 
 @Composable
-private fun GridColumnSlider(layout: AxQsGridLayout, viewModel: AxQsViewModel) {
-    val label =
-        when (layout.section) {
-            AxQsGridSection.CONTROLS -> stringResource(R.string.ax_qs_control_grid_columns)
-            AxQsGridSection.TILES -> stringResource(R.string.ax_qs_tile_grid_columns)
-        }
+internal fun AxQsGridSettings(
+    layout: AxQsLayout,
+    viewModel: AxQsViewModel,
+) {
+    AxQsGridSettings(layout = AxQsGridLayout.from(layout), viewModel = viewModel)
+}
+
+@Composable
+private fun QqsMaxRowsSlider(
+    viewModel: AxQsViewModel,
+) {
+    val label = stringResource(R.string.ax_qs_qqs_max_rows)
+    GridSizeSlider(
+        label = label,
+        savedValue = viewModel.qqsMaxRows,
+        range = viewModel.qqsMaxRowsRange,
+        valueLabel = R.string.ax_qs_row_count,
+        onValueChangeFinished = { viewModel.setQqsMaxRows(it) },
+    )
+}
+
+@Composable
+private fun GridColumnSlider(
+    layout: AxQsGridLayout,
+    viewModel: AxQsViewModel,
+) {
+    val label = stringResource(R.string.ax_qs_grid_columns)
     GridSizeSlider(
         label = label,
         savedValue = viewModel.columns(layout),
         range = viewModel.columnRange(layout),
         valueLabel = R.string.ax_qs_column_count,
         onValueChangeFinished = { viewModel.setColumns(layout, it) },
-    )
-}
-
-@Composable
-private fun GridRowSlider(layout: AxQsGridLayout, viewModel: AxQsViewModel) {
-    val range = viewModel.rowRange(layout) ?: return
-    GridSizeSlider(
-        label = stringResource(R.string.ax_qs_tile_grid_rows),
-        savedValue = viewModel.rows(layout),
-        range = range,
-        valueLabel = R.string.ax_qs_row_count,
-        onValueChangeFinished = { viewModel.setRows(layout, it) },
     )
 }
 
@@ -243,17 +256,22 @@ private fun GridSizeSlider(
     @StringRes valueLabel: Int,
     onValueChangeFinished: (Int) -> Unit,
 ) {
-    var sliderValue by remember(savedValue, range) { mutableFloatStateOf(savedValue.toFloat()) }
-    val selectedValue = sliderValue.roundToInt().coerceIn(range.first, range.last)
+    val currentSavedValue = savedValue.coerceIn(range.first, range.last)
+    val sliderValue = remember { mutableFloatStateOf(currentSavedValue.toFloat()) }
+    LaunchedEffect(currentSavedValue) {
+        sliderValue.floatValue = currentSavedValue.toFloat()
+    }
+    val selectedValue = sliderValue.floatValue.roundToInt().coerceIn(range.first, range.last)
     SliderPreference(
         title = label,
         summary = "",
-        value = sliderValue,
+        value = sliderValue.floatValue,
         onValueChange = {
-            sliderValue = it.roundToInt().coerceIn(range.first, range.last).toFloat()
+            sliderValue.floatValue = it.roundToInt().coerceIn(range.first, range.last).toFloat()
         },
         onValueChangeFinished = {
-            onValueChangeFinished(sliderValue.roundToInt().coerceIn(range.first, range.last))
+            val finalValue = sliderValue.floatValue.roundToInt().coerceIn(range.first, range.last)
+            onValueChangeFinished(finalValue)
         },
         valueRange = range.first.toFloat()..range.last.toFloat(),
         steps = (range.count() - 2).coerceAtLeast(0),

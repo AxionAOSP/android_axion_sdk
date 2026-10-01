@@ -25,12 +25,14 @@ import com.android.systemui.lifecycle.ExclusiveActivatable
 import com.android.systemui.lifecycle.Hydrator
 import com.android.systemui.qs.QSHost
 import com.android.systemui.qs.ax.data.repository.AxQsSettingsRepository
+import com.android.systemui.qs.ax.domain.interactor.AxQsLayoutInteractor
 import com.android.systemui.qs.ax.shared.model.AxQsControl
+import com.android.systemui.qs.ax.shared.model.AxQsGridColumns
+import com.android.systemui.qs.ax.shared.model.AxQsGridItem
 import com.android.systemui.qs.ax.shared.model.AxQsGridLayout
 import com.android.systemui.qs.ax.shared.model.AxQsGridPosition
-import com.android.systemui.qs.ax.shared.model.AxQsGridSection
 import com.android.systemui.qs.ax.shared.model.AxQsLayout
-import com.android.systemui.qs.ax.shared.model.AxQsLayoutPadding
+import com.android.systemui.qs.ax.shared.model.AxQsLayoutData
 import com.android.systemui.qs.ax.shared.model.AxQsPanelMode
 import com.android.systemui.qs.ax.shared.model.AxQsSpan
 import com.android.systemui.qs.ax.shared.model.AxQsVerticalSliderKey
@@ -40,16 +42,18 @@ import com.android.systemui.res.R
 import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
 import javax.inject.Inject
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 
 class AxQsViewModel
 @Inject
 constructor(
     private val repository: AxQsSettingsRepository,
+    val layoutInteractor: AxQsLayoutInteractor,
     configurationInteractor: ConfigurationInteractor,
     shadeInteractor: ShadeInteractor,
     columnsRepository: QSColumnsRepository,
-    @ShadeDisplayAware private val context: Context,
+    @param:ShadeDisplayAware private val context: Context,
 ) : ExclusiveActivatable() {
     private val hydrator = Hydrator("AxQsViewModel")
     private val defaultTileIds = QSHost.getDefaultSpecs(context.resources)
@@ -78,119 +82,11 @@ constructor(
     val defaultTileSpecs: List<String>
         get() = defaultTileIds
 
-    private val qsOrder by
+    private val layoutsData by
         hydrator.hydratedStateOf(
-            traceName = "qsOrder",
-            initialValue = repository.qsOrder.value ?: (repository.defaultControls + defaultTileIds),
-            source = repository.qsOrder,
-        )
-    private val qqsOrder by
-        hydrator.hydratedStateOf(
-            traceName = "qqsOrder",
-            initialValue = repository.qqsOrder.value ?: (repository.defaultControls + defaultTileIds),
-            source = repository.qqsOrder,
-        )
-    private val qsSpans by
-        hydrator.hydratedStateOf(
-            traceName = "qsSpans",
-            initialValue = repository.qsSpans.value,
-            source = repository.qsSpans,
-        )
-    private val qqsSpans by
-        hydrator.hydratedStateOf(
-            traceName = "qqsSpans",
-            initialValue = repository.qqsSpans.value,
-            source = repository.qqsSpans,
-        )
-    private val landscapeOrder by
-        hydrator.hydratedStateOf(
-            traceName = "landscapeOrder",
-            initialValue = repository.landscapeOrder.value ?: (repository.defaultControls + defaultTileIds),
-            source = repository.landscapeOrder,
-        )
-    private val qqsControlOrder by
-        hydrator.hydratedStateOf(
-            traceName = "qqsControlOrder",
-            initialValue = repository.qqsControlOrder.value ?: repository.defaultControls,
-            source = repository.qqsControlOrder,
-        )
-    private val qqsTileOrder by
-        hydrator.hydratedStateOf(
-            traceName = "qqsTileOrder",
-            initialValue = repository.qqsTileOrder.value ?: defaultTileIds,
-            source = repository.qqsTileOrder,
-        )
-    private val qsControlOrder by
-        hydrator.hydratedStateOf(
-            traceName = "qsControlOrder",
-            initialValue = repository.qsControlOrder.value ?: repository.defaultControls,
-            source = repository.qsControlOrder,
-        )
-    private val qsTileOrder by
-        hydrator.hydratedStateOf(
-            traceName = "qsTileOrder",
-            initialValue = repository.qsTileOrder.value ?: defaultTileIds,
-            source = repository.qsTileOrder,
-        )
-    private val landscapeControlOrder by
-        hydrator.hydratedStateOf(
-            traceName = "landscapeControlOrder",
-            initialValue = repository.landscapeControlOrder.value ?: repository.defaultControls,
-            source = repository.landscapeControlOrder,
-        )
-    private val landscapeTileOrder by
-        hydrator.hydratedStateOf(
-            traceName = "landscapeTileOrder",
-            initialValue = repository.landscapeTileOrder.value ?: defaultTileIds,
-            source = repository.landscapeTileOrder,
-        )
-    private val splitShadeControlOrder by
-        hydrator.hydratedStateOf(
-            traceName = "splitShadeControlOrder",
-            initialValue = repository.splitShadeControlOrder.value ?: repository.defaultControls,
-            source = repository.splitShadeControlOrder,
-        )
-    private val splitShadeTileOrder by
-        hydrator.hydratedStateOf(
-            traceName = "splitShadeTileOrder",
-            initialValue = repository.splitShadeTileOrder.value ?: defaultTileIds,
-            source = repository.splitShadeTileOrder,
-        )
-    private val qqsControlPositions by
-        hydrator.hydratedStateOf(
-            traceName = "qqsControlPositions",
+            traceName = "layoutsData",
             initialValue = emptyMap(),
-            source = repository.qqsControlPositions,
-        )
-    private val qsControlPositions by
-        hydrator.hydratedStateOf(
-            traceName = "qsControlPositions",
-            initialValue = emptyMap(),
-            source = repository.qsControlPositions,
-        )
-    private val landscapeControlPositions by
-        hydrator.hydratedStateOf(
-            traceName = "landscapeControlPositions",
-            initialValue = emptyMap(),
-            source = repository.landscapeControlPositions,
-        )
-    private val landscapeSpans by
-        hydrator.hydratedStateOf(
-            traceName = "landscapeSpans",
-            initialValue = emptyMap(),
-            source = repository.landscapeSpans,
-        )
-    private val splitShadeControlPositions by
-        hydrator.hydratedStateOf(
-            traceName = "splitShadeControlPositions",
-            initialValue = emptyMap(),
-            source = repository.splitShadeControlPositions,
-        )
-    private val splitShadeSpans by
-        hydrator.hydratedStateOf(
-            traceName = "splitShadeSpans",
-            initialValue = emptyMap(),
-            source = repository.splitShadeSpans,
+            source = repository.layoutsData,
         )
     val panelMode by
         hydrator.hydratedStateOf(
@@ -225,113 +121,55 @@ constructor(
             initialValue = emptyMap(),
             source = repository.gridColumns,
         )
-    private val gridRows by
+    val qqsMaxRows by
         hydrator.hydratedStateOf(
-            traceName = "gridRows",
-            initialValue = emptyMap(),
-            source = repository.gridRows,
+            traceName = "qqsMaxRows",
+            initialValue = 2,
+            source = repository.qqsMaxRows,
         )
-    private val tileLabels by
-        hydrator.hydratedStateOf(
-            traceName = "tileLabels",
-            initialValue = emptyMap(),
-            source = repository.tileLabels,
-        )
+    val qqsMaxRowsFlow: StateFlow<Int> = repository.qqsMaxRows
+    val qqsMaxRowsRange: IntRange = 2..4
+
+    fun setQqsMaxRows(rows: Int) {
+        repository.setQqsMaxRows(rows)
+    }
 
     fun columns(layout: AxQsGridLayout): Int {
         val default = defaultColumns(layout)
         return (gridColumns[layout] ?: default).coerceIn(columnRange(layout))
     }
 
-    fun columnRange(layout: AxQsGridLayout): IntRange {
-        val configuredRange = layout.columnRange(defaultColumns(layout))
-        val safeMax = maxColumnsForWidth(layout)
-        val last = minOf(configuredRange.last, safeMax).coerceAtLeast(configuredRange.first)
-        return configuredRange.first..last
-    }
+    fun columns(layout: AxQsLayout): Int = columns(AxQsGridLayout.from(layout))
 
-    fun rows(layout: AxQsGridLayout): Int {
-        val range = rowRange(layout) ?: return 0
-        return (gridRows[layout] ?: defaultRows(layout)).coerceIn(range)
-    }
+    fun columnRange(layout: AxQsGridLayout): IntRange = layout.columnRange(screenWidthDp)
 
-    fun rowRange(layout: AxQsGridLayout): IntRange? {
-        if (layout.section != AxQsGridSection.TILES) return null
-        return MIN_TILE_GRID_ROWS..MAX_TILE_GRID_ROWS
-    }
+    fun columnRange(layout: AxQsLayout): IntRange =
+        AxQsGridColumns.columnRange(screenWidthDp, layout == AxQsLayout.SPLIT_SHADE)
 
-    fun showTileLabels(layout: AxQsGridLayout): Boolean {
-        return tileLabels[layout] ?: layout.showTileLabelsByDefault
-    }
+    fun layoutData(layout: AxQsLayout): AxQsLayoutData? = layoutsData[layout]
+
+    fun order(layout: AxQsLayout): List<String>? =
+        layoutData(layout)?.order?.takeIf { it.isNotEmpty() }
+
+    fun spans(layout: AxQsLayout): Map<String, AxQsSpan> =
+        layoutData(layout)?.spans ?: repository.defaultSpans
+
+    fun positions(layout: AxQsLayout): Map<String, AxQsGridPosition> =
+        layoutData(layout)?.positions ?: emptyMap()
+
+    fun stacks(layout: AxQsLayout): Map<String, List<String>> =
+        layoutData(layout)?.stacks ?: emptyMap()
 
     fun orderedIds(
         layout: AxQsLayout,
-        section: AxQsGridSection,
         availableIds: List<String>,
         defaultIds: List<String>,
     ): List<String> {
         val available = availableIds.toSet()
-        val saved = configuredSectionOrder(layout, section)
+        val saved = order(layout)
         if (saved != null) return saved.filter(available::contains)
-        val legacy = configuredOrder(layout)
-        if (legacy != null) {
-            return legacy.filter { id ->
-                id in available && sectionForLegacyId(id, layout) == section
-            }
-        }
-        val controlDefaults = defaultControlIds(available)
-        return if (section == AxQsGridSection.CONTROLS) {
-            controlDefaults
-        } else {
-            (defaultTileIds + defaultIds).distinct().filter {
-                it in available && it !in controlDefaults
-            }
-        }
-    }
-
-    fun order(layout: AxQsLayout, section: AxQsGridSection): List<String>? {
-        return configuredSectionOrder(layout, section)
-            ?: configuredOrder(layout)?.filter { sectionForLegacyId(it, layout) == section }
-    }
-
-    fun isInGrid(id: String, layout: AxQsLayout, section: AxQsGridSection): Boolean {
-        val order = order(layout, section)
-        if (order != null) return id in order
-        return section == AxQsGridSection.CONTROLS && id in DEFAULT_CONTROL_IDS
-    }
-
-    private fun configuredOrder(layout: AxQsLayout): List<String>? {
-        return when (layout) {
-            AxQsLayout.QQS -> qqsOrder
-            AxQsLayout.QS -> qsOrder
-            AxQsLayout.SPLIT_SHADE -> landscapeOrder
-        }
-    }
-
-    private fun configuredSectionOrder(
-        layout: AxQsLayout,
-        section: AxQsGridSection,
-    ): List<String>? {
-        return when (layout) {
-            AxQsLayout.QQS ->
-                if (section == AxQsGridSection.CONTROLS) qqsControlOrder else qqsTileOrder
-            AxQsLayout.QS ->
-                if (section == AxQsGridSection.CONTROLS) qsControlOrder else qsTileOrder
-            AxQsLayout.SPLIT_SHADE ->
-                if (section == AxQsGridSection.CONTROLS) {
-                    splitShadeControlOrder ?: landscapeControlOrder
-                } else {
-                    splitShadeTileOrder ?: landscapeTileOrder
-                }
-        }
-    }
-
-    fun spans(layout: AxQsLayout): Map<String, AxQsSpan> {
-        return when (layout) {
-            AxQsLayout.QQS -> qqsSpans
-            AxQsLayout.QS -> qsSpans
-            AxQsLayout.SPLIT_SHADE -> landscapeSpans + splitShadeSpans
-        }
+        val defaultItems = defaultControlIds(available)
+        return (defaultItems + defaultIds).distinct().filter(available::contains)
     }
 
     fun span(id: String, layout: AxQsLayout, default: AxQsSpan): AxQsSpan {
@@ -344,42 +182,42 @@ constructor(
             } else {
                 default
             }
-        return if (
-            configuredSectionOrder(layout, AxQsGridSection.CONTROLS) == null &&
-                configuredOrder(layout) == null
-        ) {
-            resolvedDefault
-        } else {
-            spans(layout)[id] ?: resolvedDefault
-        }
+        return spans(layout)[id] ?: resolvedDefault
     }
 
-    fun setOrder(order: List<String>, layout: AxQsLayout, section: AxQsGridSection) {
-        repository.setOrder(order, layout, section)
+    fun isInGrid(id: String, layout: AxQsLayout = AxQsLayout.QS): Boolean {
+        val currentOrder = order(layout)
+        if (currentOrder != null) return id in currentOrder
+        return id in repository.defaultGridItems
     }
 
-    fun controlPositions(layout: AxQsLayout): Map<String, AxQsGridPosition> {
-        return when (layout) {
-            AxQsLayout.QQS -> qqsControlPositions
-            AxQsLayout.QS -> qsControlPositions
-            AxQsLayout.SPLIT_SHADE ->
-                if (hasSplitShadeOrder()) {
-                    splitShadeControlPositions
-                } else {
-                    landscapeControlPositions
-                }
-        }
+    fun <T> filterQqsItems(items: List<AxQsGridItem<T>>, columns: Int): List<AxQsGridItem<T>> =
+        layoutInteractor.filterQqsItems(items, columns, qqsMaxRows)
+
+    fun wouldStraddleQqs(
+        span: AxQsSpan,
+        position: AxQsGridPosition?,
+        maxRows: Int = qqsMaxRows,
+    ): Boolean =
+        layoutInteractor.wouldStraddleQqs(span, position, maxRows)
+
+    fun setLayoutData(layoutData: AxQsLayoutData) {
+        repository.setLayoutData(layoutData)
     }
 
-    fun setControlPositions(positions: Map<String, AxQsGridPosition>, layout: AxQsLayout) {
-        repository.setControlPositions(positions, layout)
+    fun setOrder(order: List<String>, layout: AxQsLayout) {
+        repository.setOrder(order, layout)
+    }
+
+    fun setPositions(positions: Map<String, AxQsGridPosition>, layout: AxQsLayout) {
+        repository.setPositions(positions, layout)
     }
 
     fun setSpan(id: String, span: AxQsSpan, layout: AxQsLayout, columns: Int) {
         val control = AxQsControl.entries.firstOrNull { it.id == id }
         repository.setSpan(
             id,
-            control?.coerceSpan(span, columns) ?: span.coerceForControlTile(columns),
+            control?.coerceSpan(span, columns) ?: span.coerceTileSpan(columns),
             layout,
         )
     }
@@ -396,10 +234,7 @@ constructor(
 
     fun setQuickPanelOnLeft(onLeft: Boolean) = repository.setQuickPanelOnLeft(onLeft)
 
-    fun verticalSliderStyle(
-        layout: AxQsLayout,
-        control: AxQsControl,
-    ): AxQsVerticalSliderStyle =
+    fun verticalSliderStyle(layout: AxQsLayout, control: AxQsControl): AxQsVerticalSliderStyle =
         verticalSliderStyles[AxQsVerticalSliderKey(layout, control)]
             ?: AxQsVerticalSliderStyle.M3_EXPRESSIVE
 
@@ -410,102 +245,48 @@ constructor(
     ) = repository.setVerticalSliderStyle(layout, control, style)
 
     fun setColumns(layout: AxQsGridLayout, columns: Int) {
-        repository.setColumns(layout, columns.coerceIn(columnRange(layout)))
+        val clamped = columns.coerceIn(columnRange(layout))
+        repository.setColumns(layout, clamped)
     }
 
-    fun setRows(layout: AxQsGridLayout, rows: Int) {
-        rowRange(layout)?.let { repository.setRows(layout, rows.coerceIn(it)) }
+    fun setColumns(layout: AxQsLayout, columns: Int) {
+        setColumns(AxQsGridLayout.from(layout), columns)
     }
 
-    fun setTileLabels(layout: AxQsGridLayout, showLabels: Boolean) {
-        if (layout.supportsTileLabels) {
-            repository.setTileLabels(layout, showLabels)
-        }
-    }
+    fun defaultLayoutData(layout: AxQsLayout): AxQsLayoutData = repository.defaultLayoutData(layout)
 
     fun resetLayout() {
-        val defaultControls =
-            listOf("internet", "bt", AxQsControl.MEDIA.id, AxQsControl.BRIGHTNESS.id, AxQsControl.VOLUME.id)
-        val defaultTiles = defaultTileIds.filterNot(defaultControls::contains)
-        repository.resetLayout(
-            defaultControls = defaultControls,
-            defaultTiles = defaultTiles,
-        )
+        repository.resetLayout()
     }
 
     override suspend fun onActivated(): Nothing = hydrator.activate()
 
     fun defaultColumns(layout: AxQsGridLayout): Int =
-        if (layout.isSplitShade) splitShadeDefaultColumns else normalDefaultColumns
+        if (layout.layout == AxQsLayout.SPLIT_SHADE) {
+            splitShadeDefaultColumns
+        } else {
+            normalDefaultColumns
+        }
 
-    fun defaultRows(layout: AxQsGridLayout): Int =
-        if (layout.layout == AxQsLayout.QQS) DEFAULT_QQS_TILE_ROWS else DEFAULT_TILE_GRID_ROWS
+    fun defaultColumns(layout: AxQsLayout): Int = defaultColumns(AxQsGridLayout.from(layout))
 
     private fun defaultControlIds(available: Set<String>): List<String> {
         val network = DEFAULT_NETWORK_IDS.firstOrNull(available::contains)
-        return listOfNotNull(
+        return (listOfNotNull(
                 network,
+                AxQsControl.VOLUME.id,
+                AxQsControl.BRIGHTNESS.id,
                 BLUETOOTH_TILE_ID,
                 AxQsControl.MEDIA.id,
-                AxQsControl.BRIGHTNESS.id,
-                AxQsControl.VOLUME.id,
-            )
+            ) + repository.aospDefaultTiles)
             .filter(available::contains)
             .distinct()
-    }
-
-    private fun sectionForLegacyId(id: String, layout: AxQsLayout): AxQsGridSection {
-        AxQsControl.entries.firstOrNull { it.id == id }?.let { control ->
-            return if (control.canUseTileGrid) {
-                AxQsGridSection.TILES
-            } else {
-                AxQsGridSection.CONTROLS
-            }
-        }
-        return if ((spans(layout)[id] ?: AxQsSpan.TileDefault) == AxQsSpan.TileDefault) {
-            AxQsGridSection.TILES
-        } else {
-            AxQsGridSection.CONTROLS
-        }
-    }
-
-    private fun hasSplitShadeOrder(): Boolean =
-        splitShadeControlOrder != null || splitShadeTileOrder != null
-
-    private fun maxColumnsForWidth(layout: AxQsGridLayout): Int {
-        val sideFraction =
-            if (layout.isSplitShade) {
-                AxQsLayoutPadding.LANDSCAPE_SIDE_FRACTION
-            } else {
-                AxQsLayoutPadding.PORTRAIT_SIDE_FRACTION
-            }
-        val contentWidth = screenWidthDp * (1f - sideFraction * 2f)
-        val gridWidth =
-            if (layout.isSplitShade) {
-                (contentWidth - AxQsLayoutPadding.LANDSCAPE_SPLIT_GRID_SPACING_DP) / 2f
-            } else {
-                contentWidth
-            }
-        return ((gridWidth + GRID_SPACING_DP) / (MIN_TILE_WIDTH_DP + GRID_SPACING_DP))
-            .toInt()
-            .coerceAtLeast(1)
     }
 
     private companion object {
         const val MIN_TILE_WIDTH_DP = 56f
         const val GRID_SPACING_DP = 16f
-        const val MIN_TILE_GRID_ROWS = 1
-        const val MAX_TILE_GRID_ROWS = 3
-        const val DEFAULT_QQS_TILE_ROWS = 2
-        const val DEFAULT_TILE_GRID_ROWS = 3
         val DEFAULT_NETWORK_IDS = listOf("wifi", "internet")
-        val DEFAULT_CONTROL_IDS =
-            setOf(
-                BLUETOOTH_TILE_ID,
-                AxQsControl.MEDIA.id,
-                AxQsControl.BRIGHTNESS.id,
-                AxQsControl.VOLUME.id,
-            )
         const val BLUETOOTH_TILE_ID = "bt"
     }
 }

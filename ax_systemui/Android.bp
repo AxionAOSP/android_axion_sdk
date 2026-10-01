@@ -1,7 +1,18 @@
+package {
+    default_visibility: ["//visibility:public"],
+}
+
 filegroup {
     name: "ax_systemui_sources",
     srcs: [
         "src/**/*.kt",
     ],
     visibility: ["//frameworks/base/packages/SystemUI:__subpackages__"],
+}
+
+android_library {
+    name: "ax_systemui_res",
+    manifest: "AndroidManifest.xml",
+    resource_dirs: ["res"],
+    visibility: ["//visibility:public"],
 }

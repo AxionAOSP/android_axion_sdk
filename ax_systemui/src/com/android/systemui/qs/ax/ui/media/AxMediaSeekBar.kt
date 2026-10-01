@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.systemui.media.controls.ui.drawable.SquigglyProgress
 import com.android.systemui.media.controls.ui.view.WaveformSeekBar
 import com.android.systemui.media.remedia.domain.model.MediaSessionModel
@@ -57,9 +58,10 @@ internal fun MediaSeekBar(
     colors: AxMediaColors,
     dense: Boolean,
     interactive: Boolean,
-    modifier: Modifier = Modifier,
+    modifier: Modifier = Modifier
 ) {
-    val height = if (dense) 20.dp else 32.dp
+    val height = if (dense) 14.dp else 32.dp
+    val isShadeInteracting by viewModel.isShadeInteracting.collectAsStateWithLifecycle()
     val currentSession by rememberUpdatedState(session)
     val currentViewModel by rememberUpdatedState(viewModel)
     val progress = session?.let(viewModel::progress) ?: 0f
@@ -69,7 +71,7 @@ internal fun MediaSeekBar(
                 stringResource(
                     R.string.controls_media_seekbar_description,
                     DateUtils.formatElapsedTime((progress * it.durationMs).toLong() / 1000L),
-                    DateUtils.formatElapsedTime(it.durationMs / 1000L),
+                    DateUtils.formatElapsedTime(it.durationMs / 1000L)
                 )
             }
             .orEmpty()
@@ -109,13 +111,13 @@ internal fun MediaSeekBar(
                             override fun onProgressChanged(
                                 seekBar: SeekBar,
                                 progress: Int,
-                                fromUser: Boolean,
+                                fromUser: Boolean
                             ) {
                                 val media = currentSession
                                 if (fromUser && media != null && seekBar.max > 0) {
                                     currentViewModel.onScrubChange(
                                         media,
-                                        progress.toFloat() / seekBar.max,
+                                        progress.toFloat() / seekBar.max
                                     )
                                 }
                             }
@@ -145,10 +147,13 @@ internal fun MediaSeekBar(
                 seekBar.contentDescription = seekDescription
 
                 val accent = colors.primary.toArgb()
-                if (stateHolder.lastColorArgb != accent || seekBar.progressTintList?.defaultColor != accent) {
+                val isDefaultAccent = seekBar.progressTintList?.defaultColor == accent
+                if (stateHolder.lastColorArgb != accent || !isDefaultAccent) {
                     stateHolder.lastColorArgb = accent
                     val tint = ColorStateList.valueOf(accent)
-                    val bgTint = ColorStateList.valueOf(colors.foreground.copy(alpha = 0.3f).toArgb())
+                    val bgTint = ColorStateList.valueOf(
+                        colors.foreground.copy(alpha = 0.3f).toArgb()
+                    )
                     stateHolder.lastProgressBackgroundTintList = bgTint
 
                     seekBar.setMediaColor(accent)
@@ -157,7 +162,7 @@ internal fun MediaSeekBar(
                     seekBar.progressBackgroundTintList = bgTint
                 }
 
-                val playing = session?.state == MediaSessionState.Playing && !seekBar.isPressed
+                val playing = session?.state == MediaSessionState.Playing && !seekBar.isPressed && !isShadeInteracting
                 val squiggly = seekBar.progressDrawable as? SquigglyProgress
                 if (squiggly != null) {
                     if (squiggly.animate != playing) {
@@ -167,7 +172,7 @@ internal fun MediaSeekBar(
                 }
                 seekBar.setWaveformPlaying(playing)
             },
-            modifier = Modifier.fillMaxWidth().height(height),
+            modifier = Modifier.fillMaxWidth().height(height)
         )
     }
 }

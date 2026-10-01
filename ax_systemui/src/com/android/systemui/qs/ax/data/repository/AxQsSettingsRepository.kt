@@ -16,14 +16,16 @@
 
 package com.android.systemui.qs.ax.data.repository
 
+import android.content.Context
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.dagger.qualifiers.Background
+import com.android.systemui.qs.QSHost
 import com.android.systemui.qs.ax.shared.model.AxQsControl
 import com.android.systemui.qs.ax.shared.model.AxQsGridLayout
 import com.android.systemui.qs.ax.shared.model.AxQsGridPosition
-import com.android.systemui.qs.ax.shared.model.AxQsGridSection
 import com.android.systemui.qs.ax.shared.model.AxQsLayout
+import com.android.systemui.qs.ax.shared.model.AxQsLayoutData
 import com.android.systemui.qs.ax.shared.model.AxQsPanelMode
 import com.android.systemui.qs.ax.shared.model.AxQsSpan
 import com.android.systemui.qs.ax.shared.model.AxQsVerticalSliderKey
@@ -35,6 +37,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -42,6 +45,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -50,74 +54,107 @@ import kotlinx.coroutines.launch
 class AxQsSettingsRepository
 @Inject
 constructor(
+    @param:Application private val context: Context,
     private val secureSettings: SecureSettings,
     private val userRepository: UserRepository,
-    @Application private val applicationScope: CoroutineScope,
-    @Background private val backgroundDispatcher: CoroutineDispatcher,
+    @param:Application private val applicationScope: CoroutineScope,
+    @param:Background private val backgroundDispatcher: CoroutineDispatcher,
 ) {
-    val defaultControlSpans: Map<String, AxQsSpan> = parseSpans(DEFAULT_SPANS_STRING)
-    val defaultControls: List<String> = DEFAULT_CONTROLS_LIST
+    val aospDefaultTiles: List<String> by lazy {
+        try {
+            QSHost.getDefaultSpecs(context.resources)
+                .map { it.trim() }
+                .filter { it.isNotBlank() && it !in DEFAULT_NETWORK_IDS && it != "bt" }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
 
-    val qsOrder: StateFlow<List<String>?> = orderSetting(QS_ORDER)
-    val qqsOrder: StateFlow<List<String>?> = orderSetting(QQS_ORDER)
-    val landscapeOrder: StateFlow<List<String>?> = orderSetting(LANDSCAPE_ORDER)
+    val defaultSpans: Map<String, AxQsSpan> = parseSpans(DEFAULT_SPANS_STRING)
+    val defaultGridItems: List<String>
+        get() = (DEFAULT_GRID_ITEMS + aospDefaultTiles).distinct()
 
-    val qqsControlOrder: StateFlow<List<String>?> = orderSetting(QQS_CONTROL_ORDER, DEFAULT_CONTROLS_STRING)
-    val qqsTileOrder: StateFlow<List<String>?> = orderSetting(QQS_TILE_ORDER)
-    val qsControlOrder: StateFlow<List<String>?> = orderSetting(QS_CONTROL_ORDER, DEFAULT_CONTROLS_STRING)
-    val qsTileOrder: StateFlow<List<String>?> = orderSetting(QS_TILE_ORDER)
-    val landscapeControlOrder: StateFlow<List<String>?> = orderSetting(LANDSCAPE_CONTROL_ORDER, DEFAULT_CONTROLS_STRING)
-    val landscapeTileOrder: StateFlow<List<String>?> = orderSetting(LANDSCAPE_TILE_ORDER)
-    val splitShadeControlOrder: StateFlow<List<String>?> = orderSetting(SPLIT_SHADE_CONTROL_ORDER, DEFAULT_CONTROLS_STRING)
-    val splitShadeTileOrder: StateFlow<List<String>?> = orderSetting(SPLIT_SHADE_TILE_ORDER)
-
-    val qsSpans: StateFlow<Map<String, AxQsSpan>> = spansSetting(QS_SPANS)
-    val qqsSpans: StateFlow<Map<String, AxQsSpan>> = spansSetting(QQS_SPANS)
-    val landscapeSpans: StateFlow<Map<String, AxQsSpan>> = spansSetting(LANDSCAPE_SPANS)
-    val splitShadeSpans: StateFlow<Map<String, AxQsSpan>> = spansSetting(SPLIT_SHADE_SPANS)
-
-    val qqsControlPositions: StateFlow<Map<String, AxQsGridPosition>> = positionsSetting(QQS_CONTROL_POSITIONS)
-    val qsControlPositions: StateFlow<Map<String, AxQsGridPosition>> = positionsSetting(QS_CONTROL_POSITIONS)
-    val landscapeControlPositions: StateFlow<Map<String, AxQsGridPosition>> = positionsSetting(LANDSCAPE_CONTROL_POSITIONS)
-    val splitShadeControlPositions: StateFlow<Map<String, AxQsGridPosition>> = positionsSetting(SPLIT_SHADE_CONTROL_POSITIONS)
+    private val _layoutsDataOverride = MutableStateFlow<Map<AxQsLayout, AxQsLayoutData>?>(null)
+    val layoutsData: StateFlow<Map<AxQsLayout, AxQsLayoutData>> =
+        stringSetting(QS_DATA)
+            .map { str -> AxQsLayoutData.parseList(str).associateBy { it.location } }
+            .onEach { _layoutsDataOverride.value = null }
+            .combine(_layoutsDataOverride) { settingVal, overrideVal ->
+                if (overrideVal != null) {
+                    settingVal + overrideVal
+                } else {
+                    settingVal
+                }
+            }
+            .distinctUntilChanged()
+            .stateIn(applicationScope, SharingStarted.Eagerly, emptyMap())
 
     val panelMode: StateFlow<AxQsPanelMode> =
         intSetting(PANEL_MODE, AxQsPanelMode.TOGETHER.settingValue)
             .map(AxQsPanelMode::fromSetting)
             .distinctUntilChanged()
             .stateIn(applicationScope, SharingStarted.Eagerly, AxQsPanelMode.TOGETHER)
-
     val quickPanelOnLeft: StateFlow<Boolean> = boolSetting(QUICK_PANEL_ON_LEFT, false)
-
+    val qqsMaxRows: StateFlow<Int> =
+        intSetting(QQS_MAX_ROWS_KEY, DEFAULT_QQS_MAX_ROWS)
+            .map { it.coerceIn(MIN_QQS_MAX_ROWS, MAX_QQS_MAX_ROWS) }
+            .distinctUntilChanged()
+            .stateIn(applicationScope, SharingStarted.Eagerly, DEFAULT_QQS_MAX_ROWS)
     val verticalSliderStyles: StateFlow<Map<AxQsVerticalSliderKey, AxQsVerticalSliderStyle>> =
         verticalSliderStyleSettings()
 
     val gridColumns: StateFlow<Map<AxQsGridLayout, Int>> =
         gridSettings(AxQsGridLayout.entries, ::gridColumnsKey)
 
-    val gridRows: StateFlow<Map<AxQsGridLayout, Int>> =
-        gridSettings(AxQsGridLayout.entries.filter { it.section == AxQsGridSection.TILES }, ::gridRowsKey)
-
-    val tileLabels: StateFlow<Map<AxQsGridLayout, Boolean>> = tileLabelSettings()
-
-    fun setOrder(order: List<String>, layout: AxQsLayout, section: AxQsGridSection) {
-        putString(sectionOrderKey(layout, section), order.distinct())
+    fun setQqsMaxRows(rows: Int) {
+        putInt(QQS_MAX_ROWS_KEY, rows.coerceIn(MIN_QQS_MAX_ROWS, MAX_QQS_MAX_ROWS))
     }
 
-    fun setSpan(id: String, span: AxQsSpan, layout: AxQsLayout) {
+    fun layoutData(layout: AxQsLayout): StateFlow<AxQsLayoutData?> =
+        layoutsData
+            .map { it[layout] }
+            .distinctUntilChanged()
+            .stateIn(applicationScope, SharingStarted.Eagerly, layoutsData.value[layout])
+
+    fun updateLayoutData(layout: AxQsLayout, update: (AxQsLayoutData) -> AxQsLayoutData) {
+        val currentMap = (_layoutsDataOverride.value ?: layoutsData.value).toMutableMap()
+        val current = currentMap[layout] ?: defaultLayoutData(layout)
+        val updated = update(current)
+        currentMap[layout] = updated
+        _layoutsDataOverride.value = currentMap
+
         val userId = userRepository.getSelectedUserInfo().id
-        val key = spansKey(layout)
         applicationScope.launch(backgroundDispatcher) {
-            val spans = parseSpans(secureSettings.getStringForUser(key, userId)).toMutableMap()
-            spans[id] = span
-            val value = spans.entries.sortedBy { it.key }.joinToString(",") { "${it.key}=${it.value}" }
-            secureSettings.putStringForUser(key, value, null, false, userId, true)
+            val diskMap =
+                AxQsLayoutData.parseList(secureSettings.getStringForUser(QS_DATA, userId))
+                    .associateBy { it.location }
+                    .toMutableMap()
+            diskMap[layout] = updated
+            secureSettings.putStringForUser(
+                QS_DATA,
+                AxQsLayoutData.toJson(diskMap.values),
+                null,
+                false,
+                userId,
+                true,
+            )
         }
     }
 
-    fun setControlPositions(positions: Map<String, AxQsGridPosition>, layout: AxQsLayout) {
-        val value = positions.entries.sortedBy { it.key }.joinToString(",") { "${it.key}=${it.value}" }
-        putString(controlPositionsKey(layout), value)
+    fun setLayoutData(layoutData: AxQsLayoutData) {
+        updateLayoutData(layoutData.location) { layoutData }
+    }
+
+    fun setOrder(order: List<String>, layout: AxQsLayout) {
+        updateLayoutData(layout) { it.copy(order = order.distinct()) }
+    }
+
+    fun setSpan(id: String, span: AxQsSpan, layout: AxQsLayout) {
+        updateLayoutData(layout) { current -> current.copy(spans = current.spans + (id to span)) }
+    }
+
+    fun setPositions(positions: Map<String, AxQsGridPosition>, layout: AxQsLayout) {
+        updateLayoutData(layout) { it.copy(positions = positions) }
     }
 
     fun setPanelMode(mode: AxQsPanelMode) {
@@ -140,71 +177,49 @@ constructor(
         putInt(gridColumnsKey(layout), columns)
     }
 
-    fun setRows(layout: AxQsGridLayout, rows: Int) {
-        putInt(gridRowsKey(layout), rows)
+    fun defaultPositions(layout: AxQsLayout): Map<String, AxQsGridPosition> {
+        return mapOf(
+            "internet" to AxQsGridPosition(column = 0, row = 0),
+            AxQsControl.VOLUME.id to AxQsGridPosition(column = 2, row = 0),
+            AxQsControl.BRIGHTNESS.id to AxQsGridPosition(column = 3, row = 0),
+            "bt" to AxQsGridPosition(column = 0, row = 1),
+            AxQsControl.MEDIA.id to AxQsGridPosition(column = 0, row = 2),
+        )
     }
 
-    fun setTileLabels(layout: AxQsGridLayout, showLabels: Boolean) {
-        putInt(TILE_LABEL_KEYS.getValue(layout), showLabels.toSetting())
-    }
+    fun defaultLayoutData(
+        layout: AxQsLayout,
+        defaultTiles: List<String> = aospDefaultTiles,
+    ): AxQsLayoutData =
+        AxQsLayoutData(
+            location = layout,
+            order = (DEFAULT_GRID_ITEMS + defaultTiles).distinct(),
+            spans = defaultSpans,
+            positions = defaultPositions(layout),
+        )
 
     fun resetLayout(
-        defaultControls: List<String> = DEFAULT_CONTROLS_LIST,
-        defaultTiles: List<String> = emptyList(),
+        defaultItems: List<String> = DEFAULT_GRID_ITEMS,
+        defaultTiles: List<String> = aospDefaultTiles,
     ) {
         val userId = userRepository.getSelectedUserInfo().id
-        val controlsValue = defaultControls.distinct().joinToString(",")
-        val tilesValue = defaultTiles.distinct().joinToString(",")
-
-        val valuesToSet = buildMap {
-            CONTROL_ORDER_KEYS.forEach { put(it, controlsValue) }
-            TILE_ORDER_KEYS.forEach { put(it, tilesValue) }
-            SPANS_KEYS.values.forEach { put(it, DEFAULT_SPANS_STRING) }
-            put(LANDSCAPE_SPANS, DEFAULT_SPANS_STRING)
-            CONTROL_POSITIONS_KEYS.values.forEach { put(it, "") }
-            put(LANDSCAPE_CONTROL_POSITIONS, "")
-            LEGACY_ORDER_KEYS.forEach { put(it, "") }
-        }
-
+        val allDefaults =
+            AxQsLayout.entries.map { layout -> defaultLayoutData(layout, defaultTiles) }
+        val defaultsMap = allDefaults.associateBy { it.location }
+        _layoutsDataOverride.value = defaultsMap
+        val json = AxQsLayoutData.toJson(allDefaults)
+        setQqsMaxRows(DEFAULT_QQS_MAX_ROWS)
         applicationScope.launch(backgroundDispatcher) {
-            valuesToSet.forEach { (key, value) ->
-                secureSettings.putStringForUser(key, value, null, false, userId, true)
-            }
+            secureSettings.putStringForUser(QS_DATA, json, userId)
         }
     }
 
     fun init() {
         applicationScope.launch(backgroundDispatcher) {
             val userId = userRepository.getSelectedUserInfo().id
-            CONTROL_ORDER_KEYS.forEach { key ->
-                secureSettings.getStringForUser(key, userId)
-            }
-            TILE_ORDER_KEYS.forEach { key ->
-                secureSettings.getStringForUser(key, userId)
-            }
-            SPANS_KEYS.values.forEach { key ->
-                secureSettings.getStringForUser(key, userId)
-            }
+            secureSettings.getStringForUser(QS_DATA, userId)
         }
     }
-
-    private fun orderSetting(key: String, default: String? = null): StateFlow<List<String>?> =
-        stringSetting(key, default)
-            .map(::parseOrder)
-            .distinctUntilChanged()
-            .stateIn(applicationScope, SharingStarted.Eagerly, parseOrder(default))
-
-    private fun spansSetting(key: String): StateFlow<Map<String, AxQsSpan>> =
-        stringSetting(key, DEFAULT_SPANS_STRING)
-            .map(::parseSpans)
-            .distinctUntilChanged()
-            .stateIn(applicationScope, SharingStarted.Eagerly, defaultControlSpans)
-
-    private fun positionsSetting(key: String): StateFlow<Map<String, AxQsGridPosition>> =
-        stringSetting(key)
-            .map(::parsePositions)
-            .distinctUntilChanged()
-            .stateIn(applicationScope, SharingStarted.Eagerly, emptyMap())
 
     private fun stringSetting(key: String, default: String? = null): Flow<String?> {
         return userRepository.selectedUserInfo
@@ -261,30 +276,6 @@ constructor(
             .stateIn(applicationScope, SharingStarted.Eagerly, emptyMap())
     }
 
-    private fun tileLabelSettings(): StateFlow<Map<AxQsGridLayout, Boolean>> {
-        return userRepository.selectedUserInfo
-            .flatMapLatest { user ->
-                combine(
-                    TILE_LABEL_KEYS.map { (layout, key) ->
-                        secureSettings
-                            .observerFlow(user.id, key)
-                            .onStart { emit(Unit) }
-                            .map {
-                                layout to
-                                    (secureSettings.getIntForUser(
-                                        key,
-                                        layout.showTileLabelsByDefault.toSetting(),
-                                        user.id,
-                                    ) != 0)
-                            }
-                    }
-                ) { values -> values.toMap() }
-            }
-            .distinctUntilChanged()
-            .flowOn(backgroundDispatcher)
-            .stateIn(applicationScope, SharingStarted.Eagerly, emptyMap())
-    }
-
     private fun verticalSliderStyleSettings():
         StateFlow<Map<AxQsVerticalSliderKey, AxQsVerticalSliderStyle>> {
         return userRepository.selectedUserInfo
@@ -306,7 +297,9 @@ constructor(
                                     )
                             }
                     }
-                ) { values -> values.toMap() }
+                ) { values ->
+                    values.toMap()
+                }
             }
             .distinctUntilChanged()
             .flowOn(backgroundDispatcher)
@@ -323,7 +316,7 @@ constructor(
         userId: Int = userRepository.getSelectedUserInfo().id,
     ) {
         applicationScope.launch(backgroundDispatcher) {
-            secureSettings.putStringForUser(key, value, null, false, userId, true)
+            secureSettings.putStringForUser(key, value, userId)
         }
     }
 
@@ -335,12 +328,7 @@ constructor(
     }
 
     private fun parseOrder(value: String?): List<String>? {
-        return value
-            ?.split(',')
-            ?.map(String::trim)
-            ?.filter(String::isNotEmpty)
-            ?.map(::normalizeControlId)
-            ?.distinct()
+        return value?.split(',')?.map(String::trim)?.filter(String::isNotEmpty)?.distinct()
     }
 
     private fun parseSpans(value: String?): Map<String, AxQsSpan> {
@@ -353,39 +341,24 @@ constructor(
         return parseKeyValuePairs(value, AxQsGridPosition::parse)
     }
 
-    private inline fun <V> parseKeyValuePairs(value: String, parseValue: (String) -> V?): Map<String, V> {
+    private inline fun <V> parseKeyValuePairs(
+        value: String,
+        parseValue: (String) -> V?,
+    ): Map<String, V> {
         return buildMap {
             value.split(',').forEach { entry ->
                 val separator = entry.lastIndexOf('=')
                 if (separator <= 0 || separator == entry.lastIndex) return@forEach
-                val id = normalizeControlId(entry.substring(0, separator).trim())
+                val id = entry.substring(0, separator).trim()
                 val parsed = parseValue(entry.substring(separator + 1).trim())
                 if (id.isNotEmpty() && parsed != null) put(id, parsed)
             }
         }
     }
 
-    private fun normalizeControlId(id: String): String {
-        return when (id) {
-            LEGACY_BRIGHTNESS_VERTICAL_ID -> AxQsControl.BRIGHTNESS.id
-            LEGACY_VOLUME_VERTICAL_ID -> AxQsControl.VOLUME.id
-            LEGACY_RINGER_TILE_ID -> AxQsControl.RINGER.id
-            else -> id
-        }
-    }
-
     private fun Boolean.toSetting(): Int = if (this) 1 else 0
 
-    private fun spansKey(layout: AxQsLayout): String = SPANS_KEYS.getValue(layout)
-
-    private fun controlPositionsKey(layout: AxQsLayout): String = CONTROL_POSITIONS_KEYS.getValue(layout)
-
-    private fun sectionOrderKey(layout: AxQsLayout, section: AxQsGridSection): String =
-        SECTION_ORDER_KEYS.getValue(layout to section)
-
     private fun gridColumnsKey(layout: AxQsGridLayout): String = GRID_COLUMNS_KEYS.getValue(layout)
-
-    private fun gridRowsKey(layout: AxQsGridLayout): String = GRID_ROWS_KEYS.getValue(layout)
 
     private fun verticalSliderStyleKey(slider: AxQsVerticalSliderKey): String {
         val prefix =
@@ -402,38 +375,17 @@ constructor(
     }
 
     private companion object {
-        const val QS_ORDER = "ax_qs_order"
-        const val QQS_ORDER = "ax_qqs_order"
-        const val QS_SPANS = "ax_qs_spans"
-        const val QQS_SPANS = "ax_qqs_spans"
-        const val LANDSCAPE_ORDER = "ax_qs_landscape_order"
-        const val LANDSCAPE_SPANS = "ax_qs_landscape_spans"
-        const val QQS_CONTROL_ORDER = "ax_qqs_control_order"
-        const val QQS_TILE_ORDER = "ax_qqs_tile_order"
-        const val QS_CONTROL_ORDER = "ax_qs_control_order"
-        const val QS_TILE_ORDER = "ax_qs_tile_order"
-        const val LANDSCAPE_CONTROL_ORDER = "ax_qs_landscape_control_order"
-        const val LANDSCAPE_TILE_ORDER = "ax_qs_landscape_tile_order"
-        const val SPLIT_SHADE_CONTROL_ORDER = "ax_qs_split_shade_control_order"
-        const val SPLIT_SHADE_TILE_ORDER = "ax_qs_split_shade_tile_order"
-        const val QQS_CONTROL_POSITIONS = "ax_qqs_control_positions"
-        const val QS_CONTROL_POSITIONS = "ax_qs_control_positions"
-        const val LANDSCAPE_CONTROL_POSITIONS = "ax_qs_landscape_control_positions"
-        const val SPLIT_SHADE_CONTROL_POSITIONS = "ax_qs_split_shade_control_positions"
-        const val SPLIT_SHADE_SPANS = "ax_qs_split_shade_spans"
+        const val QS_DATA = "ax_qs_data"
+
         const val PANEL_MODE = "ax_qs_panel_mode"
         const val QUICK_PANEL_ON_LEFT = "ax_qs_quick_panel_on_left"
-        const val PORTRAIT_QQS_CONTROL_COLUMNS = "ax_qqs_control_columns"
-        const val PORTRAIT_QQS_TILE_COLUMNS = "ax_qqs_tile_columns"
-        const val PORTRAIT_QS_CONTROL_COLUMNS = "ax_qs_control_columns"
-        const val PORTRAIT_QS_TILE_COLUMNS = "ax_qs_tile_columns"
-        const val SPLIT_SHADE_CONTROL_COLUMNS = "ax_qs_split_shade_control_columns"
-        const val SPLIT_SHADE_TILE_COLUMNS = "ax_qs_split_shade_tile_columns"
-        const val PORTRAIT_QQS_TILE_ROWS = "ax_qqs_tile_rows"
-        const val PORTRAIT_QS_TILE_ROWS = "ax_qs_tile_rows"
-        const val SPLIT_SHADE_TILE_ROWS = "ax_qs_split_shade_tile_rows"
-        const val PORTRAIT_QS_TILE_LABELS = "ax_qs_show_tile_labels"
-        const val SPLIT_SHADE_TILE_LABELS = "ax_qs_split_shade_show_tile_labels"
+        const val QQS_COLUMNS = "ax_qqs_columns"
+        const val QS_COLUMNS = "ax_qs_columns"
+        const val SPLIT_SHADE_COLUMNS = "ax_qs_split_shade_columns"
+        const val QQS_MAX_ROWS_KEY = "ax_qqs_max_rows"
+        const val DEFAULT_QQS_MAX_ROWS = 2
+        const val MIN_QQS_MAX_ROWS = 2
+        const val MAX_QQS_MAX_ROWS = 4
 
         val VERTICAL_SLIDER_KEYS =
             AxQsLayout.entries.flatMap { layout ->
@@ -442,76 +394,25 @@ constructor(
                 }
             }
 
-        val TILE_LABEL_KEYS =
+        val GRID_COLUMNS_KEYS =
             mapOf(
-                AxQsGridLayout.PORTRAIT_QS_TILES to PORTRAIT_QS_TILE_LABELS,
-                AxQsGridLayout.SPLIT_SHADE_TILES to SPLIT_SHADE_TILE_LABELS,
+                AxQsGridLayout.QQS to QQS_COLUMNS,
+                AxQsGridLayout.QS to QS_COLUMNS,
+                AxQsGridLayout.SPLIT_SHADE to SPLIT_SHADE_COLUMNS,
             )
 
-        val CONTROL_ORDER_KEYS = listOf(
-            QQS_CONTROL_ORDER,
-            QS_CONTROL_ORDER,
-            LANDSCAPE_CONTROL_ORDER,
-            SPLIT_SHADE_CONTROL_ORDER,
-        )
+        val DEFAULT_NETWORK_IDS = listOf("wifi", "internet")
 
-        val TILE_ORDER_KEYS = listOf(
-            QQS_TILE_ORDER,
-            QS_TILE_ORDER,
-            LANDSCAPE_TILE_ORDER,
-            SPLIT_SHADE_TILE_ORDER,
-        )
-
-        val LEGACY_ORDER_KEYS = listOf(
-            QS_ORDER,
-            QQS_ORDER,
-            LANDSCAPE_ORDER,
-        )
-
-        val SPANS_KEYS = mapOf(
-            AxQsLayout.QQS to QQS_SPANS,
-            AxQsLayout.QS to QS_SPANS,
-            AxQsLayout.SPLIT_SHADE to SPLIT_SHADE_SPANS,
-        )
-
-        val CONTROL_POSITIONS_KEYS = mapOf(
-            AxQsLayout.QQS to QQS_CONTROL_POSITIONS,
-            AxQsLayout.QS to QS_CONTROL_POSITIONS,
-            AxQsLayout.SPLIT_SHADE to SPLIT_SHADE_CONTROL_POSITIONS,
-        )
-
-        val SECTION_ORDER_KEYS = mapOf(
-            (AxQsLayout.QQS to AxQsGridSection.CONTROLS) to QQS_CONTROL_ORDER,
-            (AxQsLayout.QQS to AxQsGridSection.TILES) to QQS_TILE_ORDER,
-            (AxQsLayout.QS to AxQsGridSection.CONTROLS) to QS_CONTROL_ORDER,
-            (AxQsLayout.QS to AxQsGridSection.TILES) to QS_TILE_ORDER,
-            (AxQsLayout.SPLIT_SHADE to AxQsGridSection.CONTROLS) to SPLIT_SHADE_CONTROL_ORDER,
-            (AxQsLayout.SPLIT_SHADE to AxQsGridSection.TILES) to SPLIT_SHADE_TILE_ORDER,
-        )
-
-        val GRID_COLUMNS_KEYS = mapOf(
-            AxQsGridLayout.PORTRAIT_QQS_CONTROLS to PORTRAIT_QQS_CONTROL_COLUMNS,
-            AxQsGridLayout.PORTRAIT_QQS_TILES to PORTRAIT_QQS_TILE_COLUMNS,
-            AxQsGridLayout.PORTRAIT_QS_CONTROLS to PORTRAIT_QS_CONTROL_COLUMNS,
-            AxQsGridLayout.PORTRAIT_QS_TILES to PORTRAIT_QS_TILE_COLUMNS,
-            AxQsGridLayout.SPLIT_SHADE_CONTROLS to SPLIT_SHADE_CONTROL_COLUMNS,
-            AxQsGridLayout.SPLIT_SHADE_TILES to SPLIT_SHADE_TILE_COLUMNS,
-        )
-
-        val GRID_ROWS_KEYS = mapOf(
-            AxQsGridLayout.PORTRAIT_QQS_TILES to PORTRAIT_QQS_TILE_ROWS,
-            AxQsGridLayout.PORTRAIT_QS_TILES to PORTRAIT_QS_TILE_ROWS,
-            AxQsGridLayout.SPLIT_SHADE_TILES to SPLIT_SHADE_TILE_ROWS,
-        )
-
-        const val LEGACY_BRIGHTNESS_VERTICAL_ID = "control:brightness_vertical"
-        const val LEGACY_VOLUME_VERTICAL_ID = "control:volume_vertical"
-        const val LEGACY_RINGER_TILE_ID = "sound"
-
-        val DEFAULT_CONTROLS_LIST =
-            listOf("internet", "bt", AxQsControl.MEDIA.id, AxQsControl.BRIGHTNESS.id, AxQsControl.VOLUME.id)
-        val DEFAULT_CONTROLS_STRING = DEFAULT_CONTROLS_LIST.joinToString(",")
+        val DEFAULT_GRID_ITEMS =
+            listOf(
+                "internet",
+                AxQsControl.VOLUME.id,
+                AxQsControl.BRIGHTNESS.id,
+                "bt",
+                AxQsControl.MEDIA.id,
+            )
         const val DEFAULT_SPANS_STRING =
-            "bt=2x1,control:brightness=1x2,control:media=2x2,control:volume=1x2,internet=2x1"
+            "bt=2x1,control:brightness=1x2,control:media=2x2," +
+                "control:ringer=2x1,control:volume=1x2,internet=2x1"
     }
 }

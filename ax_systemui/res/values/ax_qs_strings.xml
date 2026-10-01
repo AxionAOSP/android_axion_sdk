@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copyright 2025-2026 AxionOS
+  SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <string name="ax_qs_panel_settings">Panel settings</string>
+    <string name="ax_qs_reorder_education">Touch and hold to change order</string>
+    <string name="ax_qs_top_quick_settings">Top quick settings</string>
+    <string name="ax_qs_full_quick_settings">Full quick settings</string>
+    <string name="ax_qs_panel_mode">Panel layout</string>
+    <string name="ax_qs_controls">Widgets</string>
+    <string name="ax_qs_widgets">Widgets</string>
+    <string name="ax_qs_grid_full">Grid is full</string>
+    <string name="ax_qs_running_services">Running services</string>
+    <string name="ax_qs_column_count">%1$d columns</string>
+    <string name="ax_qs_grid_columns">Grid columns</string>
+    <string name="ax_qs_qqs_max_rows">Quick QS rows</string>
+    <string name="ax_qs_row_count">%1$d rows</string>
+    <string name="ax_qs_together">Together</string>
+    <string name="ax_qs_together_summary">View notifications and collapsed quick settings together. Swipe down again to view the full quick settings panel.</string>
+    <string name="ax_qs_separate">Separate</string>
+    <string name="ax_qs_separate_summary_left">Swipe down from the top left corner for quick settings. Swipe down anywhere else along the top for notifications.</string>
+    <string name="ax_qs_separate_summary_right">Swipe down from the top right corner for quick settings. Swipe down anywhere else along the top for notifications.</string>
+    <string name="ax_qs_quick_panel_left">Quick panel on left side</string>
+    <string name="ax_qs_brightness_vertical">Brightness</string>
+    <string name="ax_qs_volume_vertical">Volume</string>
+    <string name="ax_qs_auto_brightness">Auto brightness</string>
+    <string name="ax_qs_volume_mute">Mute volume</string>
+    <string name="ax_qs_media">Media player</string>
+    <string name="ax_qs_media_not_playing">No media playing</string>
+    <string name="ax_qs_media_open_last_app">Open last media app</string>
+    <string name="ax_qs_media_compact_metadata">%1$s · %2$s</string>
+    <string name="ax_qs_tile_appearance">Tile design</string>
+    <string name="ax_qs_tile_appearance_axion">Axion Expressive</string>
+    <string name="ax_qs_tile_appearance_aosp">AOSP Classic</string>
+    <string name="ax_qs_move_earlier">Move earlier</string>
+    <string name="ax_qs_move_later">Move later</string>
+    <string name="ax_qs_stacked_tile">Tile stack</string>
+    <string name="ax_qs_drag_to_stack">Drag tiles here to stack</string>
+    <string name="ax_qs_remove_stack">Remove stack</string>
+    <string name="ax_qs_open_slot">Open slot</string>
+</resources>

@@ -165,7 +165,7 @@ fun AxBrightnessSliderContainer(
     Box(
         modifier =
             modifier
-                .padding(vertical = AxDimensions.SliderBackgroundFrameSize.height * tileScale)
+                .padding(vertical = (AxDimensions.SliderBackgroundFrameSize.height * tileScale).coerceAtLeast(0.dp))
                 .fillMaxWidth()
                 .sysuiResTag("ax_brightness_slider")
     ) {

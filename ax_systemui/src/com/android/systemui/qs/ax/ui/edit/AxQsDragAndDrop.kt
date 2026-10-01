@@ -25,9 +25,11 @@ import androidx.compose.foundation.draganddrop.dragAndDropSource
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -45,15 +47,26 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
+import com.android.systemui.qs.ax.domain.interactor.AxQsLayoutInteractor
+import com.android.systemui.qs.ax.shared.model.AxQsGridItem
 import com.android.systemui.qs.ax.shared.model.AxQsGridPosition
 import com.android.systemui.qs.ax.shared.model.AxQsGridSection
 import com.android.systemui.qs.ax.shared.model.AxQsSpan
-import com.android.systemui.qs.ax.shared.model.AxQsGridItem
 import com.android.systemui.qs.ax.ui.grid.AxQsGridCell
 import com.android.systemui.qs.ax.ui.grid.canFitAxQsGridItems
 import kotlin.math.abs
 
-internal class AxQsEditListState<T>(initialItems: List<AxQsGridItem<T>>) {
+class AxQsEditListState<T>(
+    initialItems: List<AxQsGridItem<T>>,
+    initialQqsMaxRows: Int = AxQsLayoutInteractor.QQS_MAX_ROWS,
+) {
+    val qqsMaxRowsState = mutableIntStateOf(initialQqsMaxRows)
+    val qqsMaxRows: Int
+        get() = qqsMaxRowsState.intValue
+
+    fun updateQqsMaxRows(rows: Int) {
+        qqsMaxRowsState.intValue = rows
+    }
     private val itemBounds = mutableMapOf<String, Pair<AxQsGridSection, Rect>>()
     private val gridCells = mutableMapOf<AxQsGridSection, List<AxQsGridCell>>()
     private val gridOrigins = mutableMapOf<AxQsGridSection, Offset>()
@@ -68,6 +81,15 @@ internal class AxQsEditListState<T>(initialItems: List<AxQsGridItem<T>>) {
 
     var draggedPosition by mutableStateOf(Offset.Unspecified)
         private set
+
+    var hoveredStackTargetId by mutableStateOf<String?>(null)
+        private set
+
+    fun setHoveredStackTarget(id: String?) {
+        if (hoveredStackTargetId != id) {
+            hoveredStackTargetId = id
+        }
+    }
 
     val dragInProgress: Boolean
         get() = draggedId != null
@@ -119,17 +141,12 @@ internal class AxQsEditListState<T>(initialItems: List<AxQsGridItem<T>>) {
         return true
     }
 
-    fun moveBy(id: String, delta: Int, sectionOf: (AxQsGridItem<T>) -> AxQsGridSection): Boolean {
-        val item = item(id) ?: return false
-        val sectionItems = _items.filter { sectionOf(it) == sectionOf(item) }
-        val from = sectionItems.indexOfFirst { it.id == id }
+    fun moveBy(id: String, delta: Int): Boolean {
+        val from = indexOf(id)
         if (from < 0) return false
-        val to = (from + delta).coerceIn(0, sectionItems.lastIndex)
+        val to = (from + delta).coerceIn(0, _items.lastIndex)
         if (from == to) return false
-        val targetId = sectionItems[to].id
-        val sourceIndex = indexOf(id)
-        val targetIndex = indexOf(targetId)
-        _items.add(targetIndex, _items.removeAt(sourceIndex))
+        _items.add(to, _items.removeAt(from))
         return true
     }
 
@@ -200,7 +217,12 @@ internal class AxQsEditListState<T>(initialItems: List<AxQsGridItem<T>>) {
                 .asSequence()
                 .filter { cell ->
                     cell.position.column + item.span.columns <= columns &&
-                        cell.position.row + item.span.rows <= rows
+                        cell.position.row + item.span.rows <= rows &&
+                        !AxQsLayoutInteractor.wouldStraddleQqs(
+                            item.span,
+                            cell.position.row,
+                            qqsMaxRows,
+                        )
                 }
                 .minByOrNull { cell ->
                     (cell.bounds.topLeft - itemTopLeft).getDistanceSquared()
@@ -247,23 +269,6 @@ internal class AxQsEditListState<T>(initialItems: List<AxQsGridItem<T>>) {
         return true
     }
 
-    fun moveToSection(
-        section: AxQsGridSection,
-        sectionOf: (AxQsGridItem<T>) -> AxQsGridSection,
-        transform: (AxQsGridItem<T>, AxQsGridSection) -> AxQsGridItem<T>?,
-    ): Boolean {
-        val id = draggedId ?: return false
-        val from = indexOf(id)
-        if (from < 0) return false
-        val item = _items[from]
-        if (sectionOf(item) == section) return true
-        val moved = transform(item, section) ?: return false
-        _items.removeAt(from)
-        val destination = _items.indexOfLast { sectionOf(it) == section } + 1
-        _items.add(destination.coerceAtLeast(0), moved)
-        return true
-    }
-
     fun onTargeting(id: String, insertAfter: Boolean?) {
         val sourceId = draggedId ?: return
         if (sourceId == id) return
@@ -272,18 +277,26 @@ internal class AxQsEditListState<T>(initialItems: List<AxQsGridItem<T>>) {
         val target = indexOf(id)
         if (from < 0 || target < 0) return
 
-        val sourceItem = _items[from]
-        val targetItem = _items[target]
-        if (sourceItem.position != null && targetItem.position != null) {
-            _items[from] = sourceItem.copy(position = targetItem.position)
-            _items[target] = targetItem.copy(position = sourceItem.position)
-            return
-        }
-
         val targetAfterRemoval = if (from < target) target - 1 else target
         val destination = targetAfterRemoval + if (insertAfter ?: (from < target)) 1 else 0
         if (destination == from) return
         _items.add(destination.coerceIn(0, _items.lastIndex), _items.removeAt(from))
+    }
+
+    fun stackItems(
+        sourceId: String,
+        targetId: String,
+        resolver: (AxQsGridItem<T>, AxQsGridItem<T>) -> AxQsGridItem<T>?,
+    ): Boolean {
+        val source = item(sourceId) ?: return false
+        val target = item(targetId) ?: return false
+        val stacked = resolver(source, target) ?: return false
+        val targetIndex = indexOf(targetId)
+        if (targetIndex < 0) return false
+        _items[targetIndex] = stacked
+        remove(sourceId)
+        hoveredStackTargetId = null
+        return true
     }
 
     fun cancel() {
@@ -292,6 +305,7 @@ internal class AxQsEditListState<T>(initialItems: List<AxQsGridItem<T>>) {
         dragAnchor = Offset.Zero
         draggedId = null
         draggedPosition = Offset.Unspecified
+        hoveredStackTargetId = null
     }
 
     fun finish(onDrop: () -> Unit) {
@@ -300,6 +314,7 @@ internal class AxQsEditListState<T>(initialItems: List<AxQsGridItem<T>>) {
         dragAnchor = Offset.Zero
         draggedId = null
         draggedPosition = Offset.Unspecified
+        hoveredStackTargetId = null
         onDrop()
     }
 
@@ -331,7 +346,7 @@ internal class AxQsEditListState<T>(initialItems: List<AxQsGridItem<T>>) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-internal fun <T> Modifier.axQsDragSource(
+fun <T> Modifier.axQsDragSource(
     id: String,
     state: AxQsEditListState<T>,
     onDragStart: () -> Unit,
@@ -355,40 +370,58 @@ internal fun <T> Modifier.axQsDragSource(
                         )
                     )
                 },
-                onDragEnd = state::cancel,
             )
         }
     )
 }
 
 @Composable
-internal fun <T> Modifier.axQsDropTarget(
+fun <T> Modifier.axQsDropTarget(
     state: AxQsEditListState<T>,
-    section: AxQsGridSection,
-    sectionOf: (AxQsGridItem<T>) -> AxQsGridSection,
-    transform: (AxQsGridItem<T>, AxQsGridSection) -> AxQsGridItem<T>?,
+    section: AxQsGridSection = AxQsGridSection.TILES,
+    canStack: ((AxQsGridItem<T>, AxQsGridItem<T>) -> Boolean)? = null,
+    onStack: ((AxQsGridItem<T>, AxQsGridItem<T>) -> AxQsGridItem<T>?)? = null,
     onDrop: () -> Unit,
 ): Modifier {
     val currentOnDrop by rememberUpdatedState(onDrop)
     val layoutDirection = LocalLayoutDirection.current
     val target =
-        remember(state, layoutDirection) {
+        remember(state, layoutDirection, section, canStack, onStack) {
             object : DragAndDropTarget {
                 override fun onMoved(event: DragAndDropEvent) {
                     val dragEvent = event.toAndroidDragEvent()
                     val offset = Offset(dragEvent.x, dragEvent.y)
                     state.onMoved(offset)
-                    if (!state.moveToSection(section, sectionOf, transform)) return
+
+                    val draggedId = state.draggedId
+                    val draggedItem = draggedId?.let { state.item(it) }
+                    val targetItemAtOffset = state.findItemAt(offset, section)
+                    val localOffset = state.offsetInGrid(offset, section)
+
+                    val targetItem = targetItemAtOffset?.let { state.item(it.first) }
+                    val isStackTarget =
+                        canStack != null &&
+                            onStack != null &&
+                            draggedItem != null &&
+                            targetItem != null &&
+                            targetItemAtOffset.first != draggedId &&
+                            canStack(draggedItem, targetItem)
+
+                    if (isStackTarget && targetItemAtOffset.second.contains(localOffset)) {
+                        state.setHoveredStackTarget(targetItemAtOffset.first)
+                        return
+                    }
+
+                    state.setHoveredStackTarget(null)
                     if (state.moveToCell(offset, section)) return
-                    val target = state.findItemAt(offset, section)
-                    if (target != null) {
+                    if (targetItemAtOffset != null) {
                         state.onTargeting(
-                            id = target.first,
+                            id = targetItemAtOffset.first,
                             insertAfter =
                                 insertAfter(
-                                    bounds = target.second,
-                                    span = state.item(target.first)?.span,
-                                    offset = state.offsetInGrid(offset, section),
+                                    bounds = targetItemAtOffset.second,
+                                    span = state.item(targetItemAtOffset.first)?.span,
+                                    offset = localOffset,
                                     layoutDirection = layoutDirection,
                                 ),
                         )
@@ -396,12 +429,31 @@ internal fun <T> Modifier.axQsDropTarget(
                 }
 
                 override fun onDrop(event: DragAndDropEvent): Boolean {
+                    val dragEvent = event.toAndroidDragEvent()
+                    val offset = Offset(dragEvent.x, dragEvent.y)
+                    val targetItemAtOffset = state.findItemAt(offset, section)
+
+                    val draggedId = state.draggedId
+                    val hoverTarget = state.hoveredStackTargetId ?: targetItemAtOffset?.first
+
+                    val draggedItem = draggedId?.let { state.item(it) }
+                    val targetItem = hoverTarget?.let { state.item(it) }
+
+                    if (hoverTarget != null && draggedId != null && onStack != null &&
+                        draggedItem != null && targetItem != null &&
+                        canStack != null && canStack(draggedItem, targetItem)
+                    ) {
+                        state.stackItems(draggedId, hoverTarget, onStack)
+                    }
                     state.finish(currentOnDrop)
                     return true
                 }
 
                 override fun onEnded(event: DragAndDropEvent) {
-                    state.finish(currentOnDrop)
+                    state.setHoveredStackTarget(null)
+                    if (state.dragInProgress) {
+                        state.cancel()
+                    }
                 }
             }
         }
@@ -412,7 +464,7 @@ internal fun <T> Modifier.axQsDropTarget(
 }
 
 @Composable
-internal fun <T> AxQsDragAutoScroll(
+fun <T> AxQsDragAutoScroll(
     state: AxQsEditListState<T>,
     scrollState: ScrollState,
     viewportBounds: Rect,

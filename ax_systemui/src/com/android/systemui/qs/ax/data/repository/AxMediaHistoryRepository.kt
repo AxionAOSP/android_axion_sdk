@@ -29,6 +29,7 @@ import com.android.systemui.user.data.repository.UserRepository
 import com.android.systemui.util.settings.SecureSettings
 import com.android.systemui.util.settings.SettingsProxyExt.observerFlow
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -55,8 +56,11 @@ constructor(
     @Background private val backgroundDispatcher: CoroutineDispatcher,
 ) : MediaDataManager.Listener {
     private val savedPackages = ConcurrentHashMap<Int, String>()
+    private val keyToInstanceId = ConcurrentHashMap<String, Any>()
+    private val sessionPackages = ConcurrentHashMap<Any, String>()
+    private val sessionLastActive = ConcurrentHashMap<Any, Long>()
     private val writes = Channel<SaveRequest>(Channel.UNLIMITED)
-    private var listening = false
+    private val listening = AtomicBoolean(false)
 
     val lastMediaPackage: StateFlow<String?> =
         userRepository.selectedUserInfo
@@ -70,10 +74,8 @@ constructor(
             .flowOn(backgroundDispatcher)
             .stateIn(applicationScope, SharingStarted.Eagerly, null)
 
-    @Synchronized
     internal fun startListening() {
-        if (listening) return
-        listening = true
+        if (!listening.compareAndSet(false, true)) return
         applicationScope.launch(context = backgroundDispatcher) {
             for (request in writes) {
                 secureSettings.putStringForUser(
@@ -92,12 +94,50 @@ constructor(
         data: MediaData,
         immediately: Boolean,
     ) {
-        val packageName =
-            data.packageName.takeIf { data.isPlaying == true && it.isNotBlank() } ?: return
-        val userId = userRepository.getSelectedUserInfo().id
-        if (savedPackages.put(userId, packageName) == packageName) return
-        writes.trySend(SaveRequest(userId, packageName))
+        if (oldKey != null && oldKey != key) {
+            val oldInstanceId = keyToInstanceId.remove(oldKey)
+            if (oldInstanceId != null) {
+                sessionPackages.remove(oldInstanceId)
+                sessionLastActive.remove(oldInstanceId)
+            }
+            sessionPackages.remove(oldKey)
+            sessionLastActive.remove(oldKey)
+        }
+
+        val packageName = data.packageName?.takeIf { it.isNotBlank() }
+        if (packageName != null) {
+            sessionPackages[key] = packageName
+        }
+        sessionLastActive[key] = data.lastActive
+        data.instanceId?.let { instanceId ->
+            keyToInstanceId[key] = instanceId
+            if (packageName != null) {
+                sessionPackages[instanceId] = packageName
+            }
+            sessionLastActive[instanceId] = data.lastActive
+        }
+
+        if (data.isPlaying == true && packageName != null) {
+            val userId = userRepository.getSelectedUserInfo().id
+            if (savedPackages.put(userId, packageName) != packageName) {
+                writes.trySend(SaveRequest(userId, packageName))
+            }
+        }
     }
+
+    override fun onMediaDataRemoved(key: String, userInitiated: Boolean) {
+        val instanceId = keyToInstanceId.remove(key)
+        if (instanceId != null) {
+            sessionPackages.remove(instanceId)
+            sessionLastActive.remove(instanceId)
+        }
+        sessionPackages.remove(key)
+        sessionLastActive.remove(key)
+    }
+
+    fun getPackageName(sessionKey: Any): String? = sessionPackages[sessionKey]
+
+    fun getLastActive(sessionKey: Any): Long = sessionLastActive[sessionKey] ?: 0L
 
     internal suspend fun getLaunchTarget(): AxMediaLaunchTarget? =
         withContext(backgroundDispatcher) {

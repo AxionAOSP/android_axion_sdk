@@ -20,8 +20,10 @@ import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.graphics.res.animatedVectorResource
@@ -33,22 +35,18 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.Icons
 import androidx.compose.material3.Icon as MaterialIcon
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -56,15 +54,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.android.systemui.common.shared.model.Icon as IconModel
 import com.android.systemui.common.ui.compose.Icon
@@ -73,142 +69,6 @@ import com.android.systemui.media.remedia.domain.model.MediaSessionModel
 import com.android.systemui.media.remedia.shared.model.MediaSessionState
 import com.android.systemui.qs.ax.ui.viewmodel.AxMediaViewModel
 import com.android.systemui.res.R
-
-@Composable
-internal fun MediaControls(
-    session: MediaSessionModel?,
-    viewModel: AxMediaViewModel,
-    colors: AxMediaColors,
-    interactive: Boolean,
-    actionSize: Dp,
-    maxActions: Int = 3,
-    spreadCoreActions: Boolean = false,
-    modifier: Modifier = Modifier,
-) {
-    val spacing = dimensionResource(R.dimen.qs_media_action_spacing)
-    val iconSize =
-        when {
-            actionSize < 32.dp -> 18.dp
-            actionSize < 40.dp -> 22.dp
-            else -> 26.dp
-        }
-    val navigationIconSize =
-        minOf(
-            when {
-                actionSize < 32.dp -> 18.dp
-                actionSize < 40.dp -> 22.dp
-                else -> 24.dp
-            },
-            MediaNavigationIconSize,
-        )
-    val showSideActions = maxActions >= 3
-    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-        with(Icons.Filled) {
-            Row(
-                horizontalArrangement =
-                    if (spreadCoreActions) {
-                        Arrangement.SpaceEvenly
-                    } else {
-                        Arrangement.spacedBy(spacing, Alignment.CenterHorizontally)
-                    },
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = modifier,
-            ) {
-                if (session != null) {
-                    val coreSlots = if (showSideActions) 3 else 1
-                    val additionalActions =
-                        session.additionalActions.take((maxActions - coreSlots).coerceAtLeast(0))
-                    if (showSideActions) {
-                        additionalActions.firstOrNull()?.let { action ->
-                            MediaAction(
-                                action = action,
-                                viewModel = viewModel,
-                                width = actionSize,
-                                iconSize = iconSize,
-                                tint = colors.foreground,
-                                interactive = interactive,
-                            )
-                        }
-                    }
-                    if (showSideActions) {
-                        CoreMediaAction(
-                            action = session.leftAction,
-                            imageVector = SkipPrevious,
-                            descriptionRes = R.string.controls_media_button_prev,
-                            viewModel = viewModel,
-                            width = actionSize,
-                            iconSize = navigationIconSize,
-                            tint = colors.foreground,
-                            interactive = interactive,
-                        )
-                    }
-                    CoreMediaAction(
-                        action = session.playPauseAction,
-                        imageVector = playPauseIcon(session),
-                        descriptionRes = playPauseDescription(session),
-                        viewModel = viewModel,
-                        width = actionSize,
-                        iconSize = iconSize,
-                        tint = colors.foreground,
-                        background = Color.Transparent,
-                        interactive = interactive,
-                    )
-                    if (showSideActions) {
-                        CoreMediaAction(
-                            action = session.rightAction,
-                            imageVector = SkipNext,
-                            descriptionRes = R.string.controls_media_button_next,
-                            viewModel = viewModel,
-                            width = actionSize,
-                            iconSize = navigationIconSize,
-                            tint = colors.foreground,
-                            interactive = interactive,
-                        )
-                    }
-                    if (showSideActions) {
-                        additionalActions.drop(1).forEach { action ->
-                            MediaAction(
-                                action = action,
-                                viewModel = viewModel,
-                                width = actionSize,
-                                iconSize = iconSize,
-                                tint = colors.foreground,
-                                interactive = interactive,
-                            )
-                        }
-                    }
-                } else {
-                    if (showSideActions) {
-                        PlaceholderMediaAction(
-                            imageVector = SkipPrevious,
-                            descriptionRes = R.string.controls_media_button_prev,
-                            width = actionSize,
-                            iconSize = navigationIconSize,
-                            tint = colors.foreground,
-                        )
-                    }
-                    PlaceholderMediaAction(
-                        imageVector = PlayArrow,
-                        descriptionRes = R.string.controls_media_button_play,
-                        width = actionSize,
-                        iconSize = iconSize,
-                        tint = colors.foreground,
-                        background = Color.Transparent,
-                    )
-                    if (showSideActions) {
-                        PlaceholderMediaAction(
-                            imageVector = SkipNext,
-                            descriptionRes = R.string.controls_media_button_next,
-                            width = actionSize,
-                            iconSize = navigationIconSize,
-                            tint = colors.foreground,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
 
 @Composable
 internal fun CoreMediaAction(
@@ -276,22 +136,23 @@ internal fun PlaceholderMediaAction(
     val description = stringResource(descriptionRes)
     val buttonWidth by
         animateDpAsState(
-            targetValue = width,
-            animationSpec = tween(durationMillis = 220),
+            targetValue = width.coerceAtLeast(0.dp),
+            animationSpec = AxMediaTokens.ActionSizeSpring,
             label = "AxMediaPlaceholderWidth",
         )
     val buttonHeight by
         animateDpAsState(
-            targetValue = height,
-            animationSpec = tween(durationMillis = 220),
+            targetValue = height.coerceAtLeast(0.dp),
+            animationSpec = AxMediaTokens.ActionSizeSpring,
             label = "AxMediaPlaceholderHeight",
         )
     val buttonBackground by
         animateColorAsState(targetValue = background, label = "AxMediaPlaceholderBackground")
+    val minTouchTarget = minOf(48.dp, maxOf(buttonWidth.coerceAtLeast(0.dp), 32.dp))
     Box(
         contentAlignment = Alignment.Center,
         modifier =
-            Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+            Modifier.sizeIn(minWidth = minTouchTarget, minHeight = minTouchTarget)
                 .clip(CircleShape)
                 .semantics {
                     contentDescription = description
@@ -301,7 +162,10 @@ internal fun PlaceholderMediaAction(
         Box(
             contentAlignment = Alignment.Center,
             modifier =
-                Modifier.size(width = buttonWidth, height = buttonHeight)
+                Modifier.size(
+                    width = buttonWidth.coerceAtLeast(0.dp),
+                    height = buttonHeight.coerceAtLeast(0.dp)
+                )
                     .clip(shape)
                     .background(buttonBackground),
         ) {
@@ -369,28 +233,38 @@ internal fun MediaAction(
 ) {
     val buttonWidth by
         animateDpAsState(
-            targetValue = width,
-            animationSpec = tween(durationMillis = 220),
+            targetValue = width.coerceAtLeast(0.dp),
+            animationSpec = AxMediaTokens.ActionSizeSpring,
             label = "AxMediaActionWidth",
         )
     val buttonHeight by
         animateDpAsState(
-            targetValue = height,
-            animationSpec = tween(durationMillis = 220),
+            targetValue = height.coerceAtLeast(0.dp),
+            animationSpec = AxMediaTokens.ActionSizeSpring,
             label = "AxMediaActionHeight",
         )
     val buttonBackground by
         animateColorAsState(targetValue = background, label = "AxMediaActionBackground")
     when (action) {
         is MediaActionModel.Action -> {
+            val minTouchTarget = minOf(48.dp, maxOf(buttonWidth.coerceAtLeast(0.dp), 32.dp))
+            val interactionSource = remember { MutableInteractionSource() }
+            val isPressed by interactionSource.collectIsPressedAsState()
+            val pressScale by
+                animateFloatAsState(
+                    targetValue = if (isPressed) 0.88f else 1f,
+                    animationSpec = AxMediaTokens.ButtonPressSpring,
+                    label = "AxMediaActionPressScale",
+                )
+
             Box(
                 contentAlignment = Alignment.Center,
                 modifier =
-                    Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                    Modifier.sizeIn(minWidth = minTouchTarget, minHeight = minTouchTarget)
                         .clip(CircleShape)
                         .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = ripple(bounded = true, radius = 24.dp),
+                            interactionSource = interactionSource,
+                            indication = ripple(bounded = true, radius = minTouchTarget / 2),
                             enabled = interactive && action.onClick != null,
                         ) {
                             viewModel.runAction(action)
@@ -399,7 +273,14 @@ internal fun MediaAction(
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier =
-                        Modifier.size(width = buttonWidth, height = buttonHeight)
+                        Modifier.graphicsLayer {
+                            scaleX = pressScale
+                            scaleY = pressScale
+                        }
+                            .size(
+                                width = buttonWidth.coerceAtLeast(0.dp),
+                                height = buttonHeight.coerceAtLeast(0.dp)
+                            )
                             .clip(shape)
                             .background(buttonBackground),
                 ) {
@@ -420,9 +301,22 @@ internal fun MediaAction(
                         AnimatedContent(
                             targetState = imageVector,
                             transitionSpec = {
-                                (fadeIn(tween(180)) +
-                                    scaleIn(tween(220), initialScale = 0.72f)) togetherWith
-                                    (fadeOut(tween(120)) + scaleOut(tween(160), targetScale = 1.18f))
+                                (fadeIn(spring(stiffness = Spring.StiffnessMedium)) +
+                                    scaleIn(
+                                        spring(
+                                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                                            stiffness = Spring.StiffnessMedium,
+                                        ),
+                                        initialScale = 0.72f,
+                                    )) togetherWith
+                                    (fadeOut(spring(stiffness = Spring.StiffnessMedium)) +
+                                        scaleOut(
+                                            spring(
+                                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                                stiffness = Spring.StiffnessMedium,
+                                            ),
+                                            targetScale = 1.18f,
+                                        ))
                             },
                             contentAlignment = Alignment.Center,
                             label = "AxMediaActionIcon",
@@ -441,8 +335,16 @@ internal fun MediaAction(
             }
         }
         MediaActionModel.None -> Unit
-        MediaActionModel.ReserveSpace ->
-            Spacer(Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).size(width = buttonWidth, height = buttonHeight))
+        MediaActionModel.ReserveSpace -> {
+            val minTouchTarget = minOf(48.dp, maxOf(buttonWidth.coerceAtLeast(0.dp), 32.dp))
+            Spacer(
+                Modifier.sizeIn(minWidth = minTouchTarget, minHeight = minTouchTarget)
+                    .size(
+                        width = buttonWidth.coerceAtLeast(0.dp),
+                        height = buttonHeight.coerceAtLeast(0.dp)
+                    )
+            )
+        }
     }
 }
 
@@ -458,5 +360,3 @@ internal fun playPauseDescription(session: MediaSessionModel?): Int =
     } else {
         R.string.controls_media_button_play
     }
-
-private val MediaNavigationIconSize = 24.dp

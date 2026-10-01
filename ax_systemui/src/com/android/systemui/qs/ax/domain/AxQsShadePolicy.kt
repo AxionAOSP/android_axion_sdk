@@ -67,7 +67,7 @@ constructor(
         panelMode.value == AxQsPanelMode.SEPARATE && !shadeModeInteractor.isSplitShade
 
     fun isSeparateQuickPanelGesture(x: Float, width: Float): Boolean {
-        val edgeWidth = width / 4f
+        val edgeWidth = width * 0.5f
         return if (quickPanelOnLeft.value) x < edgeWidth else x > width - edgeWidth
     }
 

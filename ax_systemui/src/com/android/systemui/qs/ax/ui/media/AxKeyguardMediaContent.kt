@@ -31,7 +31,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import com.android.app.animation.Interpolators
-import com.android.compose.theme.PlatformTheme
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.media.remedia.ui.viewmodel.MediaViewModel
 import com.android.systemui.qs.ax.shared.model.AxMediaSurface
@@ -48,7 +47,7 @@ class AxKeyguardMediaContent
 @Inject
 constructor(
     private val viewModel: AxMediaViewModel,
-    private val mediaViewModelFactory: MediaViewModel.Factory,
+    private val mediaViewModelFactory: MediaViewModel.Factory
 ) {
     val hasVisibleMedia =
         snapshotFlow { viewModel.hasVisibleSessions(AxMediaSurface.LOCKSCREEN) }
@@ -59,43 +58,41 @@ constructor(
                 context = composeView.context,
                 canDismiss = ::canDismiss,
                 isFalseTouch = viewModel::isSwipeFalseTouch,
-                onDismissed = { viewModel.dismissBySwipe(AxMediaSurface.LOCKSCREEN) },
+                onDismissed = { viewModel.dismissBySwipe(AxMediaSurface.LOCKSCREEN) }
             )
             .apply {
                 layoutParams =
                     ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
                     )
                 addView(
                     composeView,
                     FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ),
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
                 )
             }
     }
 
     fun setContent(composeView: ComposeView) {
         composeView.setContent {
-            PlatformTheme {
-                QuickSettingsTheme {
-                    Box(
-                        modifier =
-                            Modifier.fillMaxWidth()
-                                .height(nonQsGridMediaHeight),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        AxMediaPanel(
-                            viewModel = viewModel,
-                            span = AxQsSpan(4, 2),
-                            mediaViewModelFactory = mediaViewModelFactory,
-                            modifier = Modifier.fillMaxWidth(),
-                            allowGuts = true,
-                            surface = AxMediaSurface.LOCKSCREEN,
-                        )
-                    }
+            QuickSettingsTheme {
+                Box(
+                    modifier =
+                        Modifier.fillMaxWidth()
+                            .height(nonQsGridMediaHeight),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AxMediaPanel(
+                        viewModel = viewModel,
+                        span = AxQsSpan(4, 2),
+                        mediaViewModelFactory = mediaViewModelFactory,
+                        modifier = Modifier.fillMaxWidth(),
+                        allowGuts = true,
+                        surface = AxMediaSurface.LOCKSCREEN
+                    )
                 }
             }
         }
@@ -105,7 +102,7 @@ constructor(
         if (viewModel.hasVisibleGuts()) return false
         val sessions = viewModel.visibleSessions(AxMediaSurface.LOCKSCREEN)
         if (sessions.size <= 1) return sessions.isNotEmpty()
-        val selectedKey = viewModel.currentSession?.key
+        val selectedKey = viewModel.currentSession(AxMediaSurface.LOCKSCREEN)?.key
         val selectedIndex = sessions.indexOfFirst { it.key == selectedKey }.coerceAtLeast(0)
         val towardStart = if (isRtl) deltaX < 0f else deltaX > 0f
         return if (towardStart) selectedIndex == 0 else selectedIndex == sessions.lastIndex
@@ -116,7 +113,7 @@ private class KeyguardMediaSwipeFrame(
     context: Context,
     private val canDismiss: (deltaX: Float, isRtl: Boolean) -> Boolean,
     private val isFalseTouch: () -> Boolean,
-    private val onDismissed: () -> Unit,
+    private val onDismissed: () -> Unit
 ) : FrameLayout(context) {
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private val maximumFlingVelocity = ViewConfiguration.get(context).scaledMaximumFlingVelocity
@@ -171,7 +168,7 @@ private class KeyguardMediaSwipeFrame(
                             abs(deltaX) > abs(deltaY) &&
                                 canDismiss(
                                     deltaX,
-                                    layoutDirection == View.LAYOUT_DIRECTION_RTL,
+                                    layoutDirection == View.LAYOUT_DIRECTION_RTL
                                 )
                         if (dragging) {
                             dragDirection = deltaX.sign

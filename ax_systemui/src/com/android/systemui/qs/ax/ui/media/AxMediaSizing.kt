@@ -20,7 +20,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.android.systemui.qs.ax.shared.model.AxQsSpan
-import com.android.systemui.qs.ax.ui.grid.AxTileDefaults
+import com.android.systemui.qs.ax.ui.grid.AxQsCellConfig
 
 @Immutable
 internal sealed interface AxMediaSizing {
@@ -46,7 +46,7 @@ internal sealed interface AxMediaSizing {
         override val heroActionSize: Dp = CompactHeroActionSize,
         override val heroIconSize: Dp = CompactHeroIconSize,
         override val actionSpacing: Dp = CompactActionSpacing,
-        override val showTimestamps: Boolean = false,
+        override val showTimestamps: Boolean = false
     ) : AxMediaSizing
 
     @Immutable
@@ -60,7 +60,21 @@ internal sealed interface AxMediaSizing {
         override val heroActionSize: Dp = MediumHeroActionSize,
         override val heroIconSize: Dp = MediumHeroIconSize,
         override val actionSpacing: Dp = MediumActionSpacing,
-        override val showTimestamps: Boolean = true,
+        override val showTimestamps: Boolean = true
+    ) : AxMediaSizing
+
+    @Immutable
+    data class LowHeight(
+        override val horizontalPadding: Dp = 14.dp,
+        override val verticalPadding: Dp = 6.dp,
+        override val headerIconSize: Dp = 18.dp,
+        override val outputChipCompact: Boolean = true,
+        override val actionSize: Dp = 32.dp,
+        override val actionIconSize: Dp = 18.dp,
+        override val heroActionSize: Dp = 36.dp,
+        override val heroIconSize: Dp = 22.dp,
+        override val actionSpacing: Dp = 16.dp,
+        override val showTimestamps: Boolean = false
     ) : AxMediaSizing
 
     @Immutable
@@ -74,16 +88,18 @@ internal sealed interface AxMediaSizing {
         override val heroActionSize: Dp = ExpandedHeroActionSize,
         override val heroIconSize: Dp = ExpandedHeroIconSize,
         override val actionSpacing: Dp = ExpandedActionSpacing,
-        override val showTimestamps: Boolean = true,
+        override val showTimestamps: Boolean = true
     ) : AxMediaSizing
 
     companion object {
         val DefaultCompact = Compact()
         val DefaultMedium = Medium()
+        val DefaultLowHeight = LowHeight()
         val DefaultExpanded = Expanded()
 
         fun from(width: Dp, height: Dp, span: AxQsSpan? = null): AxMediaSizing =
             when {
+                height < 140.dp && width >= MediumWidthThreshold -> DefaultLowHeight
                 width < CompactWidthThreshold || height < CompactHeightThreshold -> DefaultCompact
                 width < MediumWidthThreshold -> DefaultMedium
                 else -> DefaultExpanded
@@ -98,7 +114,7 @@ internal fun mediaActionLimit(columns: Int): Int =
         else -> 5
     }
 
-internal val nonQsGridMediaHeight: Dp = AxTileDefaults.TileHeight * 2 + 16.dp
+val nonQsGridMediaHeight: Dp = AxQsCellConfig.Defaults.TileHeight * 2 + 16.dp
 
 private val CompactWidthThreshold = 180.dp
 private val CompactHeightThreshold = 120.dp
@@ -123,10 +139,10 @@ private val MediumHeroIconSize = 26.dp
 private val MediumActionSpacing = 20.dp
 
 private val ExpandedHorizontalPadding = 16.dp
-private val ExpandedVerticalPadding = 8.dp
-private val ExpandedHeaderIconSize = 14.dp
-private val ExpandedActionSize = 42.dp
-private val ExpandedActionIconSize = 24.dp
-private val ExpandedHeroActionSize = 46.dp
-private val ExpandedHeroIconSize = 28.dp
-private val ExpandedActionSpacing = 20.dp
+private val ExpandedVerticalPadding = 12.dp
+private val ExpandedHeaderIconSize = 16.dp
+private val ExpandedActionSize = 36.dp
+private val ExpandedActionIconSize = 22.dp
+private val ExpandedHeroActionSize = 40.dp
+private val ExpandedHeroIconSize = 26.dp
+private val ExpandedActionSpacing = 16.dp

@@ -31,11 +31,20 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -47,8 +56,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredHeight
-import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -60,18 +67,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.approachLayout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onLayoutRectChanged
 import androidx.compose.ui.layout.onPlaced
@@ -80,6 +83,7 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.booleanResource
 import androidx.compose.ui.res.dimensionResource
@@ -88,6 +92,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.LayoutDirection
@@ -100,29 +105,24 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.android.app.tracing.coroutines.launchTraced
 import com.android.compose.PlatformSliderDefaults
-import com.android.compose.animation.scene.ContentKey
 import com.android.compose.animation.scene.ContentScope
-import com.android.compose.animation.scene.ElementKey
-import com.android.compose.animation.scene.ElementMatcher
 import com.android.compose.animation.scene.MutableSceneTransitionLayoutState
 import com.android.compose.animation.scene.SceneKey
 import com.android.compose.animation.scene.SceneTransitionLayout
 import com.android.compose.animation.scene.SceneTransitionLayoutState
 import com.android.compose.animation.scene.content.state.TransitionState
+import com.android.compose.animation.scene.mechanics.TileRevealFlag
+import com.android.compose.animation.scene.mechanics.rememberGestureContext
 import com.android.compose.animation.scene.rememberMutableSceneTransitionLayoutState
 import com.android.compose.animation.scene.transitions
 import com.android.compose.gesture.gesturesDisabled
 import com.android.compose.modifiers.height
-import com.android.compose.modifiers.padding
 import com.android.compose.modifiers.thenIf
 import com.android.compose.theme.PlatformTheme
-import com.android.mechanics.GestureContext
+import com.android.mechanics.compose.modifier.motionDriver
 import com.android.systemui.Dumpable
 import com.android.systemui.Flags
 import com.android.systemui.Flags.notificationShadeBlur
-import com.android.systemui.brightness.ui.compose.BrightnessSliderContainer
-import com.android.systemui.brightness.ui.compose.ContainerColors
-import com.android.systemui.brightness.ui.viewmodel.BrightnessSliderViewModel
 import com.android.systemui.compose.modifiers.sysUiResTagContainer
 import com.android.systemui.compose.modifiers.sysuiResTag
 import com.android.systemui.dagger.qualifiers.Background
@@ -135,41 +135,42 @@ import com.android.systemui.lifecycle.setSnapshotBinding
 import com.android.systemui.log.table.TableLogBuffer
 import com.android.systemui.plugins.qs.QS
 import com.android.systemui.plugins.qs.QSContainerController
-import com.android.systemui.qs.ax.shared.model.AxQsControl
-import com.android.systemui.qs.ax.shared.model.AxQsGridSection
-import com.android.systemui.qs.ax.shared.model.AxQsLayout
-import com.android.systemui.qs.ax.shared.model.AxQsPanelMode
-import com.android.systemui.qs.ax.shared.model.AxMediaSurface
-import com.android.systemui.qs.ax.ui.viewmodel.AxMediaViewModel
-import com.android.systemui.qs.ax.ui.viewmodel.AxQsViewModel
-import com.android.systemui.qs.panels.ui.viewmodel.DetailsViewModel
-import com.android.systemui.qs.panels.shared.model.QSFragmentComposeClippingTableLog
-import com.android.systemui.qs.ax.fragment.AxSceneKeys.QuickQuickSettings
 import com.android.systemui.qs.ax.fragment.AxSceneKeys.QuickSettings
 import com.android.systemui.qs.ax.fragment.AxSceneKeys.debugName
-import com.android.systemui.qs.ax.fragment.AxSceneKeys.toIdleSceneKey
 import com.android.systemui.qs.ax.fragment.viewmodel.AxQsFragmentComposeViewModel
+import com.android.systemui.qs.ax.pressfeedback.AxPressFeedbackHelper
+import com.android.systemui.qs.ax.pressfeedback.LocalAxPressFeedbackHelper
+import com.android.systemui.qs.ax.shared.model.AxMediaSurface
+import com.android.systemui.qs.ax.shared.model.AxQsControl
+import com.android.systemui.qs.ax.shared.model.AxQsGridLayout
+import com.android.systemui.qs.ax.shared.model.AxQsLayout
+import com.android.systemui.qs.ax.shared.model.AxQsPanelMode
+import com.android.systemui.qs.ax.shared.model.LocalAxQsLayout
 import com.android.systemui.qs.ax.tiles.ringer.LocalRingerSliderViewModel
 import com.android.systemui.qs.ax.tiles.ringer.RingerSliderViewModel
-import com.android.systemui.qs.ax.ui.controls.AxQsControlPreview
-import com.android.systemui.qs.ax.ui.edit.AxQsEditUi
-import com.android.systemui.qs.ax.ui.grid.AxQsMixedGrid
-import com.android.systemui.qs.ax.ui.grid.AxTileDefaults
+import com.android.systemui.qs.ax.ui.controls.AxControlViewModels
+import com.android.systemui.qs.ax.ui.controls.LocalAxControlViewModels
+import com.android.systemui.qs.ax.ui.grid.AxOneGrid
+import com.android.systemui.qs.ax.ui.grid.DensityScopeProvider
 import com.android.systemui.qs.ax.ui.grid.LocalTileScale
 import com.android.systemui.qs.ax.ui.grid.computeTileScale
 import com.android.systemui.qs.ax.ui.header.AxQuickSettingsHeader
 import com.android.systemui.qs.ax.ui.header.AxQuickSettingsLayoutDefaults
+import com.android.systemui.qs.ax.ui.header.LocalAxQsModularSidePadding
 import com.android.systemui.qs.ax.ui.panels.AxQsPanelSettings
-import com.android.systemui.qs.ax.ui.panels.axFromQuickQuickSettingsToQuickSettings
 import com.android.systemui.qs.ax.ui.panels.axQsEntrance
-import com.android.systemui.qs.ax.ui.panels.axQuickSettingsSceneMotion
-import com.android.systemui.qs.ax.ui.panels.editModeTransitionProgress
+import com.android.systemui.qs.ax.ui.panels.axQuickQuickSettingsToQuickSettings
+import com.android.systemui.qs.ax.ui.panels.fromAxPanelSettings
 import com.android.systemui.qs.ax.ui.panels.shouldComposeLiveAxQs
-import com.android.systemui.qs.ax.ui.panels.toAxEditMode
 import com.android.systemui.qs.ax.ui.panels.toAxPanelSettings
+import com.android.systemui.qs.ax.ui.viewmodel.AxMediaViewModel
+import com.android.systemui.qs.ax.ui.viewmodel.AxQsViewModel
 import com.android.systemui.qs.composefragment.LocalBlurEnabled
 import com.android.systemui.qs.composefragment.ui.NotificationScrimClipParams
 import com.android.systemui.qs.flags.QSComposeFragment
+import com.android.systemui.qs.panels.shared.model.QSFragmentComposeClippingTableLog
+import com.android.systemui.qs.panels.ui.compose.TileDetails
+import com.android.systemui.qs.panels.ui.viewmodel.DetailsViewModel
 import com.android.systemui.qs.shared.ui.QuickSettings.Elements
 import com.android.systemui.qs.ui.composable.QuickSettingsShade
 import com.android.systemui.qs.ui.composable.QuickSettingsShade.systemGestureExclusionInShade
@@ -195,7 +196,6 @@ import com.android.systemui.window.domain.interactor.WindowRootViewBlurInteracto
 import java.io.PrintWriter
 import java.util.function.Consumer
 import javax.inject.Inject
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
@@ -212,24 +212,24 @@ class AxQsFragmentCompose
 @Inject
 constructor(
     private val qsFragmentComposeViewModelFactory: AxQsFragmentComposeViewModel.Factory,
-    @QSFragmentComposeClippingTableLog private val qsClippingTableLogBuffer: TableLogBuffer,
+    @param:QSFragmentComposeClippingTableLog private val qsClippingTableLogBuffer: TableLogBuffer,
     private val dumpManager: DumpManager,
-    @Background private val backgroundDispatcher: CoroutineDispatcher,
+    @param:Background private val backgroundDispatcher: CoroutineDispatcher,
     private val axMediaViewModel: AxMediaViewModel,
     private val axQsViewModel: AxQsViewModel,
     private val detailsViewModel: DetailsViewModel,
-    @ShadeDisplayAware private val configurationController: ConfigurationController,
+    @param:ShadeDisplayAware private val configurationController: ConfigurationController,
     private val windowRootViewBlurInteractor: WindowRootViewBlurInteractor,
     private val ringerSliderViewModel: RingerSliderViewModel,
     private val tintedIconManagerFactory: TintedIconManager.Factory,
     private val shadeHeaderController: ShadeHeaderController,
     private val volumeNavigator: VolumeNavigator,
     private val volumePanelNavigationInteractor: VolumePanelNavigationInteractor,
+    private val pressFeedbackHelper: AxPressFeedbackHelper,
 ) : LifecycleFragment(), QS, Dumpable {
 
     private val scrollListener = MutableStateFlow<QS.ScrollListener?>(null)
-    private val collapsedMediaVisibilityChangedListener =
-        MutableStateFlow<Consumer<Boolean>?>(null)
+    private val collapsedMediaVisibilityChangedListener = MutableStateFlow<Consumer<Boolean>?>(null)
     private val qqsVisible = MutableStateFlow(false)
     private val heightListener = MutableStateFlow<QS.HeightListener?>(null)
     private val qqsHeightListener = MutableStateFlow<QS.QqsHeightListener?>(null)
@@ -240,7 +240,6 @@ constructor(
     private val composeViewPositionOnScreen = Rect()
     private val scrollState = ScrollState(0)
     private val locationTemp = IntArray(2)
-    private var bottomBarPositionInRoot = IntRect(IntOffset(0, 0), 0)
     private var bottomContentPadding by mutableIntStateOf(0)
     private val containerView: AxFrameLayoutTouchPassthrough?
         get() = view as? AxFrameLayoutTouchPassthrough
@@ -303,9 +302,15 @@ constructor(
                 viewModel::emitMotionEventForFalsingSwipeNested,
                 qsClippingTableLogBuffer,
                 backgroundDispatcher,
-                isInBottomReservedArea = { x, y ->
-                    viewModel.isEditing &&
-                        bottomBarPositionInRoot.contains(IntOffset(x.toInt(), y.toInt()))
+                isInBottomReservedArea = { _, y ->
+                    if (viewModel.isEditing) {
+                        val insets = composeView.rootWindowInsets
+                        val navBarHeight =
+                            insets?.getInsets(android.view.WindowInsets.Type.navigationBars())?.bottom ?: 0
+                        navBarHeight > 0 && y >= composeView.height - navBarHeight
+                    } else {
+                        false
+                    }
                 },
             )
         frame.addView(
@@ -327,8 +332,7 @@ constructor(
                 !viewModel.isQsExpanded &&
                 !axQsViewModel.isQsBypassingShade &&
                 !axQsViewModel.holdQsSceneDuringCollapse
-        val showQuickSettings =
-            viewModel.isQsVisibleAndAnyShadeExpanded || showLandscapeQqs
+        val showQuickSettings = viewModel.isQsVisibleAndAnyShadeExpanded || showLandscapeQqs
         PlatformTheme(isDarkTheme = if (notificationShadeBlur()) isSystemInDarkTheme() else true) {
             ProvideShortcutHelperIndication(interactionsConfig = interactionsConfig()) {
                 Box(
@@ -358,16 +362,19 @@ constructor(
                             // by the composables.
                             .thenIf(viewModel.showingMirror) { Modifier.gesturesDisabled() }
                 ) {
-                    val tileScale = computeTileScale()
-                    CompositionLocalProvider(
-                        LocalTileScale provides tileScale,
-                        LocalBlurEnabled provides blurEnabled,
-                        LocalQsScrolling provides scrollState.isScrollInProgress,
-                        LocalRingerSliderViewModel provides ringerSliderViewModel,
-                        LocalLayoutDirection provides LayoutDirection.Ltr,
-                    ) {
-                        WithStatusIconContext(tintedIconManagerFactory) {
-                            CollapsableQuickSettingsSTL(showQuickSettings)
+                    DensityScopeProvider {
+                        val tileScale = computeTileScale()
+                        CompositionLocalProvider(
+                            LocalTileScale provides tileScale,
+                            LocalBlurEnabled provides blurEnabled,
+                            LocalQsScrolling provides scrollState.isScrollInProgress,
+                            LocalRingerSliderViewModel provides ringerSliderViewModel,
+                            LocalAxPressFeedbackHelper provides pressFeedbackHelper,
+                            LocalLayoutDirection provides LayoutDirection.Ltr,
+                        ) {
+                            WithStatusIconContext(tintedIconManagerFactory) {
+                                CollapsableQuickSettingsSTL(showQuickSettings)
+                            }
                         }
                     }
                 }
@@ -393,29 +400,31 @@ constructor(
         }
         val transitionToCookie = remember { mutableMapOf<TransitionState.Transition, Int>() }
 
+        val isSeparateMode =
+            axQsViewModel.panelMode == AxQsPanelMode.SEPARATE && !viewModel.isInSplitShade
+
         val sceneState =
             rememberMutableSceneTransitionLayoutState(
-                initialScene = remember { viewModel.expansionState.toIdleSceneKey() },
+                initialScene = AxSceneKeys.QuickSettings,
                 transitions =
                     transitions {
-                        from(QuickQuickSettings, QuickSettings) {
-                            axFromQuickQuickSettingsToQuickSettings()
+                        from(AxSceneKeys.QuickQuickSettings, QuickSettings) {
+                            axQuickQuickSettingsToQuickSettings(
+                                isSeparateMode = { isSeparateMode },
+                            )
                         }
-                        from(QuickSettings, AxSceneKeys.EditMode) {
-                            spec = tween(durationMillis = EDIT_MODE_TIME_MILLIS)
-                            toAxEditMode()
+                        from(QuickSettings, AxSceneKeys.QuickQuickSettings) {
+                            axQuickQuickSettingsToQuickSettings(
+                                isSeparateMode = { isSeparateMode },
+                            )
                         }
-                        from(AxSceneKeys.EditMode, QuickSettings) {
-                            spec = tween(durationMillis = EDIT_MODE_TIME_MILLIS)
-                            toAxEditMode()
-                        }
-                        to(AxSceneKeys.EditMode) {
-                            spec = tween(durationMillis = EDIT_MODE_TIME_MILLIS)
-                            toAxEditMode()
-                        }
-                        from(AxSceneKeys.EditMode, AxSceneKeys.PanelSettings) {
-                            spec = tween(durationMillis = EDIT_MODE_TIME_MILLIS)
+                        from(QuickSettings, AxSceneKeys.PanelSettings) {
+                            spec = tween(durationMillis = 300)
                             toAxPanelSettings()
+                        }
+                        from(AxSceneKeys.PanelSettings, QuickSettings) {
+                            spec = tween(durationMillis = 300)
+                            fromAxPanelSettings()
                         }
                     },
                 onTransitionStart = { transition ->
@@ -437,9 +446,7 @@ constructor(
 
         LaunchedEffect(showQuickSettings) {
             snapshotFlow {
-                    useOverlayShadeHeader() &&
-                        showQuickSettings &&
-                        viewModel.viewAlpha > 0f
+                    useOverlayShadeHeader() && showQuickSettings && viewModel.viewAlpha > 0f
                 }
                 .collect { shadeHeaderController.setOverlayShadeHeaderActive(it) }
         }
@@ -451,9 +458,7 @@ constructor(
             launch {
                 synchronizeQsState(
                     sceneState,
-                    viewModel.containerViewModel.editModeViewModel.isEditing,
                     snapshotFlow { panelSettingsOpen },
-                    snapshotFlow { viewModel.expansionState.progress },
                 )
             }
             launch {
@@ -481,88 +486,97 @@ constructor(
             }
         }
 
-        Box(
-            Modifier.fillMaxSize().thenIf(sceneState.shouldComposeLiveAxQs()) {
-                Modifier.axQsEntrance { qqsSquishiness }
+        val isLandscape =
+            LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val layout =
+            if (isLandscape || viewModel.isInSplitShade) {
+                AxQsLayout.SPLIT_SHADE
+            } else {
+                AxQsLayout.QS
             }
+        val gridLayout = AxQsGridLayout.from(layout)
+        val columns = axQsViewModel.columns(gridLayout)
+        val tileScale = LocalTileScale.current
+        val modularSidePadding =
+            AxQuickSettingsLayoutDefaults.modularSidePadding(
+                maxWidth = LocalConfiguration.current.screenWidthDp.dp,
+                landscape = isLandscape || viewModel.isInSplitShade,
+                tileScale = tileScale,
+                columns = columns,
+            )
+
+        val controlViewModels =
+            remember(
+                viewModel.containerViewModel.brightnessSliderViewModel,
+                viewModel.volumeSliderViewModel,
+                axMediaViewModel,
+            ) {
+                AxControlViewModels(
+                    brightnessSliderViewModel =
+                        viewModel.containerViewModel.brightnessSliderViewModel,
+                    volumeViewModel = viewModel.volumeSliderViewModel,
+                    mediaViewModel = axMediaViewModel,
+                )
+            }
+
+        CompositionLocalProvider(
+            LocalAxQsLayout provides layout,
+            LocalAxQsModularSidePadding provides modularSidePadding,
+            LocalAxControlViewModels provides controlViewModels,
         ) {
-            SceneTransitionLayout(state = sceneState, modifier = Modifier.fillMaxSize()) {
-                scene(QuickSettings, alwaysCompose = true) {
-                    if (sceneState.shouldComposeLiveAxQs()) {
-                        LaunchedEffect(Unit) { viewModel.onQSOpen() }
-                        Element(
-                            QuickSettings.rootElementKey,
-                            Modifier.axQuickSettingsSceneMotion {
-                                viewModel.expansionState.progress
-                            },
-                        ) {
-                            QuickSettingsElement()
-                        }
-                    }
+            Box(
+                Modifier.fillMaxSize().thenIf(sceneState.shouldComposeLiveAxQs()) {
+                    Modifier.axQsEntrance(includeTranslation = !isSeparateMode) { qqsSquishiness }
                 }
-
-                scene(QuickQuickSettings, alwaysCompose = true) {
-                    if (sceneState.shouldComposeLiveAxQs()) {
-                        LaunchedEffect(Unit) { viewModel.onQQSOpen() }
-                        // Cannot pass the element modifier in because the top element has a
-                        // `testTag`
-                        // and this would overwrite it.
-                        Element(QuickQuickSettings.rootElementKey, Modifier) {
-                            QuickQuickSettingsElement()
-                        }
-                    }
-                }
-
-                scene(AxSceneKeys.EditMode, alwaysCompose = true) {
-                    if (panelSettingsOpen || isAlwaysComposedContentVisible()) {
-                        Box(Modifier.fillMaxSize()) {
-                            Element(AxSceneKeys.EditMode.rootElementKey, Modifier) {
-                                EditModeElement(
+            ) {
+                SceneTransitionLayout(state = sceneState, modifier = Modifier.fillMaxSize()) {
+                    scene(QuickSettings, alwaysCompose = true) {
+                        if (sceneState.shouldComposeLiveAxQs()) {
+                            LaunchedEffect(Unit) { viewModel.onQSOpen() }
+                            val gestureContext = rememberGestureContext()
+                            Element(
+                                QuickSettings.rootElementKey,
+                                Modifier.fillMaxSize().thenIf(TileRevealFlag.isEnabled) {
+                                    Modifier.motionDriver(gestureContext, label = "QuickSettings")
+                                },
+                            ) {
+                                QuickSettingsElement(
                                     onOpenPanelSettings = { panelSettingsOpen = true },
-                                    animateItemBounds = sceneState.isIdle(AxSceneKeys.EditMode),
                                 )
                             }
-                            /*
-                             * This provides the position of the bottom nav bar wrt to the root. As it's
-                             * full screen (and the container view has the same bounds) this can be used to
-                             * filter out touches in this bottom bar, and allow the shade to process them
-                             * if necessary.
-                             */
-                            Spacer(
-                                Modifier
-                                    // default debounce 64ms (4+ frames of stability)
-                                    .onLayoutRectChanged {
-                                        bottomBarPositionInRoot = it.boundsInRoot
-                                    }
-                                    .align(Alignment.BottomCenter)
-                                    .fillMaxWidth()
-                                    .windowInsetsBottomHeight(WindowInsets.systemBars)
-                            )
+                        }
+                    }
+
+                    scene(AxSceneKeys.PanelSettings) {
+                        Element(AxSceneKeys.PanelSettings.rootElementKey, Modifier) {
+                            PanelSettingsElement(onDismiss = { panelSettingsOpen = false })
                         }
                     }
                 }
-
-                scene(AxSceneKeys.PanelSettings) {
-                    Element(AxSceneKeys.PanelSettings.rootElementKey, Modifier) {
-                        PanelSettingsElement(onDismiss = { panelSettingsOpen = false })
-                    }
+                val editHeaderAlpha by
+                    animateFloatAsState(
+                        targetValue = if (viewModel.isEditing || panelSettingsOpen) 0f else 1f,
+                        animationSpec =
+                            spring(
+                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                stiffness = Spring.StiffnessMediumLow,
+                            ),
+                        label = "statusHeaderAlpha",
+                    )
+                if (
+                    useOverlayShadeHeader() &&
+                        sceneState.shouldComposeLiveAxQs() &&
+                        editHeaderAlpha > 0f
+                ) {
+                    QuickSettingsStatusOverlayHeader(
+                        headerViewModel = viewModel.containerViewModel.shadeHeaderViewModel,
+                        isTransitioning = false,
+                        modifier =
+                            Modifier.graphicsLayer {
+                                alpha = editHeaderAlpha
+                            },
+                    )
                 }
-            }
-            val editProgress = sceneState.editModeTransitionProgress()
-            val headerAlpha = (1f - editProgress).coerceIn(0f, 1f)
-            if (useOverlayShadeHeader() && sceneState.shouldComposeLiveAxQs() && headerAlpha > 0f) {
-                QuickSettingsStatusOverlayHeader(
-                    headerViewModel = viewModel.containerViewModel.shadeHeaderViewModel,
-                    isTransitioning =
-                        sceneState.isTransitioningBetween(QuickQuickSettings, QuickSettings),
-                    modifier =
-                        Modifier.graphicsLayer {
-                            alpha = headerAlpha
-                            scaleX = 1f - (editProgress * 0.08f)
-                            scaleY = 1f - (editProgress * 0.08f)
-                            translationY = -editProgress * 40f
-                        },
-                )
             }
         }
     }
@@ -743,6 +757,8 @@ constructor(
         visible: Boolean,
         fullWidth: Boolean,
     ) {
+        val effectiveRadius =
+            context?.resources?.let { (it.displayMetrics.density * CARD_REVEAL_CORNER_RADIUS_DP).toInt() } ?: 0
         containerView?.clipData =
             visible to
                 NotificationScrimClipParams(
@@ -750,7 +766,7 @@ constructor(
                     bottom,
                     if (fullWidth) 0 else leftInset,
                     if (fullWidth) 0 else rightInset,
-                    cornerRadius,
+                    effectiveRadius,
                 )
     }
 
@@ -779,15 +795,33 @@ constructor(
     }
 
     override fun getHeaderBottom(): Int {
-        return qqsPositionOnRoot.bottom
+        return maxOf(qqsPositionOnRoot.bottom, viewModel.qqsHeight)
     }
 
     override fun getHeaderLeft(): Int {
         return qqsPositionOnRoot.left
     }
 
+    override fun getHeaderHeight(): Int {
+        val top = getHeaderTop()
+        val bottom = getHeaderBottom()
+        return (bottom - top).coerceAtLeast(viewModel.qqsHeight)
+    }
+
     override fun getHeaderBoundsOnScreen(outBounds: Rect) {
-        outBounds.set(qqsPositionOnRoot)
+        val bottom = maxOf(qqsPositionOnRoot.bottom, viewModel.qqsHeight)
+        val right =
+            if (qqsPositionOnRoot.right > qqsPositionOnRoot.left) {
+                qqsPositionOnRoot.right
+            } else {
+                (view?.width ?: 0)
+            }
+        outBounds.set(
+            qqsPositionOnRoot.left,
+            qqsPositionOnRoot.top,
+            right,
+            bottom,
+        )
         view?.getBoundsOnScreen(composeViewPositionOnScreen)
             ?: run { composeViewPositionOnScreen.setEmpty() }
         outBounds.offset(composeViewPositionOnScreen.left, composeViewPositionOnScreen.top)
@@ -821,12 +855,7 @@ constructor(
                                 Configuration.ORIENTATION_LANDSCAPE -> false
                             axQsViewModel.panelMode == AxQsPanelMode.SEPARATE ->
                                 axMediaViewModel.hasVisibleSessions(AxMediaSurface.SEPARATE_QQS)
-                            else ->
-                                axQsViewModel.isInGrid(
-                                    AxQsControl.MEDIA.id,
-                                    AxQsLayout.QQS,
-                                    AxQsGridSection.CONTROLS,
-                                )
+                            else -> axQsViewModel.isInGrid(AxQsControl.MEDIA.id, AxQsLayout.QQS)
                         }
                     if (ShadeWindowGoesAround.isEnabled) {
                         if (lastQqsMediaVisible != qqsMediaVisible) {
@@ -838,7 +867,20 @@ constructor(
                     }
                     if (lastQqsHeight != viewModel.qqsHeight) {
                         lastQqsHeight = viewModel.qqsHeight
+                        val currentRight =
+                            if (qqsPositionOnRoot.right > qqsPositionOnRoot.left) {
+                                qqsPositionOnRoot.right
+                            } else {
+                                view?.width ?: 0
+                            }
+                        qqsPositionOnRoot.set(
+                            qqsPositionOnRoot.left,
+                            0,
+                            currentRight,
+                            viewModel.qqsHeight,
+                        )
                         qqsHeightListener.value?.onQqsHeightChanged()
+                        heightListener.value?.onQsHeightChanged()
                     }
                 }
                 launch {
@@ -870,104 +912,39 @@ constructor(
     }
 
     @Composable
-    private fun ContentScope.QuickQuickSettingsElement(modifier: Modifier = Modifier) {
-        val qqsPadding = viewModel.qqsHeaderHeight
-        val bottomPadding = viewModel.qqsBottomPadding
-        val overlayShadeHeader = useOverlayShadeHeader()
-        DisposableEffect(Unit) {
-            qqsVisible.value = true
-
-            onDispose { qqsVisible.value = false }
-        }
-        val squishiness by
-            viewModel.quickQuickSettingsViewModel.squishinessViewModel.squishiness
-                .collectAsStateWithLifecycle()
-
-        Column(modifier = modifier.sysuiResTag(AxResIdTags.quickQsPanel)) {
-            Box(
-                modifier =
-                    Modifier.fillMaxWidth()
-                        .onPlaced { coordinates ->
-                            val (leftFromRoot, topFromRoot) = coordinates.positionInRoot().round()
-                            qqsPositionOnRoot.set(
-                                leftFromRoot,
-                                topFromRoot,
-                                leftFromRoot + coordinates.size.width,
-                                topFromRoot + coordinates.size.height,
-                            )
-                            if (squishiness == 1f) {
-                                viewModel.qqsHeight = coordinates.size.height
-                            }
-                        }
-                        // Use an approach layout to determien the height without squishiness, as
-                        // that's the value that NPVC and QuickSettingsController care about
-                        // (measured height).
-                        .approachLayout(isMeasurementApproachInProgress = { squishiness < 1f }) {
-                            measurable,
-                            constraints ->
-                            viewModel.qqsHeight = lookaheadSize.height
-                            val placeable = measurable.measure(constraints)
-                            layout(placeable.width, placeable.height) { placeable.place(0, 0) }
-                        }
-                        .padding(
-                            top = { if (overlayShadeHeader) 0 else qqsPadding },
-                            bottom = { bottomPadding },
-                        )
-            ) {
-                Column {
-                    if (overlayShadeHeader) {
-                        Spacer(
-                            modifier =
-                                Modifier.requiredHeight(
-                                    quickSettingsContentTopPadding()
-                                )
-                        )
-                    }
-                    if (viewModel.isQsEnabled) {
-                        val isListening: () -> Boolean =
-                            remember(viewModel) {
-                                    derivedStateOf {
-                                        viewModel.isQsVisibleAndAnyShadeExpanded &&
-                                            viewModel.expansionState.progress < 1f &&
-                                            !viewModel.isEditing
-                                    }
-                                }
-                                .let { state -> { state.value } }
-                        Box(
-                            modifier =
-                                Modifier.collapseExpandSemanticAction(
-                                    stringResource(
-                                        id = R.string.accessibility_quick_settings_expand
-                                    )
-                                )
-                        ) {
-                            Element(Elements.QuickQuickSettingsAndMedia, Modifier.fillMaxWidth()) {
-                                AxQsMixedGrid(
-                                    viewModel = viewModel,
-                                    axQsViewModel = axQsViewModel,
-                                    mediaViewModel = axMediaViewModel,
-                                    detailsViewModel = detailsViewModel,
-                                    qqs = true,
-                                    listening = isListening,
-                                    brightnessSliderViewModel =
-                                        viewModel.containerViewModel.brightnessSliderViewModel,
-                                    volumeSliderViewModel = viewModel.volumeSliderViewModel,
-                                    scrollState = scrollState,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.weight(1f))
-        }
-    }
-
-    @Composable
-    private fun ContentScope.QuickSettingsElement(modifier: Modifier = Modifier) {
+    private fun ContentScope.QuickSettingsElement(
+        onOpenPanelSettings: () -> Unit,
+        modifier: Modifier = Modifier,
+    ) {
         val qsExtraPadding = dimensionResource(R.dimen.qs_panel_padding_top)
         val qsOffsetReduction = dimensionResource(R.dimen.ax_qs_offset_reduction)
         val overlayShadeHeader = useOverlayShadeHeader()
+        val contentTopPadding =
+            if (overlayShadeHeader) {
+                quickSettingsContentTopPadding()
+            } else {
+                (qsExtraPadding - qsOffsetReduction).coerceAtLeast(0.dp)
+            }
+        val targetTopPadding =
+            if (viewModel.isEditing && overlayShadeHeader) {
+                statusBarTopPadding()
+            } else {
+                contentTopPadding
+            }
+        val animatedContentTopPadding by
+            animateDpAsState(
+                targetValue = targetTopPadding,
+                animationSpec =
+                    spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMediumLow,
+                    ),
+                label = "animatedContentTopPadding",
+            )
+        DisposableEffect(Unit) {
+            qqsVisible.value = true
+            onDispose { qqsVisible.value = false }
+        }
         Column(
             modifier =
                 modifier.collapseExpandSemanticAction(
@@ -975,24 +952,15 @@ constructor(
                 )
         ) {
             if (viewModel.isQsEnabled) {
-                if (overlayShadeHeader) {
-                    Spacer(
-                        modifier =
-                            Modifier.requiredHeight(
-                                quickSettingsContentTopPadding()
-                            )
-                    )
-                } else {
-                    Spacer(
-                        modifier =
-                            Modifier.height {
-                                val topPadding =
-                                    qsExtraPadding.roundToPx() - qsOffsetReduction.roundToPx()
-                                topPadding.coerceAtLeast(0)
-                            }
-                    )
-                }
-                Element(Elements.QuickSettingsContent, modifier = Modifier.weight(1f)) {
+                Spacer(modifier = Modifier.requiredHeight(animatedContentTopPadding.coerceAtLeast(0.dp)))
+                val contentGestureContext = rememberGestureContext()
+                Element(
+                    Elements.QuickSettingsContent,
+                    modifier =
+                        Modifier.weight(1f).thenIf(TileRevealFlag.isEnabled) {
+                            Modifier.motionDriver(contentGestureContext, label = "QuickSettingsContent")
+                        },
+                ) {
                     // scrollState never changes
                     LaunchedEffect(Unit) {
                         snapshotFlow { viewModel.isQsFullyCollapsed }
@@ -1006,50 +974,117 @@ constructor(
                     val isListening: () -> Boolean =
                         remember(viewModel) {
                                 derivedStateOf {
-                                    (viewModel.isInSplitShade ||
-                                        viewModel.isLargeScreenHeader ||
-                                        (viewModel.isQsVisibleAndAnyShadeExpanded &&
-                                            viewModel.expansionState.progress >
-                                                AxQsFragmentComposeViewModel
-                                                    .QS_LISTENING_THRESHOLD)) &&
+                                    val hasOpeningThreshold =
+                                        viewModel.isInSplitShade ||
+                                            viewModel.isLargeScreenHeader ||
+                                            viewModel.panelExpansionFraction >= 0.02f
+                                    (hasOpeningThreshold &&
+                                        viewModel.isQsVisibleAndAnyShadeExpanded) &&
                                         !viewModel.isEditing &&
                                         !viewModel.isStackScrollerOverscrolling
                                 }
                             }
                             .let { state -> { state.value } }
-                    Box(
-                        modifier =
-                            Modifier.fillMaxSize()
-                                .offset {
-                                    IntOffset(
-                                        x = 0,
-                                        y = viewModel.qsScrollTranslationY.fastRoundToInt(),
-                                    )
-                                }
-                                .onSizeChanged { viewModel.qsScrollHeight = it.height }
-                                .padding(bottom = 8.dp)
-                                .sysuiResTag(AxResIdTags.qsScroll)
-                    ) {
-                        AxQsMixedGrid(
-                            viewModel = viewModel,
-                            axQsViewModel = axQsViewModel,
-                            mediaViewModel = axMediaViewModel,
-                            detailsViewModel = detailsViewModel,
-                            qqs = false,
-                            listening = isListening,
-                            brightnessSliderViewModel =
-                                viewModel.containerViewModel.brightnessSliderViewModel,
-                            volumeSliderViewModel = viewModel.volumeSliderViewModel,
-                            scrollState = scrollState,
-                            modifier =
-                                Modifier.fillMaxSize()
-                                    .sysuiResTag(AxResIdTags.quickSettingsPanel)
-                                    .graphicsLayer {},
-                        )
+                    val activeDetails = detailsViewModel.activeTileDetails
+                    BackHandler(enabled = activeDetails != null) {
+                        detailsViewModel.closeDetailedView()
+                    }
+                    AnimatedContent(
+                        targetState = activeDetails != null,
+                        transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(200)) },
+                        label = "AxQsTileDetailsTransition",
+                        modifier = Modifier.fillMaxSize(),
+                    ) { showDetails ->
+                        if (showDetails) {
+                            BoxWithConstraints(
+                                modifier =
+                                    Modifier.fillMaxSize()
+                                        .padding(bottom = 8.dp)
+                                        .sysuiResTag(AxResIdTags.qsScroll)
+                            ) {
+                                val sidePadding =
+                                    if (viewModel.isInSplitShade) {
+                                        AxQuickSettingsLayoutDefaults.LandscapeSidePadding
+                                    } else {
+                                        AxQuickSettingsLayoutDefaults.PortraitSidePadding
+                                    }
+                                TileDetails(
+                                    modifier =
+                                        Modifier.fillMaxWidth().padding(horizontal = sidePadding),
+                                    detailsViewModel = detailsViewModel,
+                                )
+                            }
+                        } else {
+                            Box(
+                                modifier =
+                                    Modifier.fillMaxSize()
+                                        .onPlaced { coordinates ->
+                                            val (leftFromRoot, _) =
+                                                coordinates.positionInRoot().round()
+                                            val newRight = leftFromRoot + coordinates.size.width
+                                            val newBottom = viewModel.qqsHeight
+                                            if (qqsPositionOnRoot.left != leftFromRoot ||
+                                                qqsPositionOnRoot.right != newRight ||
+                                                qqsPositionOnRoot.bottom != newBottom
+                                            ) {
+                                                qqsPositionOnRoot.set(
+                                                    leftFromRoot,
+                                                    0,
+                                                    newRight,
+                                                    newBottom,
+                                                )
+                                                qqsHeightListener.value?.onQqsHeightChanged()
+                                                heightListener.value?.onQsHeightChanged()
+                                            }
+                                        }
+                                        .offset {
+                                            IntOffset(
+                                                x = 0,
+                                                y = viewModel.qsScrollTranslationY.fastRoundToInt(),
+                                            )
+                                        }
+                                        .onSizeChanged { viewModel.qsScrollHeight = it.height }
+                                        .padding(bottom = 8.dp)
+                                        .sysuiResTag(AxResIdTags.qsScroll)
+                            ) {
+                                AxOneGrid(
+                                    viewModel = viewModel,
+                                    axQsViewModel = axQsViewModel,
+                                    mediaViewModel = axMediaViewModel,
+                                    detailsViewModel = detailsViewModel,
+                                    listening = isListening,
+                                    brightnessSliderViewModel =
+                                        viewModel.containerViewModel.brightnessSliderViewModel,
+                                    volumeSliderViewModel = viewModel.volumeSliderViewModel,
+                                    scrollState = scrollState,
+                                    headerTopPadding = animatedContentTopPadding,
+                                    onOpenPanelSettings = onOpenPanelSettings,
+                                    modifier =
+                                        Modifier.fillMaxSize()
+                                            .sysuiResTag(AxResIdTags.quickSettingsPanel)
+                                            .graphicsLayer {},
+                                )
+                            }
+                        }
                     }
                 }
             }
             Spacer(Modifier.height { bottomContentPadding }.fillMaxWidth())
+        }
+    }
+
+    @Composable
+    private fun statusBarTopPadding(): Dp {
+        val shouldUseDisplayCutOutPadding =
+            booleanResource(R.bool.config_shouldUseDisplayCutOutPadding)
+        val displayCutoutTopPadding =
+            WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
+        val isLandscape =
+            LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+        return when {
+            isLandscape -> 4.dp
+            shouldUseDisplayCutOutPadding -> displayCutoutTopPadding
+            else -> dimensionResource(R.dimen.ax_qs_top_padding)
         }
     }
 
@@ -1059,33 +1094,19 @@ constructor(
         isTransitioning: Boolean,
         modifier: Modifier = Modifier,
     ) {
-        val shouldUseDisplayCutOutPadding =
-            booleanResource(R.bool.config_shouldUseDisplayCutOutPadding)
-        val displayCutoutTopPadding =
-            WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
-        val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val topPadding =
-            when {
-                isLandscape -> 4.dp
-                shouldUseDisplayCutOutPadding -> displayCutoutTopPadding
-                else -> dimensionResource(R.dimen.ax_qs_top_padding)
-            }
         AxQuickSettingsHeader(
             viewModel = headerViewModel,
             isTransitioning = isTransitioning,
-            modifier = modifier.fillMaxWidth().padding(top = topPadding),
+            modifier = modifier.fillMaxWidth().padding(top = statusBarTopPadding().coerceAtLeast(0.dp)),
         )
     }
 
     @Composable
-    private fun quickSettingsContentTopPadding() =
+    private fun quickSettingsContentTopPadding(): Dp =
         if (LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE) {
             0.dp
-        } else if (booleanResource(R.bool.config_shouldUseDisplayCutOutPadding)) {
-            WindowInsets.displayCutout.asPaddingValues().calculateTopPadding() +
-                ShadeHeader.Dimensions.StatusBarHeight + QuickSettingsShade.Dimensions.ShortPadding
         } else {
-            dimensionResource(R.dimen.ax_qs_top_padding) +
+            statusBarTopPadding() +
                 ShadeHeader.Dimensions.StatusBarHeight +
                 QuickSettingsShade.Dimensions.ShortPadding
         }
@@ -1152,34 +1173,6 @@ constructor(
     }
 
     @Composable
-    private fun ContentScope.EditModeElement(
-        onOpenPanelSettings: () -> Unit,
-        animateItemBounds: Boolean,
-        modifier: Modifier = Modifier,
-    ) {
-        AxQsEditUi(
-            editModeViewModel = viewModel.containerViewModel.editModeViewModel,
-            axQsViewModel = axQsViewModel,
-            onOpenPanelSettings = onOpenPanelSettings,
-            animateItemBounds = animateItemBounds,
-            splitShade = viewModel.isInSplitShade,
-            controlPreview = { control, span, maxColumns, verticalSliderStyle ->
-                AxQsControlPreview(
-                    control = control,
-                    span = span,
-                    maxColumns = maxColumns,
-                    verticalSliderStyle = verticalSliderStyle,
-                    brightnessViewModel = viewModel.containerViewModel.brightnessSliderViewModel,
-                    volumeViewModel = viewModel.volumeSliderViewModel,
-                    mediaViewModel = axMediaViewModel,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            },
-            modifier = modifier.fillMaxWidth().padding(top = { viewModel.qqsHeaderHeight }),
-        )
-    }
-
-    @Composable
     private fun ContentScope.PanelSettingsElement(
         onDismiss: () -> Unit,
         modifier: Modifier = Modifier,
@@ -1187,7 +1180,10 @@ constructor(
         AxQsPanelSettings(
             viewModel = axQsViewModel,
             onDismiss = onDismiss,
-            modifier = modifier.fillMaxSize().padding(top = { viewModel.qqsHeaderHeight }),
+            modifier =
+                modifier
+                    .fillMaxSize()
+                    .padding(top = with(LocalDensity.current) { viewModel.qqsHeaderHeight.toDp().coerceAtLeast(0.dp) }),
         )
     }
 
@@ -1282,131 +1278,37 @@ private val instanceProvider =
         }
     }
 
+private const val EDIT_MODE_TIME_MILLIS = 380L
+private const val CARD_REVEAL_CORNER_RADIUS_DP = 28f
+
 object AxSceneKeys {
     val QuickQuickSettings = SceneKey("QuickQuickSettingsScene")
     val QuickSettings = SceneKey("QuickSettingsScene")
-    val EditMode = SceneKey("EditModeScene")
     val PanelSettings = SceneKey("PanelSettingsScene")
 
     val TransitionState.Transition.debugName: String
         get() = "[from=${fromContent.debugName}, to=${toContent.debugName}]"
 
     fun AxQsFragmentComposeViewModel.QSExpansionState.toIdleSceneKey(): SceneKey {
-        return when {
-            progress < 0.5f -> QuickQuickSettings
-            else -> QuickSettings
-        }
+        return QuickSettings
     }
-
-    val QqsTileElementMatcher =
-        object : ElementMatcher {
-            override fun matches(key: ElementKey, content: ContentKey): Boolean {
-                return content == AxSceneKeys.QuickQuickSettings &&
-                    Elements.TileElementMatcher.matches(key, content)
-            }
-        }
 }
-
-private data class QsSyncState(
-    val editing: Boolean,
-    val settings: Boolean,
-    val progress: Float,
-)
 
 private suspend fun synchronizeQsState(
     state: MutableSceneTransitionLayoutState,
-    editMode: Flow<Boolean>,
     panelSettings: Flow<Boolean>,
-    expansion: Flow<Float>,
 ) {
     coroutineScope {
         val animationScope = this
-
-        var currentTransition: AxExpansionTransition? = null
-
-        fun snapTo(scene: SceneKey) {
-            state.snapTo(scene)
-            currentTransition = null
-        }
-
-        combine(editMode, panelSettings, expansion, ::QsSyncState)
-            .collectLatest { (editing, settings, progress) ->
-                val editScene = if (settings) AxSceneKeys.PanelSettings else AxSceneKeys.EditMode
-                if (editing && state.currentScene != editScene) {
-                    state.setTargetScene(editScene, animationScope)?.second?.join()
-                } else if (
-                    !editing &&
-                        (state.currentScene == AxSceneKeys.EditMode ||
-                            state.currentScene == AxSceneKeys.PanelSettings)
-                ) {
-                    state.setTargetScene(AxSceneKeys.QuickSettings, animationScope)?.second?.join()
-                }
-                if (!editing &&
-                    state.currentScene != AxSceneKeys.EditMode &&
-                    state.currentScene != AxSceneKeys.PanelSettings
-                ) {
-                    when (progress) {
-                        0f -> snapTo(QuickQuickSettings)
-                        1f -> snapTo(QuickSettings)
-                        else -> {
-                            val transition = currentTransition
-                            if (transition != null) {
-                                transition.progress = progress
-                                return@collectLatest
-                            }
-
-                            val newTransition =
-                                AxExpansionTransition(progress).also { currentTransition = it }
-                            state.startTransitionImmediately(
-                                animationScope = animationScope,
-                                transition = newTransition,
-                            )
-                        }
-                    }
-                }
+        panelSettings.collectLatest { settings ->
+            if (settings && state.currentScene != AxSceneKeys.PanelSettings) {
+                state.setTargetScene(AxSceneKeys.PanelSettings, animationScope)?.second?.join()
+            } else if (!settings && state.currentScene == AxSceneKeys.PanelSettings) {
+                state.setTargetScene(AxSceneKeys.QuickSettings, animationScope)?.second?.join()
             }
-    }
-}
-
-private class AxExpansionTransition(currentProgress: Float) :
-    TransitionState.Transition.ChangeScene(
-        fromScene = QuickQuickSettings,
-        toScene = QuickSettings,
-    ) {
-    override val currentScene: SceneKey
-        get() {
-            // This should return the logical scene. If the QS STLState is only driven by
-            // synchronizeQSState() then it probably does not matter which one we return, this is
-            // only used to compute the current user actions of a STL.
-            return QuickQuickSettings
         }
-
-    override var progress: Float by mutableFloatStateOf(currentProgress)
-
-    override val progressVelocity: Float
-        get() = 0f
-
-    override val isInitiatedByUserInput: Boolean
-        get() = true
-
-    override val isUserInputOngoing: Boolean
-        get() = true
-
-    override val gestureContext: GestureContext? = null
-
-    private val finishCompletable = CompletableDeferred<Unit>()
-
-    override suspend fun run() {
-        // This transition runs until it is interrupted by another one.
-        finishCompletable.await()
-    }
-
-    override fun freezeAndAnimateToCurrentState() {
-        finishCompletable.complete(Unit)
     }
 }
-
-private const val EDIT_MODE_TIME_MILLIS = 500
 
 /**
  * Performs different touch handling based on the state of the ComposeView:
@@ -1484,6 +1386,8 @@ private class AxFrameLayoutTouchPassthrough(
     private val clipParams
         get() = clipData.second
 
+    private val clipRadii = FloatArray(8)
+
     private fun updateClippingPath() {
         currentClippingPath.rewind()
         val (clipEnabled, clipParams) = clipData
@@ -1492,13 +1396,24 @@ private class AxFrameLayoutTouchPassthrough(
             val left = -clipParams.leftInset
             val top = clipParams.top
             val bottom = clipParams.bottom
+
+            val cardRadius = context.resources.displayMetrics.density * CARD_REVEAL_CORNER_RADIUS_DP
+
+            clipRadii[0] = cardRadius
+            clipRadii[1] = cardRadius
+            clipRadii[2] = cardRadius
+            clipRadii[3] = cardRadius
+            clipRadii[4] = 0f
+            clipRadii[5] = 0f
+            clipRadii[6] = 0f
+            clipRadii[7] = 0f
+
             currentClippingPath.addRoundRect(
                 left.toFloat(),
                 top.toFloat(),
                 right.toFloat(),
                 bottom.toFloat(),
-                clipParams.radius.toFloat(),
-                clipParams.radius.toFloat(),
+                clipRadii,
                 Path.Direction.CW,
             )
         }

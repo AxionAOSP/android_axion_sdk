@@ -17,14 +17,12 @@
 
 package com.android.systemui.qs.ax.ui.media
 
-import com.android.systemui.media.remedia.ui.compose.MediaUiBehavior
-
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
@@ -35,6 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
@@ -42,8 +41,10 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.android.systemui.compose.modifiers.sysuiResTag
+import com.android.systemui.media.remedia.ui.compose.MediaUiBehavior
 import com.android.systemui.media.remedia.ui.viewmodel.MediaCardViewModel
 import com.android.systemui.media.remedia.ui.viewmodel.MediaViewModel
+import java.util.Comparator
 
 @Composable
 fun AxMediaCarousel(
@@ -52,16 +53,18 @@ fun AxMediaCarousel(
     onDismissed: () -> Unit,
     modifier: Modifier = Modifier,
     cardFilter: ((MediaCardViewModel) -> Boolean)? = null,
+    cardComparator: Comparator<MediaCardViewModel>? = null,
     carouselShape: Shape = RoundedCornerShape(32.dp),
-    cardContent: @Composable (MediaCardViewModel, Modifier) -> Unit,
-    pagerIndicator: @Composable BoxScope.(PagerState) -> Unit = {},
+    cardContent: @Composable BoxScope.(MediaCardViewModel, Modifier) -> Unit,
+    pagerIndicator: @Composable BoxScope.(PagerState) -> Unit = {}
 ) {
-    val hasCards = cardFilter?.let { viewModel.cards.any(it) } ?: viewModel.cards.isNotEmpty()
+    val rawCards = cardFilter?.let { viewModel.cards.filter(it) } ?: viewModel.cards
+    val cards = if (cardComparator != null) rawCards.sortedWith(cardComparator) else rawCards
+    val hasCards = cards.isNotEmpty()
     AnimatedVisibility(
         visible = viewModel.isCarouselVisible && hasCards,
-        modifier = modifier,
+        modifier = modifier
     ) {
-        val cards = cardFilter?.let { viewModel.cards.filter(it) } ?: viewModel.cards
         if (cards.isEmpty()) return@AnimatedVisibility
         val cardKeys = cards.map { it.key }
         val currentCardKey = viewModel.cards.getOrNull(viewModel.currentIndex)?.key
@@ -84,23 +87,23 @@ fun AxMediaCarousel(
         Box(
             modifier =
                 modifier.clip(carouselShape).pointerInput(behavior) {
-                    if (behavior.isCarouselScrollFalseTouch != null) {
+                    val isCarouselScrollFalseTouch = behavior.isCarouselScrollFalseTouch
+                    if (isCarouselScrollFalseTouch != null) {
                         awaitEachGesture {
                             awaitFirstDown(false, PointerEventPass.Initial)
                             val pointer = currentEvent.changes.first()
-                            isFalseTouchDetected =
-                                behavior.isCarouselScrollFalseTouch.invoke()
+                            isFalseTouchDetected = isCarouselScrollFalseTouch.invoke()
                         }
                     }
                 }
         ) {
             HorizontalPager(
                 state = pagerState,
-                modifier = Modifier.fillMaxWidth().clip(carouselShape),
+                modifier = Modifier.fillMaxSize().clip(carouselShape),
                 userScrollEnabled = isSwipingEnabled,
                 pageSpacing = 8.dp,
                 beyondViewportPageCount = 1,
-                key = { index: Int -> cards[index].key },
+                key = { index: Int -> cards[index].key }
             ) { pageIndex: Int ->
                 val cardModifier =
                     Modifier.clip(carouselShape).sysuiResTag("media_control")
@@ -108,7 +111,12 @@ fun AxMediaCarousel(
             }
 
             if (pagerState.pageCount > 1) {
-                pagerIndicator(pagerState)
+                Box(
+                    modifier = Modifier.matchParentSize(),
+                    contentAlignment = Alignment.BottomCenter
+                ) {
+                    pagerIndicator(pagerState)
+                }
             }
         }
     }
