@@ -15,24 +15,27 @@
  */
 package com.android.systemui.media
 
-import android.graphics.drawable.BitmapDrawable
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,17 +46,24 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.core.graphics.drawable.toBitmap
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import com.android.systemui.qs.ax.ui.media.AxMediaArtProcessor
 
 private val grayscaleMatrix = ColorMatrix().apply { setToSaturation(0f) }
+private val ParallaxMotionEasing = CubicBezierEasing(0.22f, 1.0f, 0.36f, 1.0f)
 
-private const val AOD_ALPHA = 0.35f
-private const val NORMAL_ALPHA = 1f
+private const val ZOOM_OUT_START_SCALE = 1.30f
+private const val PARALLAX_ZOOM_DURATION_MS = 800
+private const val CROSSFADE_DURATION_MS = 450
+private const val ENTER_FADE_DURATION_MS = 300
+private const val EXIT_FADE_DURATION_MS = 300
+
+private fun Modifier.applyBlur(blurRadiusDp: Int): Modifier {
+    if (blurRadiusDp > 0) return blur(radius = blurRadiusDp.dp)
+    return this
+}
 
 @Composable
 fun MediaArt(
@@ -62,70 +72,99 @@ fun MediaArt(
 ) {
     if (!state.isEnabled || state.artworkDrawable == null) return
 
-    val bitmap by produceState<ImageBitmap?>(initialValue = null, key1 = state.artworkDrawable) {
-        val loaded = withContext(Dispatchers.IO) {
-            val drawable = state.artworkDrawable
-            if (drawable is BitmapDrawable) {
-                drawable.bitmap.asImageBitmap()
-            } else {
-                val width = drawable.intrinsicWidth.takeIf { it > 0 } ?: 1080
-                val height = drawable.intrinsicHeight.takeIf { it > 0 } ?: 1080
-                drawable.toBitmap(width = width, height = height).asImageBitmap()
-            }
-        }
-        value = loaded
-    }
-    val imageBitmap = bitmap ?: return
+    val imageBitmap = remember(state.artworkDrawable, state.metadataKey) {
+        AxMediaArtProcessor.getLockscreenArt(state.artworkDrawable, state.metadataKey)
+    } ?: return
 
-    val targetAlpha = if (state.isDozing) AOD_ALPHA else NORMAL_ALPHA
-    val animatedAlpha by animateFloatAsState(
-        targetValue = if (state.isVisible) targetAlpha else 0f,
+    val aodAlpha by animateFloatAsState(
+        targetValue = state.targetAlpha,
         animationSpec = tween(durationMillis = 300),
-        label = "media_art_alpha"
+        label = "media_art_aod_alpha"
     )
-
-    if (animatedAlpha <= 0f && !state.isVisible) return
 
     val colorFilter = remember(state.isDozing) {
         if (state.isDozing) ColorFilter.colorMatrix(grayscaleMatrix) else null
     }
 
-    if (state.artStyle == MEDIA_ART_STYLE_CONCEPT) {
-        ConceptModeArt(
-            imageBitmap = imageBitmap,
-            blurLevel = state.blurLevel,
-            colorFilter = colorFilter,
-            animatedAlpha = animatedAlpha,
-            isDozing = state.isDozing,
-            modifier = modifier,
-        )
-    } else {
-        Box(
-            modifier = modifier
-                .fillMaxSize()
-                .alpha(animatedAlpha)
-        ) {
-            val imageModifier = if (state.blurLevel > 0) {
-                Modifier.fillMaxSize().blur(radius = state.blurLevel.dp)
+    AnimatedVisibility(
+        visible = state.isVisible,
+        enter = fadeIn(tween(ENTER_FADE_DURATION_MS)) + scaleIn(
+            initialScale = ZOOM_OUT_START_SCALE,
+            animationSpec = tween(PARALLAX_ZOOM_DURATION_MS, easing = ParallaxMotionEasing)
+        ),
+        exit = fadeOut(tween(EXIT_FADE_DURATION_MS)),
+        modifier = modifier.fillMaxSize().alpha(aodAlpha)
+    ) {
+        AnimatedContent(
+            targetState = state.metadataKey to imageBitmap,
+            transitionSpec = {
+                (fadeIn(tween(CROSSFADE_DURATION_MS)) + scaleIn(
+                    initialScale = ZOOM_OUT_START_SCALE,
+                    animationSpec = tween(PARALLAX_ZOOM_DURATION_MS, easing = ParallaxMotionEasing)
+                )) togetherWith fadeOut(tween(CROSSFADE_DURATION_MS))
+            },
+            label = "media_art_content",
+            modifier = Modifier.fillMaxSize()
+        ) { (_, bitmap) ->
+            if (state.artStyle == MEDIA_ART_STYLE_CONCEPT) {
+                ConceptModeArt(
+                    imageBitmap = bitmap,
+                    blurLevel = state.blurLevel,
+                    colorFilter = colorFilter,
+                    overlayAlpha = state.overlayAlpha,
+                    modifier = Modifier.fillMaxSize()
+                )
             } else {
-                Modifier.fillMaxSize()
+                NormalModeArt(
+                    imageBitmap = bitmap,
+                    blurLevel = state.blurLevel,
+                    colorFilter = colorFilter,
+                    overlayAlpha = state.overlayAlpha,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
-
-            Image(
-                bitmap = imageBitmap,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                colorFilter = colorFilter,
-                modifier = imageModifier
-            )
-
-            val overlayAlpha = if (state.isDozing) 0.15f else 0.40f
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = overlayAlpha))
-            )
         }
+    }
+}
+
+@Composable
+private fun NormalModeArt(
+    imageBitmap: ImageBitmap,
+    blurLevel: Int,
+    colorFilter: ColorFilter?,
+    overlayAlpha: Float,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier.fillMaxSize()) {
+        Image(
+            bitmap = imageBitmap,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            colorFilter = colorFilter,
+            modifier = Modifier
+                .fillMaxSize()
+                .applyBlur(blurLevel)
+        )
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = overlayAlpha)))
+    }
+}
+
+@Composable
+private fun ConceptCard(
+    imageBitmap: ImageBitmap,
+    maxWidth: Dp
+) {
+    val cardSize = (maxWidth * 0.78f).coerceAtMost(380.dp)
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Image(
+            bitmap = imageBitmap,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(cardSize)
+                .clip(RoundedCornerShape(28.dp))
+        )
+        Spacer(modifier = Modifier.height(136.dp))
     }
 }
 
@@ -134,48 +173,22 @@ private fun ConceptModeArt(
     imageBitmap: ImageBitmap,
     blurLevel: Int,
     colorFilter: ColorFilter?,
-    animatedAlpha: Float,
-    isDozing: Boolean,
+    overlayAlpha: Float,
     modifier: Modifier = Modifier,
 ) {
-    val bgBlur = maxOf(blurLevel, 30).dp
-    val overlayAlpha = if (isDozing) 0.25f else 0.45f
-
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .alpha(animatedAlpha)
-    ) {
+    Box(modifier = modifier.fillMaxSize()) {
         Image(
             bitmap = imageBitmap,
             contentDescription = null,
             contentScale = ContentScale.Crop,
             colorFilter = colorFilter,
-            modifier = Modifier.fillMaxSize().blur(radius = bgBlur)
-        )
-
-        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = overlayAlpha))
+                .applyBlur(blurLevel)
         )
-
-        BoxWithConstraints(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.BottomCenter,
-        ) {
-            val cardSize = (maxWidth * 0.78f).coerceAtMost(380.dp)
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Image(
-                    bitmap = imageBitmap,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(cardSize)
-                        .clip(RoundedCornerShape(28.dp))
-                )
-                Spacer(modifier = Modifier.height(136.dp))
-            }
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = overlayAlpha)))
+        BoxWithConstraints(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+            ConceptCard(imageBitmap, maxWidth)
         }
     }
 }
