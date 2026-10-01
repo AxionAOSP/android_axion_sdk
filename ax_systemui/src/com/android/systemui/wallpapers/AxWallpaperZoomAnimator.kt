@@ -23,11 +23,13 @@ import com.android.app.animation.Interpolators
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.dagger.qualifiers.Main
-import com.android.systemui.keyguard.ScreenLifecycle
-import com.android.systemui.keyguard.WakefulnessLifecycle
+import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
 import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor
 import com.android.systemui.keyguard.domain.interactor.LightRevealScrimInteractor
 import com.android.systemui.keyguard.shared.model.KeyguardState
+import com.android.systemui.keyguard.shared.model.TransitionStep
+import com.android.systemui.power.domain.interactor.PowerInteractor
+import com.android.systemui.power.shared.model.ScreenPowerState
 import com.android.systemui.wallpapers.data.repository.WallpaperRepository
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
@@ -46,12 +48,12 @@ class AxWallpaperZoomAnimator
 constructor(
     private val wallpaperZoomController: AxWallpaperZoomController,
     private val wallpaperRepository: WallpaperRepository,
-    private val wakefulnessLifecycle: WakefulnessLifecycle,
-    private val screenLifecycle: ScreenLifecycle,
     private val lightRevealScrimInteractor: LightRevealScrimInteractor,
     private val keyguardTransitionInteractor: KeyguardTransitionInteractor,
-    @Application private val scope: CoroutineScope,
-    @Main private val mainDispatcher: CoroutineDispatcher,
+    private val keyguardInteractor: KeyguardInteractor,
+    private val powerInteractor: PowerInteractor,
+    @param:Application private val scope: CoroutineScope,
+    @param:Main private val mainDispatcher: CoroutineDispatcher,
 ) {
     private var animator: ValueAnimator? = null
     private var state = AnimationState()
@@ -64,51 +66,41 @@ constructor(
     val isAnimating: Boolean
         get() = animator?.isRunning == true
 
-    private val wakefulnessObserver = object : WakefulnessLifecycle.Observer {
-        override fun onStartedWakingUp() {
-            onStartedWaking()
-        }
-
-        override fun onFinishedWakingUp() {
-            triggerRevealIfPrepped("finishedWaking")
-        }
-
-        override fun onStartedGoingToSleep() {
-            onGoingToSleep()
-        }
-    }
-
-    private val screenLifecycleObserver = object : ScreenLifecycle.Observer {
-        override fun onScreenTurnedOn() {
-            if (isWakingOrAwake()) {
-                if (state.isPrepped) {
-                    triggerRevealIfPrepped("screenTurnedOn")
-                } else if (state.zoomOut < LOCKSCREEN_RESTING_ZOOM && animator?.isRunning != true) {
-                    playReveal("screenTurnedOnFallback")
-                }
-            }
-        }
-
-        override fun onScreenTurningOff() {
-            onGoingToSleep()
-        }
-    }
-
     fun start() {
-        wakefulnessLifecycle.addObserver(wakefulnessObserver)
-        screenLifecycle.addObserver(screenLifecycleObserver)
-
         scope.launch(context = mainDispatcher) {
             lightRevealScrimInteractor.revealAmount.collect { progress ->
-                if (progress >= REVEAL_START_THRESHOLD && screenLifecycle.screenState != ScreenLifecycle.SCREEN_OFF) {
+                if (progress >= REVEAL_START_THRESHOLD) {
                     triggerRevealIfPrepped("lightReveal:$progress")
                 }
             }
         }
 
         scope.launch(context = mainDispatcher) {
+            powerInteractor.screenPowerState.collect { powerState ->
+                when (powerState) {
+                    ScreenPowerState.SCREEN_ON -> {
+                        if (state.isPrepped && !state.hasRevealed) {
+                            triggerRevealIfPrepped("screenPowerOnFallback")
+                        }
+                    }
+                    ScreenPowerState.SCREEN_TURNING_OFF, ScreenPowerState.SCREEN_OFF -> {
+                        fullAodWakeJob?.cancel()
+                        fullAodWakeJob = null
+                    }
+                    else -> {}
+                }
+            }
+        }
+
+        scope.launch(context = mainDispatcher) {
+            keyguardInteractor.isDozing.collect { isDozing ->
+                onDozingChanged(isDozing)
+            }
+        }
+
+        scope.launch(context = mainDispatcher) {
             keyguardTransitionInteractor.startedKeyguardTransitionStep.collect { step ->
-                onKeyguardTransitionStarted(step.to)
+                onTransitionStepStarted(step)
             }
         }
 
@@ -129,7 +121,61 @@ constructor(
         }
     }
 
-    private fun onStartedWaking() {
+    private fun onTransitionStepStarted(step: TransitionStep) {
+        when {
+            step.to == KeyguardState.GONE -> handleGoneTransition()
+            KeyguardState.deviceIsAsleepInState(step.to) -> handleSleepTransition(step.to)
+            step.to == KeyguardState.LOCKSCREEN -> handleLockscreenTransition(step.from)
+            step.to in listOf(KeyguardState.PRIMARY_BOUNCER, KeyguardState.ALTERNATE_BOUNCER, KeyguardState.OCCLUDED) -> {
+                handleBouncerOrOccluded(step.to)
+            }
+        }
+    }
+
+    private fun handleGoneTransition() {
+        wakeGeneration.incrementAndGet()
+        fullAodWakeJob?.cancel()
+        fullAodWakeJob = null
+        state = state.copy(isPrepped = false, hasRevealed = false)
+        if (isHolding || isAnimating) {
+            animateToResting()
+        } else {
+            clear()
+        }
+    }
+
+    private fun handleSleepTransition(toState: KeyguardState) {
+        wakeGeneration.incrementAndGet()
+        fullAodWakeJob?.cancel()
+        fullAodWakeJob = null
+        val wasAod = state.isAodWallpaper
+        state = state.copy(isPrepped = false, hasRevealed = false)
+        if (wasAod && canUseWallpaper()) {
+            animate(state.zoomOut, WAKE_START_ZOOM, TO_AOD_DURATION_MS, "toAodSleep:$toState")
+        } else {
+            clear()
+        }
+    }
+
+    private fun handleLockscreenTransition(fromState: KeyguardState) {
+        wakeGeneration.incrementAndGet()
+        fullAodWakeJob?.cancel()
+        fullAodWakeJob = null
+        if (fromState == KeyguardState.GONE) {
+            state = state.copy(isPrepped = false, hasRevealed = true)
+            apply(LOCKSCREEN_RESTING_ZOOM, "lockscreenFromGone")
+        } else {
+            onStartedWaking(fromState)
+        }
+    }
+
+    private fun handleBouncerOrOccluded(toState: KeyguardState) {
+        if (state.isPrepped) {
+            triggerRevealIfPrepped("bouncerOrOccluded:$toState")
+        }
+    }
+
+    private fun onStartedWaking(fromState: KeyguardState) {
         if (!canUseWallpaper()) {
             clear()
             return
@@ -138,12 +184,14 @@ constructor(
         fullAodWakeJob?.cancel()
         stop()
         state = state.copy(isPrepped = true, hasRevealed = false)
-        apply(WAKE_START_ZOOM, "wakePrep")
+        val currentZoom = wallpaperZoomController.currentEffectiveZoom
+        val prepZoom = if (currentZoom < 1.0f) currentZoom else WAKE_START_ZOOM
+        apply(prepZoom, "wakePrep:$fromState")
 
         if (state.isAodWallpaper) {
             fullAodWakeJob = scope.launch(mainDispatcher) {
                 delay(FULL_AOD_SYNC_DELAY_MS)
-                if (wakeGeneration.get() == gen && isWakingOrAwake()) {
+                if (wakeGeneration.get() == gen && state.isPrepped) {
                     triggerRevealIfPrepped("fullAodSyncWake")
                 }
             }
@@ -152,7 +200,7 @@ constructor(
 
     private fun triggerRevealIfPrepped(reason: String) {
         if (!state.isPrepped || state.hasRevealed) return
-        if (state.isAodWallpaper && !reason.startsWith("fullAodSyncWake") && reason != "finishedWaking") {
+        if (state.isAodWallpaper && !reason.startsWith("fullAodSyncWake")) {
             return
         }
         fullAodWakeJob?.cancel()
@@ -161,72 +209,19 @@ constructor(
         playReveal(reason)
     }
 
-    private fun onGoingToSleep() {
-        if (isWakingOrAwake()) return
-        wakeGeneration.incrementAndGet()
-        fullAodWakeJob?.cancel()
-        fullAodWakeJob = null
-        val wasAod = state.isAodWallpaper
-        state = state.copy(isPrepped = false, hasRevealed = false)
-        if (wasAod && canUseWallpaper()) {
-            animate(state.zoomOut, WAKE_START_ZOOM, TO_AOD_DURATION_MS, "fullAodSleepZoomIn")
-        } else {
-            clear()
-        }
-    }
-
     fun onDozingChanged(isDozing: Boolean) {
-        if (isDozing && !isWakingOrAwake()) {
-            onGoingToSleep()
-        }
-    }
-
-    private fun isWakingOrAwake(): Boolean {
-        val wakefulness = wakefulnessLifecycle.wakefulness
-        return wakefulness == WakefulnessLifecycle.WAKEFULNESS_WAKING ||
-            wakefulness == WakefulnessLifecycle.WAKEFULNESS_AWAKE
-    }
-
-    private fun onKeyguardTransitionStarted(toState: KeyguardState) {
-        when (toState) {
-            KeyguardState.GONE -> {
-                if (!isWakingOrAwake() || !state.isPrepped) {
-                    wakeGeneration.incrementAndGet()
-                    fullAodWakeJob?.cancel()
-                    fullAodWakeJob = null
-                    state = state.copy(isPrepped = false, hasRevealed = false)
-                    if (isHolding || isAnimating) {
-                        animateToResting()
-                    } else {
-                        clear()
-                    }
-                }
-            }
-            KeyguardState.AOD,
-            KeyguardState.DOZING,
-            KeyguardState.OFF -> {
-                if (!isWakingOrAwake()) {
-                    onGoingToSleep()
-                }
-            }
-            KeyguardState.PRIMARY_BOUNCER,
-            KeyguardState.ALTERNATE_BOUNCER,
-            KeyguardState.OCCLUDED -> {
-                wakeGeneration.incrementAndGet()
-                fullAodWakeJob?.cancel()
-                fullAodWakeJob = null
-                state = state.copy(isPrepped = false, hasRevealed = false)
-                clear()
-            }
-            else -> {}
+        if (isDozing) {
+            fullAodWakeJob?.cancel()
+            fullAodWakeJob = null
+            stop()
+            state = state.copy(isPrepped = false, hasRevealed = false)
+            apply(WAKE_START_ZOOM, "dozing")
         }
     }
 
     fun onUnlockProgress(progress: Float) {
-        if (progress > 0f && progress < 1f) {
-            if (!state.isPrepped && (isHolding || isAnimating)) {
-                animateToResting()
-            }
+        if (progress >= 1f) {
+            animateToResting()
         }
     }
 
@@ -235,7 +230,11 @@ constructor(
             clear()
             return
         }
-        val current = (animator?.animatedValue as? Float) ?: state.zoomOut
+        val currentZoom = wallpaperZoomController.currentEffectiveZoom
+        val current = (animator?.animatedValue as? Float) ?: if (currentZoom < 1.0f) currentZoom else state.zoomOut
+        if (abs(current - LOCKSCREEN_RESTING_ZOOM) < 0.001f) {
+            return
+        }
         animate(current, LOCKSCREEN_RESTING_ZOOM, REVEAL_DURATION_MS, reason)
     }
 
@@ -247,8 +246,9 @@ constructor(
     }
 
     fun animateToResting(durationMs: Long = UNLOCK_TRANSITION_DURATION_MS) {
-        val current = (animator?.animatedValue as? Float) ?: state.zoomOut
-        if (current == LOCKSCREEN_RESTING_ZOOM) {
+        val currentZoom = wallpaperZoomController.currentEffectiveZoom
+        val current = (animator?.animatedValue as? Float) ?: if (currentZoom < 1.0f) currentZoom else state.zoomOut
+        if (abs(current - LOCKSCREEN_RESTING_ZOOM) < 0.001f) {
             clear()
             return
         }
@@ -256,9 +256,10 @@ constructor(
     }
 
     private fun animate(from: Float, to: Float, durationMs: Long, reason: String) {
-        val startVal = (animator?.animatedValue as? Float) ?: from
+        val currentZoom = wallpaperZoomController.currentEffectiveZoom
+        val startVal = (animator?.animatedValue as? Float) ?: if (currentZoom < 1.0f) currentZoom else from
         stop()
-        if (startVal == to) {
+        if (abs(startVal - to) < 0.001f) {
             apply(to, reason)
             return
         }
@@ -276,7 +277,7 @@ constructor(
                         override fun onAnimationEnd(animation: Animator) {
                             if (animator == animation) {
                                 animator = null
-                                apply(to, "animEnd:$reason")
+                                apply(to, "${reason}End")
                             }
                         }
 
@@ -292,23 +293,19 @@ constructor(
     }
 
     private fun stop() {
-        animator?.removeAllUpdateListeners()
-        animator?.removeAllListeners()
         animator?.cancel()
         animator = null
     }
 
-    private fun apply(value: Float, reason: String = "") {
-        if (state.zoomOut == value && animator == null) {
-            return
-        }
-        wallpaperZoomController.setZoom(WallpaperZoomOwner.KEYGUARD_WAKE_ANIM, value, reason)
+    private fun apply(zoom: Float, reason: String) {
+        val value = zoom.coerceIn(0f, 1f)
         state = state.copy(zoomOut = value)
+        wallpaperZoomController.setZoom(WallpaperZoomOwner.KEYGUARD_WAKE_ANIM, value, reason)
     }
 
     private fun canUseWallpaper(): Boolean =
         !wallpaperZoomController.wallpaperZoomDisabled &&
-            wallpaperRepository.lockscreenWallpaperInfo.value == null
+            (wallpaperRepository.lockscreenWallpaperInfo.value == null || state.isAodWallpaper)
 
     private data class AnimationState(
         val zoomOut: Float = LOCKSCREEN_RESTING_ZOOM,

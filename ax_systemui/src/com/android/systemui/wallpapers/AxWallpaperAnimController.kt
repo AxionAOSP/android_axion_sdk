@@ -36,8 +36,8 @@ constructor(
     private val keyguardInteractor: KeyguardInteractor,
     private val wallpaperZoomController: AxWallpaperZoomController,
     private val zoomAnimator: AxWallpaperZoomAnimator,
-    @Application private val scope: CoroutineScope,
-    @Main private val mainDispatcher: CoroutineDispatcher,
+    @param:Application private val scope: CoroutineScope,
+    @param:Main private val mainDispatcher: CoroutineDispatcher,
 ) : CoreStartable {
 
     override fun start() {
@@ -48,6 +48,16 @@ constructor(
             keyguardInteractor.isDozing.collect { isDozing ->
                 zoomAnimator.onDozingChanged(isDozing)
                 if (isDozing) {
+                    setLauncherZoom(false)
+                }
+            }
+        }
+
+        scope.launch(context = mainDispatcher) {
+            keyguardTransitionInteractor.startedKeyguardTransitionStep.collect { step ->
+                if (step.to == KeyguardState.GONE) {
+                    setLauncherZoom(true)
+                } else if (step.to == KeyguardState.LOCKSCREEN || KeyguardState.deviceIsAsleepInState(step.to)) {
                     setLauncherZoom(false)
                 }
             }

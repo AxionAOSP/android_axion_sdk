@@ -32,6 +32,14 @@ public final class AxWallpaperZoom {
 
     private AxWallpaperZoom() {}
 
+    public static void cancel() {
+        if (sAnimator != null) {
+            sAnimator.cancel();
+            sAnimator = null;
+        }
+        sToken = null;
+    }
+
     public static void reset(SystemUiProxy systemUiProxy) {
         if (sAnimator != null) {
             sAnimator.cancel();
@@ -65,6 +73,9 @@ public final class AxWallpaperZoom {
     public static void startZoomOut(SystemUiProxy systemUiProxy) {
         createAnimator(
                 systemUiProxy,
+                null,
+                0f,
+                1.0f,
                 0f,
                 AxAnimationEngine.WALLPAPER_HOME_GESTURE_DURATION,
                 AxAnimationEngine.WALLPAPER_HOME_GESTURE_INTERPOLATOR).start();
@@ -78,6 +89,7 @@ public final class AxWallpaperZoom {
                 systemUiProxy,
                 depthController,
                 targetDepth,
+                0.0f,
                 AxAnimationEngine.WALLPAPER_APP_OPEN_ZOOM_OUT,
                 AxAnimationEngine.WALLPAPER_APP_OPEN_DURATION,
                 AxAnimationEngine.WALLPAPER_APP_OPEN_INTERPOLATOR);
@@ -85,22 +97,15 @@ public final class AxWallpaperZoom {
 
     private static ValueAnimator createAnimator(
             SystemUiProxy systemUiProxy,
-            float endZoomOut,
-            long duration,
-            Interpolator interpolator) {
-        return createAnimator(systemUiProxy, null, 0f, endZoomOut, duration, interpolator);
-    }
-
-    private static ValueAnimator createAnimator(
-            SystemUiProxy systemUiProxy,
             DepthController depthController,
             float endDepth,
+            float startZoomOut,
             float endZoomOut,
             long duration,
             Interpolator interpolator) {
         ValueAnimator animator = ValueAnimator.ofFloat(0f, 1f);
         ZoomState state =
-                new ZoomState(systemUiProxy, animator, depthController, endDepth, endZoomOut);
+                new ZoomState(systemUiProxy, animator, depthController, endDepth, startZoomOut, endZoomOut);
         animator.setDuration(duration);
         animator.setInterpolator(interpolator);
         animator.addListener(state);
@@ -116,7 +121,9 @@ public final class AxWallpaperZoom {
             animator.cancel();
         }
         sAnimator = state.mAnimator;
-        state.mStartZoomOut = continuing ? sZoomOut : getCurrentVisualZoomOut(state.mSystemUiProxy);
+        state.mStartZoomOut = continuing
+                ? sZoomOut
+                : (!Float.isNaN(state.mExplicitStartZoom) ? state.mExplicitStartZoom : getCurrentVisualZoomOut(state.mSystemUiProxy));
         state.mToken = new Token();
         sToken = state.mToken;
         AxAnimationEngine.trace(
@@ -174,6 +181,7 @@ public final class AxWallpaperZoom {
         private final ValueAnimator mAnimator;
         private final DepthController mDepthController;
         private final float mEndDepth;
+        private final float mExplicitStartZoom;
         private final float mEndZoomOut;
         private float mStartZoomOut;
         private Token mToken;
@@ -184,17 +192,22 @@ public final class AxWallpaperZoom {
                 ValueAnimator animator,
                 DepthController depthController,
                 float endDepth,
+                float explicitStartZoom,
                 float endZoomOut) {
             mSystemUiProxy = systemUiProxy;
             mAnimator = animator;
             mDepthController = depthController;
             mEndDepth = endDepth;
+            mExplicitStartZoom = explicitStartZoom;
             mEndZoomOut = endZoomOut;
         }
 
         @Override
         public void onAnimationStart(Animator animation) {
             mCancelled = false;
+            if (mDepthController != null) {
+                mDepthController.setWallpaperZoomOverride(0f);
+            }
             begin(this);
             if (mDepthController != null) {
                 mDepthController.stateDepth.setValue(0f);
@@ -204,6 +217,9 @@ public final class AxWallpaperZoom {
         @Override
         public void onAnimationCancel(Animator animation) {
             mCancelled = true;
+            if (mDepthController != null) {
+                mDepthController.setWallpaperZoomOverride(Float.NaN);
+            }
             end(this, sZoomOut);
             if (mDepthController != null) {
                 mDepthController.stateDepth.setValue(0f);
@@ -213,6 +229,9 @@ public final class AxWallpaperZoom {
         @Override
         public void onAnimationEnd(Animator animation) {
             if (!mCancelled) {
+                if (mDepthController != null) {
+                    mDepthController.setWallpaperZoomOverride(Float.NaN);
+                }
                 end(this, mEndZoomOut);
                 if (mDepthController != null) {
                     mDepthController.stateDepth.setValue(mEndDepth);

@@ -36,6 +36,7 @@ import java.util.Date
 import java.util.EnumMap
 import java.util.Locale
 import javax.inject.Inject
+import kotlin.math.abs
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -54,8 +55,8 @@ constructor(
     private val wallpaperRepository: WallpaperRepository,
     private val secureSettingsRepository: SecureSettingsRepository?,
     private val dumpManager: DumpManager?,
-    @Application private val scope: CoroutineScope?,
-    @Main private val mainDispatcher: CoroutineDispatcher?,
+    @param:Application private val scope: CoroutineScope?,
+    @param:Main private val mainDispatcher: CoroutineDispatcher?,
 ) : CoreStartable, Dumpable {
 
     constructor(
@@ -83,7 +84,7 @@ constructor(
     )
 
     private val ownerStates = EnumMap<WallpaperZoomOwner, OwnerState>(WallpaperZoomOwner::class.java).apply {
-        for (owner in WallpaperZoomOwner.values()) {
+        for (owner in WallpaperZoomOwner.entries) {
             put(owner, OwnerState(zoom = owner.restingZoom))
         }
     }
@@ -98,6 +99,10 @@ constructor(
     @Volatile
     var currentActiveOwner: WallpaperZoomOwner? = null
         private set
+
+    private val handoffEngine = WallpaperZoomHandoffEngine {
+        applyBlendedZoom(getCurrentRawTargetZoom(), "handoffTick")
+    }
 
     @Volatile
     var launcherZoomEnabled: Boolean = true
@@ -144,7 +149,7 @@ constructor(
     }
 
     fun setLauncherWallpaperZoom(ownerId: Int, zoomOut: Float) {
-        val owner = WallpaperZoomOwner.fromId(ownerId)
+        val owner = WallpaperZoomOwner.fromId(ownerId) ?: WallpaperZoomOwner.APP_ZOOM
         setZoom(owner, zoomOut, "aidl:$ownerId")
     }
 
@@ -183,12 +188,15 @@ constructor(
         return ownerStates[owner]?.zoom ?: owner.restingZoom
     }
 
+    fun getCurrentZoom(): Float = currentEffectiveZoom
+
     fun isOwnerActive(owner: WallpaperZoomOwner): Boolean {
         val state = ownerStates[owner] ?: return false
         return state.enabled && state.zoom != owner.restingZoom
     }
 
     fun resetAllZoom(reason: String = "resetAll") {
+        handoffEngine.cancel()
         val nowUptime = SystemClock.uptimeMillis()
         val nowWall = System.currentTimeMillis()
         for ((owner, state) in ownerStates) {
@@ -261,64 +269,91 @@ constructor(
         }
     }
 
+    private data class ZoomResolution(
+        val targetZoom: Float,
+        val activeOwner: WallpaperZoomOwner?,
+    )
+
+    private fun getActiveZoom(owner: WallpaperZoomOwner): Float {
+        val state = ownerStates[owner] ?: return owner.restingZoom
+        return if (state.enabled) state.zoom else owner.restingZoom
+    }
+
+    private fun resolveTarget(): ZoomResolution {
+        if (wallpaperZoomDisabled) return ZoomResolution(1.0f, null)
+
+        val override = getActiveZoom(WallpaperZoomOwner.SYSTEM_OVERRIDE)
+        if (override > 0f) return ZoomResolution((1.0f - override).coerceIn(0f, 1f), WallpaperZoomOwner.SYSTEM_OVERRIDE)
+
+        if (!launcherZoomEnabled) {
+            val keyguard = getActiveZoom(WallpaperZoomOwner.KEYGUARD_WAKE_ANIM)
+            if (keyguard < 1.0f) return ZoomResolution(keyguard, WallpaperZoomOwner.KEYGUARD_WAKE_ANIM)
+        }
+
+        val shade = getActiveZoom(WallpaperZoomOwner.NOTIFICATION_SHADE)
+        val unfold = getActiveZoom(WallpaperZoomOwner.UNFOLD)
+        val overlay = maxOf(shade, unfold)
+
+        val launcher = if (launcherZoomEnabled) {
+            maxOf(getActiveZoom(WallpaperZoomOwner.APP_ZOOM), getActiveZoom(WallpaperZoomOwner.BASE_DEPTH))
+        } else 0f
+
+        val progress = maxOf(launcher, overlay)
+        if (progress <= 0f) return ZoomResolution(1.0f, null)
+
+        val owner = when {
+            overlay > 0f -> if (shade >= unfold) WallpaperZoomOwner.NOTIFICATION_SHADE else WallpaperZoomOwner.UNFOLD
+            else -> WallpaperZoomOwner.APP_ZOOM
+        }
+        return ZoomResolution((1.0f - progress).coerceIn(0f, 1f), owner)
+    }
+
+    private fun getCurrentRawTargetZoom(): Float = resolveTarget().targetZoom
+
     private fun updateZoom(reason: String = "") {
-        val now = SystemClock.uptimeMillis()
-        reconcileStuckOwners(now)
+        reconcileStuckOwners(SystemClock.uptimeMillis())
 
-        val activeOwner = if (wallpaperZoomDisabled) {
-            null
-        } else {
-            WallpaperZoomOwner.values()
-                .sortedByDescending { it.priority }
-                .firstOrNull { owner ->
-                    val state = ownerStates[owner] ?: return@firstOrNull false
-                    if (!state.enabled) return@firstOrNull false
-                    if (owner == WallpaperZoomOwner.APP_ZOOM || owner == WallpaperZoomOwner.BASE_DEPTH) {
-                        if (!launcherZoomEnabled) return@firstOrNull false
-                    }
-                    state.zoom != owner.restingZoom
-                }
-        }
+        val resolution = resolveTarget()
 
-        val effectiveWmZoom = if (wallpaperZoomDisabled || activeOwner == null) {
-            1.0f
-        } else when (activeOwner) {
-            WallpaperZoomOwner.APP_ZOOM -> {
-                val progress = ownerStates[WallpaperZoomOwner.APP_ZOOM]?.zoom ?: 0f
-                (1.0f - progress).coerceIn(0f, 1f)
-            }
-            WallpaperZoomOwner.BASE_DEPTH -> {
-                val depth = ownerStates[WallpaperZoomOwner.BASE_DEPTH]?.zoom ?: 0f
-                (1.0f - depth).coerceIn(0f, 1f)
-            }
-            else -> ownerStates[activeOwner]?.zoom ?: 1.0f
-        }
-
-        val previousEffectiveZoom = currentEffectiveZoom
-        val previousActiveOwner = currentActiveOwner
-        currentEffectiveZoom = effectiveWmZoom
-        currentActiveOwner = activeOwner
-
-        val lockscreenZoom = if (wallpaperZoomDisabled || launcherZoomEnabled) 1.0f else effectiveWmZoom
-        DepthWallpaperProvider.setWallpaperZoom(lockscreenZoom)
-
-        val applied = applyWallpaperZoom(effectiveWmZoom)
-
-        if (DEBUG || (effectiveWmZoom != previousEffectiveZoom) || (activeOwner != previousActiveOwner)) {
-            Log.d(
-                TAG,
-                "updateZoom: effectiveWmZoom=$effectiveWmZoom, activeOwner=$activeOwner, applied=$applied, " +
-                    "disabled=$wallpaperZoomDisabled, reason='$reason'"
+        val previousOwner = currentActiveOwner
+        if (previousOwner != resolution.activeOwner) {
+            currentActiveOwner = resolution.activeOwner
+            handoffEngine.onOwnerChanged(
+                previousOwner = previousOwner,
+                newOwner = resolution.activeOwner,
+                currentEffectiveZoom = currentEffectiveZoom,
+                newTargetZoom = resolution.targetZoom,
             )
         }
 
-        if (activeOwner != null || previousActiveOwner != null || effectiveWmZoom != previousEffectiveZoom) {
+        applyBlendedZoom(resolution.targetZoom, reason)
+    }
+
+    private fun applyBlendedZoom(rawTarget: Float, reason: String) {
+        val effectiveZoom = handoffEngine.blend(rawTarget)
+        val previousEffectiveZoom = currentEffectiveZoom
+        val zoomChanged = abs(previousEffectiveZoom - effectiveZoom) >= WallpaperZoomHandoffEngine.ZOOM_EPSILON
+
+        if (zoomChanged || handoffEngine.isAnimating) {
+            currentEffectiveZoom = effectiveZoom
+            val lockscreenZoom = if (wallpaperZoomDisabled || launcherZoomEnabled) 1.0f else effectiveZoom
+            DepthWallpaperProvider.setWallpaperZoom(lockscreenZoom)
+            val applied = applyWallpaperZoom(effectiveZoom)
+
+            if (DEBUG) {
+                Log.d(
+                    TAG,
+                    "applyBlendedZoom: effectiveZoom=$effectiveZoom (raw=$rawTarget, offset=${handoffEngine.handoffOffset}), " +
+                        "activeOwner=$currentActiveOwner, applied=$applied, disabled=$wallpaperZoomDisabled, reason='$reason'"
+                )
+            }
+
             recordHistoryEvent(
-                owner = activeOwner ?: previousActiveOwner ?: WallpaperZoomOwner.SYSTEM_OVERRIDE,
+                owner = currentActiveOwner ?: WallpaperZoomOwner.SYSTEM_OVERRIDE,
                 oldZoom = previousEffectiveZoom,
-                newZoom = effectiveWmZoom,
-                effectiveZoom = effectiveWmZoom,
-                activeOwner = activeOwner,
+                newZoom = effectiveZoom,
+                effectiveZoom = effectiveZoom,
+                activeOwner = currentActiveOwner,
                 reason = reason,
             )
         }
@@ -371,12 +406,19 @@ constructor(
 
         pw.println("AxWallpaperZoomController:")
         pw.println("  effectiveZoom=$currentEffectiveZoom (activeOwner=${currentActiveOwner ?: "NONE"})")
+        pw.println("  handoffOffset=${handoffEngine.handoffOffset} (animating=${handoffEngine.isAnimating})")
         pw.println("  wallpaperZoomDisabled=$wallpaperZoomDisabled")
         pw.println("  launcherZoomEnabled=$launcherZoomEnabled")
         pw.println("  rootViewAttached=${rootView?.isAttachedToWindow == true} (token=${rootView?.windowToken})")
-        pw.println("  Owners State:")
 
-        for (owner in WallpaperZoomOwner.values()) {
+        dumpOwners(pw, nowUptime)
+        dumpHistory(pw, dateFormat)
+        DepthWallpaperProvider.dump(pw)
+    }
+
+    private fun dumpOwners(pw: PrintWriter, nowUptime: Long) {
+        pw.println("  Owners State:")
+        for (owner in WallpaperZoomOwner.entries) {
             val state = ownerStates[owner] ?: continue
             val elapsed = if (state.lastUpdateUptime > 0L) nowUptime - state.lastUpdateUptime else -1L
             val elapsedStr = if (elapsed >= 0L) "${elapsed}ms ago" else "never"
@@ -397,28 +439,29 @@ constructor(
                 stuckWarning,
             )
         }
+    }
 
+    private fun dumpHistory(pw: PrintWriter, dateFormat: SimpleDateFormat) {
         pw.println("  Recent Zoom History (last $HISTORY_MAX_SIZE):")
         synchronized(historyLock) {
             if (history.isEmpty()) {
                 pw.println("    (no events recorded)")
-            } else {
-                for (event in history) {
-                    val timeStr = dateFormat.format(Date(event.wallTime))
-                    pw.printf(
-                        Locale.US,
-                        "    %s [%-18s] %.3f -> %.3f | eff=%.3f (owner=%-18s) reason='%s'\n",
-                        timeStr,
-                        event.owner.name,
-                        event.oldZoom,
-                        event.newZoom,
-                        event.effectiveZoom,
-                        event.activeOwner?.name ?: "NONE",
-                        event.reason,
-                    )
-                }
+                return
+            }
+            for (event in history) {
+                val timeStr = dateFormat.format(Date(event.wallTime))
+                pw.printf(
+                    Locale.US,
+                    "    %s [%-18s] %.3f -> %.3f | eff=%.3f (owner=%-18s) reason='%s'\n",
+                    timeStr,
+                    event.owner.name,
+                    event.oldZoom,
+                    event.newZoom,
+                    event.effectiveZoom,
+                    event.activeOwner?.name ?: "NONE",
+                    event.reason,
+                )
             }
         }
-        DepthWallpaperProvider.dump(pw)
     }
 }
