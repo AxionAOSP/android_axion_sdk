@@ -259,7 +259,7 @@ class AxGridEditController(
     }
 
     fun addStack() {
-        val stackId = "stack_" + System.currentTimeMillis()
+        val stackId = "stack_${System.currentTimeMillis()}_${(1000..9999).random()}"
         val newItem =
             AxQsGridItem<AxQsGridValue>(
                 id = stackId,
@@ -300,8 +300,14 @@ fun rememberAxGridEditController(
     val liveTilesBySpec = remember(tiles) { tiles.associateBy { it.spec.spec } }
 
     LaunchedEffect(gridItems) {
-        if (!listState.dragInProgress && !listState.resizeInProgress) {
+        if (!isEditing) {
             listState.updateItems(gridItems)
+        } else {
+            val existingIds = listState.items.map { it.id }.toSet()
+            val newItems = gridItems.filter { it.id !in existingIds }
+            if (newItems.isNotEmpty()) {
+                newItems.forEach { listState.add(it) }
+            }
         }
     }
 

@@ -332,9 +332,7 @@ data class AxQsLayoutData(
                                     val tileId = array.optString(i)
                                     tileId.takeIf { it.isNotBlank() }
                                 }
-                            if (tileList.isNotEmpty()) {
-                                put(id, tileList)
-                            }
+                            put(id, tileList)
                         }
                     }
                 }
