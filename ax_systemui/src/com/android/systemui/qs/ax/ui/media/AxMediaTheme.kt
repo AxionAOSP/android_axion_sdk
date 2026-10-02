@@ -45,56 +45,36 @@ internal data class AxMediaTheme(
 )
 
 @Composable
-internal fun rememberAxMediaTheme(
-    session: MediaSessionModel?,
-    surface: AxMediaSurface = AxMediaSurface.CONTROL
+internal fun rememberAxQsGridMediaTheme(
+    session: MediaSessionModel?
 ): AxMediaTheme {
     val context = LocalContext.current
     val colorScheme = session?.colorScheme
-    val isQsGrid = surface == AxMediaSurface.CONTROL
-    val tileBackground =
-        if (!isQsGrid) {
-            Color.Transparent
-        } else {
-            LocalAxQsCellConfig.current.backgroundColor()
-        }
-    val tileForeground =
-        if (!isQsGrid) {
-            Color.White
-        } else {
-            MaterialTheme.colorScheme.onSurface
-        }
+    val qsTileBackground = LocalAxQsCellConfig.current.backgroundColor()
+    val qsTileForeground = MaterialTheme.colorScheme.onSurface
     val aospDefaultBackground = remember(context) {
         Color(context.getColor(InternalR.color.system_on_surface_light))
     }
     val sessionBackground = colorScheme?.background ?: aospDefaultBackground
     val overlayColor by animateColorAsState(
         targetValue = sessionBackground,
-        label = "AxMediaOverlayColor"
+        label = "AxQsGridOverlayColor"
     )
     val containerBackground by animateColorAsState(
-        targetValue = tileBackground,
-        label = "AxMediaContainerBackground"
+        targetValue = qsTileBackground,
+        label = "AxQsGridContainerBg"
     )
     val primary by animateColorAsState(
-        targetValue = if (session != null) {
-            colorScheme?.primary ?: MaterialTheme.colorScheme.primaryFixed
-        } else {
-            MaterialTheme.colorScheme.primary
-        },
-        label = "AxMediaPrimary"
+        targetValue = if (session != null) colorScheme?.primary ?: MaterialTheme.colorScheme.primaryFixed else MaterialTheme.colorScheme.primary,
+        label = "AxQsGridPrimary"
     )
     val onPrimary by animateColorAsState(
-        targetValue = if (session != null) {
-            colorScheme?.onPrimary ?: MaterialTheme.colorScheme.onPrimaryFixed
-        } else {
-            MaterialTheme.colorScheme.onPrimary
-        },
-        label = "AxMediaOnPrimary"
+        targetValue = if (session != null) colorScheme?.onPrimary ?: MaterialTheme.colorScheme.onPrimaryFixed else MaterialTheme.colorScheme.onPrimary,
+        label = "AxQsGridOnPrimary"
     )
     val foreground by animateColorAsState(
-        targetValue = tileForeground,
-        label = "AxMediaForeground"
+        targetValue = qsTileForeground,
+        label = "AxQsGridForeground"
     )
     val colors = remember(primary, onPrimary, containerBackground, foreground) {
         AxMediaColors(
@@ -105,4 +85,72 @@ internal fun rememberAxMediaTheme(
         )
     }
     return AxMediaTheme(colors, containerBackground, overlayColor)
+}
+
+@Composable
+internal fun rememberAxNonQsMediaTheme(
+    session: MediaSessionModel?,
+    hasMediaArt: Boolean
+): AxMediaTheme {
+    val colorScheme = session?.colorScheme
+    val qsTileBackground = LocalAxQsCellConfig.current.backgroundColor()
+    val qsTileForeground = MaterialTheme.colorScheme.onSurface
+    val tileBackground = if (hasMediaArt) Color.Transparent else qsTileBackground
+    val tileForeground = if (hasMediaArt) Color.White else qsTileForeground
+
+    val targetPrimary =
+        if (session != null && hasMediaArt) {
+            colorScheme?.primary ?: MaterialTheme.colorScheme.primaryFixed
+        } else {
+            MaterialTheme.colorScheme.primary
+        }
+    val targetOnPrimary =
+        if (session != null && hasMediaArt) {
+            colorScheme?.onPrimary ?: MaterialTheme.colorScheme.onPrimaryFixed
+        } else {
+            MaterialTheme.colorScheme.onPrimary
+        }
+
+    val overlayColor by animateColorAsState(
+        targetValue = if (hasMediaArt) Color.Black else qsTileBackground,
+        label = "AxNonQsOverlayColor"
+    )
+    val containerBackground by animateColorAsState(
+        targetValue = tileBackground,
+        label = "AxNonQsContainerBg"
+    )
+    val primary by animateColorAsState(
+        targetValue = targetPrimary,
+        label = "AxNonQsPrimary"
+    )
+    val onPrimary by animateColorAsState(
+        targetValue = targetOnPrimary,
+        label = "AxNonQsOnPrimary"
+    )
+    val foreground by animateColorAsState(
+        targetValue = tileForeground,
+        label = "AxNonQsForeground"
+    )
+    val colors = remember(primary, onPrimary, containerBackground, foreground) {
+        AxMediaColors(
+            primary = primary,
+            onPrimary = onPrimary,
+            background = containerBackground,
+            foreground = foreground
+        )
+    }
+    return AxMediaTheme(colors, containerBackground, overlayColor)
+}
+
+@Composable
+internal fun rememberAxMediaTheme(
+    session: MediaSessionModel?,
+    hasMediaArt: Boolean = session?.background != null,
+    surface: AxMediaSurface = AxMediaSurface.CONTROL
+): AxMediaTheme {
+    return if (surface == AxMediaSurface.CONTROL) {
+        rememberAxQsGridMediaTheme(session)
+    } else {
+        rememberAxNonQsMediaTheme(session, hasMediaArt)
+    }
 }

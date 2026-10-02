@@ -98,7 +98,7 @@ internal fun AxSquare2x2MediaContent(
                     .height(maxHeight.coerceAtLeast(0.dp))
                     .padding(
                         horizontal = hPadding.coerceAtLeast(0.dp),
-                        vertical = vPadding.coerceAtLeast(0.dp),
+                        vertical = vPadding.coerceAtLeast(0.dp)
                     )
                     .padding(bottom = extraBottomPadding.coerceAtLeast(0.dp))
         ) {

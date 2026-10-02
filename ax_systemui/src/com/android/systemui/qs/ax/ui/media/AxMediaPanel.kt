@@ -76,17 +76,29 @@ fun AxMediaPanel(
                         modifier.fillMaxWidth().height(nonQsGridMediaHeight)
                     }
                 key(currentSession?.key ?: "placeholder") {
-                    AxMediaCard(
-                        viewModel = viewModel,
-                        session = currentSession,
-                        lastMediaPackage = lastMediaPackage,
-                        span = span,
-                        interactive = interactive,
-                        allowGuts = false,
-                        surface = surface,
-                        hasMultipleSessions = sessions.size > 1,
-                        modifier = fallbackModifier
-                    )
+                    if (surface == AxMediaSurface.CONTROL) {
+                        AxQsGridMediaCard(
+                            viewModel = viewModel,
+                            session = currentSession,
+                            lastMediaPackage = lastMediaPackage,
+                            span = span,
+                            interactive = interactive,
+                            hasMultipleSessions = sessions.size > 1,
+                            modifier = fallbackModifier
+                        )
+                    } else {
+                        AxNonQsMediaCard(
+                            viewModel = viewModel,
+                            session = currentSession,
+                            lastMediaPackage = lastMediaPackage,
+                            span = span,
+                            interactive = interactive,
+                            allowGuts = false,
+                            surface = surface,
+                            hasMultipleSessions = sessions.size > 1,
+                            modifier = fallbackModifier
+                        )
+                    }
                 }
             } else {
                 val shape = AxMediaTokens.MediaCardShape
@@ -139,34 +151,39 @@ fun AxMediaPanel(
                     rememberViewModel(traceName = "AxMediaViewModel") {
                         factory.create(context, behavior.carouselVisibility)
                     }
-                val cardComparator =
-                    remember(viewModel, lastMediaPackage) {
-                        Comparator<MediaCardViewModel> { a, b ->
-                            viewModel.compareSessions(a.key, b.key, lastMediaPackage)
-                        }
-                    }
                 AxMediaCarousel(
                     viewModel = mediaViewModel,
                     behavior = behavior,
                     onDismissed = onDismissed,
                     modifier = mediaModifier,
                     cardFilter = { viewModel.isSessionVisible(it.key, surface) },
-                    cardComparator = cardComparator,
                     carouselShape = shape,
                     cardContent = { card, cardModifier ->
                         val session = viewModel.sessionForKey(card.key)
                         key(card.key) {
-                            AxMediaCard(
-                                viewModel = viewModel,
-                                session = session,
-                                lastMediaPackage = lastMediaPackage,
-                                span = span,
-                                interactive = interactive,
-                                allowGuts = allowGuts,
-                                surface = surface,
-                                hasMultipleSessions = sessions.size > 1,
-                                modifier = cardModifier.fillMaxSize()
-                            )
+                            if (surface == AxMediaSurface.CONTROL) {
+                                AxQsGridMediaCard(
+                                    viewModel = viewModel,
+                                    session = session,
+                                    lastMediaPackage = lastMediaPackage,
+                                    span = span,
+                                    interactive = interactive,
+                                    hasMultipleSessions = sessions.size > 1,
+                                    modifier = cardModifier.fillMaxSize()
+                                )
+                            } else {
+                                AxNonQsMediaCard(
+                                    viewModel = viewModel,
+                                    session = session,
+                                    lastMediaPackage = lastMediaPackage,
+                                    span = span,
+                                    interactive = interactive,
+                                    allowGuts = allowGuts,
+                                    surface = surface,
+                                    hasMultipleSessions = sessions.size > 1,
+                                    modifier = cardModifier.fillMaxSize()
+                                )
+                            }
                         }
                     },
                     pagerIndicator = { pagerState ->

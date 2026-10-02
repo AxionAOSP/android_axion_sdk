@@ -26,7 +26,6 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -46,7 +45,7 @@ import com.android.systemui.qs.ax.ui.viewmodel.AxMediaViewModel
 import com.android.systemui.res.R as SysuiR
 
 @Composable
-internal fun AxMediaCard(
+internal fun AxNonQsMediaCard(
     viewModel: AxMediaViewModel,
     session: MediaSessionModel?,
     lastMediaPackage: String?,
@@ -58,10 +57,11 @@ internal fun AxMediaCard(
     modifier: Modifier = Modifier
 ) {
     val shape = AxMediaTokens.MediaCardShape
-    val gutsVisible = allowGuts && session?.let(viewModel::isGutsVisible) == true
+    val isGutsAllowed = allowGuts && surface.dismissible
+    val gutsVisible = isGutsAllowed && session?.let(viewModel::isGutsVisible) == true
     val artwork = session?.background?.takeIf { span.columns > 1 }
-    val isQsGrid = surface == AxMediaSurface.CONTROL
-    val theme = rememberAxMediaTheme(session = session, surface = surface)
+    val hasMediaArt = artwork != null
+    val theme = rememberAxNonQsMediaTheme(session = session, hasMediaArt = hasMediaArt)
     val clickLabel =
         if (session != null) {
             stringResource(
@@ -81,10 +81,11 @@ internal fun AxMediaCard(
         animateFloatAsState(
             targetValue = if (isCardPressed) 0.985f else 1f,
             animationSpec = AxMediaTokens.ButtonPressSpring,
-            label = "AxMediaCardPressScale"
+            label = "AxNonQsMediaCardPressScale"
         )
-    val isNonQsGrid = surface != AxMediaSurface.CONTROL
-    val containerColor = if (isNonQsGrid) Color.Transparent else theme.containerBackground
+    val containerColor =
+        if (hasMediaArt && !gutsVisible) Color.Transparent else theme.containerBackground
+
     ExpandableContainer(
         controller = rememberExpandableController(color = { containerColor }, shape = shape),
         modifier =
@@ -102,33 +103,33 @@ internal fun AxMediaCard(
     ) { expandable ->
         Box(
             Modifier.fillMaxSize().combinedClickable(
-                    interactionSource = cardInteractionSource,
-                    indication = null,
-                    enabled = interactive && (session != null || lastMediaPackage != null),
-                    onClick = {
-                        if (!gutsVisible) {
-                            if (session != null) {
-                                viewModel.openSession(session, expandable)
-                            } else {
-                                viewModel.openLastMediaApp(expandable)
-                            }
-                        }
-                    },
-                    onClickLabel = clickLabel,
-                    onLongClick =
-                        if (allowGuts) {
-                            {
-                                if (gutsVisible) {
-                                    viewModel.closeGuts()
-                                } else if (session != null) {
-                                    viewModel.showGuts(session)
-                                }
-                            }
+                interactionSource = cardInteractionSource,
+                indication = null,
+                enabled = interactive && (session != null || lastMediaPackage != null),
+                onClick = {
+                    if (!gutsVisible) {
+                        if (session != null) {
+                            viewModel.openSession(session, expandable)
                         } else {
-                            null
+                            viewModel.openLastMediaApp(expandable)
                         }
-                )
+                    }
+                },
+                onClickLabel = clickLabel,
+                onLongClick =
+                    if (isGutsAllowed) {
+                        {
+                            if (gutsVisible) {
+                                viewModel.closeGuts()
+                            } else if (session != null) {
+                                viewModel.showGuts(session)
+                            }
+                        }
+                    } else {
+                        null
+                    }
             )
+        ) {
             AnimatedContent(
                 targetState = gutsVisible,
                 transitionSpec = {
@@ -136,7 +137,7 @@ internal fun AxMediaCard(
                         tween(AxMediaTokens.IndicatorFadeInDurationMs)
                     ) togetherWith fadeOut(tween(120))
                 },
-                label = "AxMediaGuts",
+                label = "AxNonQsMediaGuts",
                 modifier = Modifier.fillMaxSize()
             ) { showGuts ->
                 if (showGuts && session != null) {
@@ -147,59 +148,14 @@ internal fun AxMediaCard(
                         compact = span.columns == 1,
                         surface = surface
                     )
-                } else if (isQsGrid) {
-                    BoxWithConstraints(Modifier.fillMaxSize()) {
-                        val gridConfig =
-                            remember(span, maxHeight) {
-                                AxQsMediaGridLayoutConfig.resolve(span, maxHeight)
-                            }
-                        val songKey =
-                            session?.let { "${it.key}:${it.appName}:${it.title}:${it.subtitle}" }
-                                .orEmpty()
-                        when (gridConfig.variant) {
-                            AxQsMediaLayoutVariant.AxStudio4x2 ->
-                                AxStudio4x2MediaContent(
-                                    session = session,
-                                    viewModel = viewModel,
-                                    colors = theme.colors,
-                                    artwork = artwork,
-                                    songKey = songKey,
-                                    interactive = interactive,
-                                    hasMultipleSessions = hasMultipleSessions
-                                )
-                            AxQsMediaLayoutVariant.AxSquare2x2 ->
-                                AxSquare2x2MediaContent(
-                                    session = session,
-                                    viewModel = viewModel,
-                                    colors = theme.colors,
-                                    artwork = artwork,
-                                    songKey = songKey,
-                                    interactive = interactive,
-                                    hasMultipleSessions = hasMultipleSessions
-                                )
-                            AxQsMediaLayoutVariant.AxCompact,
-                            AxQsMediaLayoutVariant.AxHalfRow2x1 ->
-                                AxOneRowMediaContent(
-                                    session = session,
-                                    viewModel = viewModel,
-                                    colors = theme.colors,
-                                    artwork = artwork,
-                                    songKey = songKey,
-                                    config = gridConfig,
-                                    interactive = interactive,
-                                    hasMultipleSessions = hasMultipleSessions
-                                )
-                        }
-                    }
                 } else {
                     Box(Modifier.fillMaxSize()) {
-                        if (session != null) {
+                        if (session != null && hasMediaArt) {
                             val songKey = "${session.appName}:${session.title}:${session.subtitle}"
                             MediaArtwork(
                                 artwork = artwork,
                                 songKey = songKey,
-                                overlayColor =
-                                    if (isNonQsGrid) Color.Black else theme.overlayColor
+                                overlayColor = Color.Black
                             )
                         }
                         ExpandedMediaContent(
@@ -210,6 +166,7 @@ internal fun AxMediaCard(
                             interactive = interactive,
                             hasMultipleSessions = hasMultipleSessions
                         )
+                    }
                 }
             }
         }

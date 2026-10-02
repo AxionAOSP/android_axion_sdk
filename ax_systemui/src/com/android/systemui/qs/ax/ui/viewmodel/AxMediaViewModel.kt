@@ -185,9 +185,8 @@ constructor(
     }
 
     fun openSettings() {
-        falsingSystem.runIfNotFalseTap(FalsingManager.LOW_PENALTY) {
-            interactor.openMediaSettings()
-        }
+        cancelGuts()
+        falsingSystem.runIfNotFalseTap(FalsingManager.LOW_PENALTY) { interactor.openMediaSettings() }
     }
 
     fun progress(session: MediaSessionModel): Float {

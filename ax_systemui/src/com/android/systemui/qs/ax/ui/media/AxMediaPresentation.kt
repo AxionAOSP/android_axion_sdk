@@ -18,6 +18,7 @@ package com.android.systemui.qs.ax.ui.media
 
 import android.R as AndroidR
 import android.text.format.DateUtils
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +36,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -43,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.android.systemui.media.remedia.domain.model.MediaSessionModel
 import com.android.systemui.qs.ax.shared.model.AxMediaSurface
+import com.android.systemui.qs.ax.ui.grid.LocalAxQsCellConfig
 import com.android.systemui.qs.ax.ui.viewmodel.AxMediaViewModel
 import com.android.systemui.res.R as SysuiR
 
@@ -51,7 +55,7 @@ internal fun MediaTimestamps(
     session: MediaSessionModel?,
     viewModel: AxMediaViewModel,
     colors: AxMediaColors,
-    modifier: Modifier = Modifier,
+    modifier: Modifier = Modifier
 ) {
     val progress = session?.let(viewModel::progress) ?: 0f
     val totalMs = session?.durationMs ?: 0L
@@ -65,17 +69,17 @@ internal fun MediaTimestamps(
     Row(
         modifier = modifier.fillMaxWidth().padding(top = 1.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = elapsedStr,
             color = colors.foreground.copy(alpha = AxMediaTokens.KeyguardArtworkTintAlpha),
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp)
         )
         Text(
             text = totalStr,
             color = colors.foreground.copy(alpha = AxMediaTokens.KeyguardArtworkTintAlpha),
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp)
         )
     }
 }
@@ -86,38 +90,51 @@ internal fun MediaGuts(
     viewModel: AxMediaViewModel,
     colors: AxMediaColors,
     compact: Boolean,
-    surface: AxMediaSurface,
+    surface: AxMediaSurface
 ) {
+    val canDismiss = surface.dismissible
     val message =
-        if (session.canBeHidden) {
+        if (canDismiss) {
             stringResource(SysuiR.string.controls_media_close_session, session.appName)
         } else {
             stringResource(SysuiR.string.controls_media_active_session)
         }
-    Box(Modifier.fillMaxSize().padding(12.dp)) {
+    val isNonQsGrid = surface != AxMediaSurface.CONTROL
+    val gutsBackground =
+        if (isNonQsGrid) LocalAxQsCellConfig.current.backgroundColor() else Color.Transparent
+    val gutsForeground =
+        if (isNonQsGrid) MaterialTheme.colorScheme.onSurface else colors.foreground
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .clip(AxMediaTokens.MediaCardShape)
+            .background(gutsBackground)
+            .padding(12.dp)
+    ) {
         IconButton(onClick = viewModel::openSettings, modifier = Modifier.align(Alignment.TopEnd)) {
             MaterialIcon(
                 painter = painterResource(SysuiR.drawable.ic_settings),
                 contentDescription = stringResource(SysuiR.string.controls_media_settings_button),
-                tint = colors.foreground,
+                tint = gutsForeground
             )
         }
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.align(Alignment.Center).fillMaxWidth(),
+            modifier = Modifier.align(Alignment.Center).fillMaxWidth()
         ) {
             Text(
                 text = message,
-                color = colors.foreground,
+                color = gutsForeground,
                 style = MaterialTheme.typography.labelMedium,
                 maxLines = if (compact) 3 else 2,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(end = 48.dp),
+                modifier = Modifier.fillMaxWidth().padding(end = 48.dp)
             )
-            val actionButtons: @Composable () -> Unit = {
-                if (session.canBeHidden) {
+            if (compact) {
+                if (canDismiss) {
                     Button(onClick = { viewModel.dismissFromSurface(session, surface) }) {
                         Text(stringResource(SysuiR.string.controls_media_dismiss_button))
                     }
@@ -125,14 +142,17 @@ internal fun MediaGuts(
                 OutlinedButton(onClick = viewModel::cancelGuts) {
                     Text(stringResource(AndroidR.string.cancel))
                 }
-            }
-            if (compact) {
-                actionButtons()
             } else {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    content = { actionButtons() },
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (canDismiss) {
+                        Button(onClick = { viewModel.dismissFromSurface(session, surface) }) {
+                            Text(stringResource(SysuiR.string.controls_media_dismiss_button))
+                        }
+                    }
+                    OutlinedButton(onClick = viewModel::cancelGuts) {
+                        Text(stringResource(AndroidR.string.cancel))
+                    }
+                }
             }
         }
     }

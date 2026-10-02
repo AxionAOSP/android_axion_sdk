@@ -67,12 +67,12 @@ fun AxMediaCarousel(
     ) {
         if (cards.isEmpty()) return@AnimatedVisibility
         val cardKeys = cards.map { it.key }
-        val currentCardKey = viewModel.cards.getOrNull(viewModel.currentIndex)?.key
-        val currentIndex = cardKeys.indexOf(currentCardKey).coerceAtLeast(0)
-        val pagerState = rememberPagerState { cards.size }
-        LaunchedEffect(currentIndex, cards.size) {
-            if (currentIndex != pagerState.currentPage) {
-                pagerState.scrollToPage(currentIndex)
+        val initialCardKey = viewModel.cards.getOrNull(viewModel.currentIndex)?.key
+        val initialIndex = cardKeys.indexOf(initialCardKey).coerceIn(0, (cards.size - 1).coerceAtLeast(0))
+        val pagerState = rememberPagerState(initialPage = initialIndex) { cards.size }
+        LaunchedEffect(cards.size) {
+            if (pagerState.currentPage >= cards.size && cards.isNotEmpty()) {
+                pagerState.scrollToPage(cards.size - 1)
             }
         }
         LaunchedEffect(pagerState.currentPage, cardKeys) {

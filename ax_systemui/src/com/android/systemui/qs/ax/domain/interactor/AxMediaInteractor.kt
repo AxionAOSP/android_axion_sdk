@@ -30,7 +30,7 @@ import javax.inject.Inject
 class AxMediaInteractor
 @Inject
 constructor(
-    private val mediaHistoryRepository: AxMediaHistoryRepository,
+    private val mediaHistoryRepository: AxMediaHistoryRepository
 ) {
     fun getSessionPackageName(sessionKey: Any): String? =
         mediaHistoryRepository.getPackageName(sessionKey)
@@ -43,15 +43,9 @@ constructor(
         sessionB: MediaSessionModel?,
         keyA: Any,
         keyB: Any,
-        lastMediaPackage: String?,
+        lastMediaPackage: String?
     ): Int {
         if (keyA == keyB) return 0
-
-        val isPlayingA = sessionA?.state == MediaSessionState.Playing
-        val isPlayingB = sessionB?.state == MediaSessionState.Playing
-        if (isPlayingA != isPlayingB) {
-            return if (isPlayingA) -1 else 1
-        }
 
         val isActiveA = sessionA?.isActive == true
         val isActiveB = sessionB?.isActive == true
@@ -79,7 +73,7 @@ constructor(
     fun isSessionVisible(
         session: MediaSessionModel?,
         surface: AxMediaSurface,
-        dismissedTokens: Set<AxMediaDismissToken>,
+        dismissedTokens: Set<AxMediaDismissToken>
     ): Boolean {
         if (session == null || !session.isDisplayable()) return false
         if (dismissedTokens.any { it.sessionKey == session.key }) return false
@@ -88,7 +82,7 @@ constructor(
 
     fun sortSessions(
         sessions: List<MediaSessionModel>,
-        lastMediaPackage: String?,
+        lastMediaPackage: String?
     ): List<MediaSessionModel> =
         sessions
             .filter { it.isDisplayable() }

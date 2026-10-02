@@ -16,6 +16,7 @@
 
 package com.android.systemui.qs.ax.ui.media
 
+import android.graphics.drawable.Drawable
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
@@ -103,8 +104,9 @@ internal fun MediaArtwork(
     val currentBitmapState = remember { mutableStateOf<ImageBitmap?>(null) }
     val transitionProgress = remember { Animatable(1f) }
 
-    val newBitmap = remember(songKey, artwork != null) {
-        AxMediaArtProcessor.getCardBackground((artwork as? IconModel.Loaded)?.drawable, songKey)
+    val drawable = (artwork as? IconModel.Loaded)?.drawable
+    val newBitmap = remember(songKey, drawable) {
+        AxMediaArtProcessor.getCardBackground(drawable, songKey)
     }
 
     LaunchedEffect(newBitmap) {
@@ -125,6 +127,7 @@ internal fun MediaArtwork(
         } else {
             currentBitmapState.value = null
             previousBitmapState.value = null
+            transitionProgress.snapTo(1f)
         }
     }
 
@@ -171,11 +174,12 @@ fun AxMediaAlbumCover(
     val transitionProgress = remember { Animatable(1f) }
 
     val effectiveArtwork = artwork ?: session?.background
-    val rawBitmap = remember(songKey, effectiveArtwork != null) {
-        AxMediaArtProcessor.getThumbnail((effectiveArtwork as? IconModel.Loaded)?.drawable, songKey)
+    val drawable = (effectiveArtwork as? IconModel.Loaded)?.drawable
+    val rawBitmap = remember(songKey, drawable) {
+        AxMediaArtProcessor.getThumbnail(drawable, songKey)
     }
 
-    LaunchedEffect(rawBitmap) {
+    LaunchedEffect(rawBitmap, effectiveArtwork) {
         if (rawBitmap != null) {
             if (currentBitmapState.value != null && rawBitmap != currentBitmapState.value) {
                 previousBitmapState.value = currentBitmapState.value
@@ -190,9 +194,10 @@ fun AxMediaAlbumCover(
                 currentBitmapState.value = rawBitmap
                 transitionProgress.snapTo(1f)
             }
-        } else if (effectiveArtwork == null) {
+        } else if (effectiveArtwork == null || effectiveArtwork is IconModel.Resource) {
             currentBitmapState.value = null
             previousBitmapState.value = null
+            transitionProgress.snapTo(1f)
         }
     }
 

@@ -50,23 +50,26 @@ object AxMediaArtProcessor {
     ): ImageBitmap? {
         if (drawable == null || targetWidth <= 0 || targetHeight <= 0) return null
 
-        val fullCacheKey = if (!cacheKey.isNullOrEmpty()) {
-            "${cacheKey}:${targetWidth}x${targetHeight}"
-        } else null
+        val drawableId = when (drawable) {
+            is BitmapDrawable -> drawable.bitmap?.let { "bmp_${it.generationId}" } ?: System.identityHashCode(drawable).toString()
+            else -> System.identityHashCode(drawable).toString()
+        }
 
-        if (fullCacheKey != null) {
-            val cached = memoryCache.get(fullCacheKey)
-            if (cached != null) {
-                return cached
-            }
+        val fullCacheKey = if (!cacheKey.isNullOrEmpty()) {
+            "${cacheKey}:${drawableId}:${targetWidth}x${targetHeight}"
+        } else {
+            "${drawableId}:${targetWidth}x${targetHeight}"
+        }
+
+        val cached = memoryCache.get(fullCacheKey)
+        if (cached != null) {
+            return cached
         }
 
         val hwBitmap = processHardwareBitmap(drawable, targetWidth, targetHeight) ?: return null
         val imageBitmap = hwBitmap.asImageBitmap()
 
-        if (fullCacheKey != null) {
-            memoryCache.put(fullCacheKey, imageBitmap)
-        }
+        memoryCache.put(fullCacheKey, imageBitmap)
 
         return imageBitmap
     }
