@@ -83,7 +83,10 @@ final class KernelControlNode {
 
     AxKernelControl snapshot(ContentResolver resolver) {
         if (!canUse() || TextUtils.isEmpty(id)) return null;
-        int current = getSavedValue(resolver);
+        // Report what the kernel is actually running instead of the value persisted in
+        // Settings: the service is initialized during AMS.systemReady(), i.e. before the
+        // device post-boot scripts had a chance to apply their runtime governor/freqs.
+        int current = readValue();
         return new AxKernelControl(id, group, type, current, defaultValue, availableValues, valueLabels);
     }
 
