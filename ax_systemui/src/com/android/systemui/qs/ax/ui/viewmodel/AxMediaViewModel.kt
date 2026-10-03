@@ -82,7 +82,7 @@ constructor(
 
     val currentSession: MediaSessionModel? by derivedStateOf {
         val selected = activeSessions.getOrNull(interactor.currentCarouselIndex)
-        selected?.takeIf { it.isDisplayable() } ?: activeSessions.firstOrNull()
+        selected?.takeIf { it.isDisplayable() && it.isActive } ?: activeSessions.firstOrNull { it.isActive }
     }
 
     fun currentSession(surface: AxMediaSurface): MediaSessionModel? {

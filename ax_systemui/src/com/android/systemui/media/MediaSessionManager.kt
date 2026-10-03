@@ -297,7 +297,7 @@ constructor(
 
     private fun publishState() {
         val sorted = resolvedSessions.values.sortedWith(sessionComparator)
-        val active = sorted.firstOrNull()
+        val active = sorted.firstOrNull { !it.isResumption }
         val hasPlaying = sorted.any { it.isPlaying }
 
         val newState = MediaSessionsState(

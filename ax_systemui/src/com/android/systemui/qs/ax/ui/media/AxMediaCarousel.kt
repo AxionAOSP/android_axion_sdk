@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -59,7 +60,20 @@ fun AxMediaCarousel(
     pagerIndicator: @Composable BoxScope.(PagerState) -> Unit = {}
 ) {
     val rawCards = cardFilter?.let { viewModel.cards.filter(it) } ?: viewModel.cards
-    val cards = if (cardComparator != null) rawCards.sortedWith(cardComparator) else rawCards
+    val stableCardKeys = remember { mutableStateListOf<Any>() }
+    val currentRawKeys = remember(rawCards) { rawCards.map { it.key }.toSet() }
+
+    stableCardKeys.removeAll { it !in currentRawKeys }
+    for (card in rawCards) {
+        if (card.key !in stableCardKeys) {
+            stableCardKeys.add(card.key)
+        }
+    }
+
+    val cardMap = remember(rawCards) { rawCards.associateBy { it.key } }
+    val cards = remember(stableCardKeys.toList(), rawCards) {
+        stableCardKeys.mapNotNull { cardMap[it] }
+    }
     val hasCards = cards.isNotEmpty()
     AnimatedVisibility(
         visible = viewModel.isCarouselVisible && hasCards,

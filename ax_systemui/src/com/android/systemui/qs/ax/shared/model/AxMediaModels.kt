@@ -79,12 +79,7 @@ fun MediaSessionModel.isDisplayable(): Boolean = title.isNotBlank()
 
 fun MediaSessionModel.isVisibleOn(surface: AxMediaSurface): Boolean {
     if (!isDisplayable()) return false
-    return when (surface) {
-        AxMediaSurface.CONTROL -> true
-        AxMediaSurface.LOCKSCREEN,
-        AxMediaSurface.SEPARATE_QQS,
-        AxMediaSurface.DYNAMIC_BAR -> isActive
-    }
+    return isActive
 }
 
 class AxMediaSessionModel(
