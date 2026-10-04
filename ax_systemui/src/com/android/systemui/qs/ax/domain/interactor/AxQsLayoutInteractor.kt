@@ -22,6 +22,7 @@ import com.android.systemui.qs.ax.shared.model.AxQsGridItem
 import com.android.systemui.qs.ax.shared.model.AxQsGridPosition
 import com.android.systemui.qs.ax.shared.model.AxQsSpan
 import com.android.systemui.qs.ax.ui.grid.fitAxQsGridItems
+import com.android.systemui.qs.ax.ui.grid.packItems
 import javax.inject.Inject
 
 @SysUISingleton
@@ -59,6 +60,30 @@ constructor() {
         maxRows: Int = QQS_MAX_ROWS,
     ): Boolean {
         return !wouldStraddleQqs(span, row, maxRows)
+    }
+
+    fun <T> sanitizePositionsForTogetherMode(
+        items: List<AxQsGridItem<T>>,
+        columns: Int,
+        maxRows: Int = QQS_MAX_ROWS,
+    ): List<AxQsGridItem<T>> {
+        val hasStraddleConflict =
+            items.any { item ->
+                val row = item.position?.row ?: return@any false
+                wouldStraddleQqs(item.span, row, maxRows)
+            }
+        if (!hasStraddleConflict) return items
+
+        val placements = packItems(items, columns, maxRows = null, allowStraddle = false)
+        val placementMap = placements.associate { it.item.id to AxQsGridPosition(it.column, it.row) }
+        return items.map { item ->
+            val newPos = placementMap[item.id]
+            if (newPos != null && newPos != item.position) {
+                item.copy(position = newPos)
+            } else {
+                item
+            }
+        }
     }
 
     fun canResizeControl(control: AxQsControl, targetSpan: AxQsSpan, columns: Int): Boolean {

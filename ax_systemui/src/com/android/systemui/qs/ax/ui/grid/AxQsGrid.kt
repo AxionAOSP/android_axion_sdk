@@ -48,6 +48,7 @@ internal fun <T> AxQsGrid(
     minimumRows: Int = 0,
     animateItemBounds: Boolean = false,
     staticItemId: String? = null,
+    allowStraddle: Boolean = false,
     onItemBounds: (String, Rect) -> Unit = { _, _ -> },
     onCells: ((List<AxQsGridCell>) -> Unit)? = null,
     content: @Composable (AxQsGridItem<T>) -> Unit,
@@ -55,7 +56,9 @@ internal fun <T> AxQsGrid(
     require(columns > 0)
     val itemSnapshot = items.toList()
     val placements =
-        remember(itemSnapshot, columns, maxRows) { packItems(itemSnapshot, columns, maxRows) }
+        remember(itemSnapshot, columns, maxRows, allowStraddle) {
+            packItems(itemSnapshot, columns, maxRows, allowStraddle)
+        }
     LookaheadScope {
         val lookaheadScope = this
         val boundsTransform = remember {
@@ -179,6 +182,7 @@ internal fun <T> packItems(
     items: List<AxQsGridItem<T>>,
     columns: Int,
     maxRows: Int?,
+    allowStraddle: Boolean = false,
 ): List<AxQsPlacement<T>> {
     val occupied = mutableListOf<BooleanArray>()
     val placements = mutableMapOf<String, AxQsPlacement<T>>()
@@ -188,7 +192,7 @@ internal fun <T> packItems(
         val height = item.span.rows
         if (column < 0 || column + width > columns || row < 0) return null
         if (maxRows != null && row + height > maxRows) return null
-        if (height > 1 && row == 1) return null
+        if (!allowStraddle && height > 1 && row == 1) return null
         val fits =
             (row until row + height).all { candidateRow ->
                 (column until column + width).all { candidateColumn ->
@@ -237,13 +241,19 @@ internal fun <T> fitAxQsGridItems(
     items: List<AxQsGridItem<T>>,
     columns: Int,
     maxRows: Int,
-): List<AxQsGridItem<T>> = packItems(items, columns, maxRows).map { it.item }
+    allowStraddle: Boolean = false,
+): List<AxQsGridItem<T>> = packItems(items, columns, maxRows, allowStraddle).map { it.item }
 
 internal fun <T> canFitAxQsGridItems(
     items: List<AxQsGridItem<T>>,
     columns: Int,
     maxRows: Int,
-): Boolean = packItems(items, columns, maxRows).size == items.size
+    allowStraddle: Boolean = false,
+): Boolean = packItems(items, columns, maxRows, allowStraddle).size == items.size
 
-internal fun <T> axQsGridRowCount(items: List<AxQsGridItem<T>>, columns: Int, maxRows: Int?): Int =
-    packItems(items, columns, maxRows).maxOfOrNull { it.row + it.item.span.rows } ?: 0
+internal fun <T> axQsGridRowCount(
+    items: List<AxQsGridItem<T>>,
+    columns: Int,
+    maxRows: Int?,
+    allowStraddle: Boolean = false,
+): Int = packItems(items, columns, maxRows, allowStraddle).maxOfOrNull { it.row + it.item.span.rows } ?: 0

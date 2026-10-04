@@ -194,6 +194,11 @@ constructor(
     fun <T> filterQqsItems(items: List<AxQsGridItem<T>>, columns: Int): List<AxQsGridItem<T>> =
         layoutInteractor.filterQqsItems(items, columns, qqsMaxRows)
 
+    fun <T> sanitizePositionsForTogetherMode(
+        items: List<AxQsGridItem<T>>,
+        columns: Int,
+    ): List<AxQsGridItem<T>> = layoutInteractor.sanitizePositionsForTogetherMode(items, columns, qqsMaxRows)
+
     fun wouldStraddleQqs(
         span: AxQsSpan,
         position: AxQsGridPosition?,

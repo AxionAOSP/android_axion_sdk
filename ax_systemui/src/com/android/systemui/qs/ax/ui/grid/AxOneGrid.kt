@@ -140,6 +140,7 @@ internal fun ContentScope.AxOneGrid(
     val tiles = viewModel.containerViewModel.tileGridViewModel.tileViewModels
     val layout = LocalAxQsLayout.current
     val splitShade = viewModel.isInSplitShade
+    val separateMode = axQsViewModel.panelMode == AxQsPanelMode.SEPARATE && !splitShade
     LaunchedEffect(splitShade) {
         if (splitShade) {
             scrollState.scrollTo(0)
@@ -188,54 +189,80 @@ internal fun ContentScope.AxOneGrid(
 
     val spans = axQsViewModel.spans(layout)
     val gridItems: List<AxQsGridItem<AxQsGridValue>> =
-        remember(values, layout, columns, positions, spans) {
+        remember(values, layout, columns, positions, spans, separateMode) {
             val orderedIds =
                 axQsViewModel.orderedIds(
                     layout = layout,
                     availableIds = values.keys.toList(),
                     defaultIds = tiles.map { it.spec.spec },
                 )
-            orderedIds.mapNotNull { id ->
-                when (val value = values[id]) {
-                    is AxQsGridValue.Tile ->
-                        AxQsGridItem<AxQsGridValue>(
-                            id = id,
-                            span =
-                                axQsViewModel
-                                    .span(id, layout, AxQsSpan.TileDefault)
-                                    .coerceTileSpan(columns),
-                            minSpan = AxQsSpan.TileDefault,
-                            maxSpan = AxQsSpan(columns = minOf(2, columns), rows = 2),
-                            value = value,
-                            position = positions[id],
-                        )
-                    is AxQsGridValue.Control -> {
-                        val controlSpans = value.control.spans(columns)
-                        AxQsGridItem<AxQsGridValue>(
-                            id = id,
-                            span =
-                                axQsViewModel.span(id, layout, controlSpans.default).let {
-                                    value.control.coerceSpan(it, columns)
-                                },
-                            minSpan = controlSpans.min,
-                            maxSpan = controlSpans.max,
-                            value = value,
-                            position = positions[id],
-                        )
+            val items =
+                orderedIds.mapNotNull { id ->
+                    when (val value = values[id]) {
+                        is AxQsGridValue.Tile ->
+                            AxQsGridItem<AxQsGridValue>(
+                                id = id,
+                                span =
+                                    axQsViewModel
+                                        .span(id, layout, AxQsSpan.TileDefault)
+                                        .coerceTileSpan(columns),
+                                minSpan = AxQsSpan.TileDefault,
+                                maxSpan = AxQsSpan(columns = minOf(2, columns), rows = 2),
+                                value = value,
+                                position = positions[id],
+                            )
+                        is AxQsGridValue.Control -> {
+                            val controlSpans = value.control.spans(columns)
+                            AxQsGridItem<AxQsGridValue>(
+                                id = id,
+                                span =
+                                    axQsViewModel.span(id, layout, controlSpans.default).let {
+                                        value.control.coerceSpan(it, columns)
+                                    },
+                                minSpan = controlSpans.min,
+                                maxSpan = controlSpans.max,
+                                value = value,
+                                position = positions[id],
+                            )
+                        }
+                        is AxQsGridValue.Stack ->
+                            AxQsGridItem<AxQsGridValue>(
+                                id = id,
+                                span = AxQsSpan(columns = 2, rows = 2),
+                                minSpan = AxQsSpan(columns = 2, rows = 2),
+                                maxSpan = AxQsSpan(columns = 2, rows = 2),
+                                value = value,
+                                position = positions[id],
+                            )
+                        null -> null
                     }
-                    is AxQsGridValue.Stack ->
-                        AxQsGridItem<AxQsGridValue>(
-                            id = id,
-                            span = AxQsSpan(columns = 2, rows = 2),
-                            minSpan = AxQsSpan(columns = 2, rows = 2),
-                            maxSpan = AxQsSpan(columns = 2, rows = 2),
-                            value = value,
-                            position = positions[id],
-                        )
-                    null -> null
+                }
+            if (!separateMode) {
+                axQsViewModel.sanitizePositionsForTogetherMode(items, columns)
+            } else {
+                items
+            }
+        }
+
+    LaunchedEffect(separateMode, gridItems) {
+        if (!separateMode && !isEditing) {
+            val layoutData = axQsViewModel.layoutData(layout)
+            if (layoutData != null) {
+                val conflictingItems =
+                    gridItems.filter { item ->
+                        val savedPos = layoutData.positions[item.id]
+                        savedPos != null && item.position != null && savedPos != item.position
+                    }
+                if (conflictingItems.isNotEmpty()) {
+                    val updatedPositions = layoutData.positions.toMutableMap()
+                    conflictingItems.forEach { item ->
+                        item.position?.let { updatedPositions[item.id] = it }
+                    }
+                    axQsViewModel.setLayoutData(layoutData.copy(positions = updatedPositions))
                 }
             }
         }
+    }
 
     val editController =
         rememberAxGridEditController(
@@ -243,6 +270,7 @@ internal fun ContentScope.AxOneGrid(
             layout = layout,
             columns = columns,
             isEditing = isEditing,
+            isSeparateMode = separateMode,
             allEditTiles = allEditTiles,
             tiles = tiles,
             axQsViewModel = axQsViewModel,
@@ -288,7 +316,6 @@ internal fun ContentScope.AxOneGrid(
         )
     }
 
-    val separateMode = axQsViewModel.panelMode == AxQsPanelMode.SEPARATE && !splitShade
     val isDirectQs = axQsViewModel.isQsBypassingShade
     val isQsScene by remember(isDirectQs, separateMode) {
         derivedStateOf {
@@ -555,14 +582,15 @@ internal fun ContentScope.AxOneGrid(
                                 ) {
                                     val gridItemsToRender = if (isEditing) editController.listState.items else gridItems
                                     if (gridItemsToRender.isNotEmpty()) {
-                                        AxQsGrid(
-                                            items = gridItemsToRender,
-                                            columns = columns,
-                                            rowHeight = effectiveRowHeight,
-                                            spacing = spacing,
-                                            maxRows = null,
-                                            staticItemId = if (isEditing) editController.listState.draggedId else null,
-                                            animateItemBounds = isEditing,
+                                         AxQsGrid(
+                                             items = gridItemsToRender,
+                                             columns = columns,
+                                             rowHeight = effectiveRowHeight,
+                                             spacing = spacing,
+                                             maxRows = null,
+                                             allowStraddle = separateMode,
+                                             staticItemId = if (isEditing) editController.listState.draggedId else null,
+                                             animateItemBounds = isEditing,
                                             onItemBounds = { id, bounds ->
                                                 if (isEditing) {
                                                     editController.listState.updateItemBounds(id, AxQsGridSection.TILES, bounds)

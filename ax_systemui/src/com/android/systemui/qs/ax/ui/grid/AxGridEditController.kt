@@ -40,6 +40,7 @@ class AxGridEditController(
     val listState: AxQsEditListState<AxQsGridValue>,
     val selectedId: MutableState<String?>,
     val showResetDialog: MutableState<Boolean>,
+    val isSeparateMode: Boolean,
     private val layout: AxQsLayout,
     private val columns: Int,
     private val axQsViewModel: AxQsViewModel,
@@ -48,7 +49,7 @@ class AxGridEditController(
     private val liveTilesBySpec: Map<String, TileViewModel>,
 ) {
     fun saveOrders() {
-        val placements = packItems(listState.items, columns, maxRows = null)
+        val placements = packItems(listState.items, columns, maxRows = null, allowStraddle = isSeparateMode)
         val newPositions = placements.associate { it.item.id to AxQsGridPosition(it.column, it.row) }
         placements.forEach { placement ->
             listState.update(placement.item.id) {
@@ -110,9 +111,13 @@ class AxGridEditController(
         if (!canResize(item, span)) return
         val current = listState.item(item.id) ?: item
         val wouldStraddle =
-            current.position?.row?.let { row ->
-                AxQsLayoutInteractor.wouldStraddleQqs(span, row, listState.qqsMaxRows)
-            } ?: false
+            if (isSeparateMode) {
+                false
+            } else {
+                current.position?.row?.let { row ->
+                    AxQsLayoutInteractor.wouldStraddleQqs(span, row, listState.qqsMaxRows)
+                } ?: false
+            }
         val newPosition = if (wouldStraddle) null else current.position
         listState.update(item.id) {
             it.copy(span = span, position = newPosition)
@@ -279,6 +284,7 @@ fun rememberAxGridEditController(
     layout: AxQsLayout,
     columns: Int,
     isEditing: Boolean,
+    isSeparateMode: Boolean,
     allEditTiles: List<EditTileViewModel>?,
     tiles: List<TileViewModel>,
     axQsViewModel: AxQsViewModel,
@@ -289,8 +295,12 @@ fun rememberAxGridEditController(
     val showResetDialog = remember { mutableStateOf(false) }
 
     val listState =
-        remember(isEditing, layout, resetEpoch) {
-            AxQsEditListState(gridItems, axQsViewModel.qqsMaxRows)
+        remember(isEditing, layout, resetEpoch, isSeparateMode) {
+            AxQsEditListState(
+                initialItems = gridItems,
+                initialQqsMaxRows = axQsViewModel.qqsMaxRows,
+                allowStraddle = isSeparateMode,
+            )
         }
 
     val editTilesBySpec =
@@ -336,11 +346,12 @@ fun rememberAxGridEditController(
         }
     }
 
-    return remember(listState, layout, columns, axQsViewModel, editModeViewModel, editTilesBySpec, liveTilesBySpec) {
+    return remember(listState, layout, columns, isSeparateMode, axQsViewModel, editModeViewModel, editTilesBySpec, liveTilesBySpec) {
         AxGridEditController(
             listState = listState,
             selectedId = selectedId,
             showResetDialog = showResetDialog,
+            isSeparateMode = isSeparateMode,
             layout = layout,
             columns = columns,
             axQsViewModel = axQsViewModel,

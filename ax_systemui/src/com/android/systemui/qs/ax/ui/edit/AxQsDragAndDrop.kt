@@ -59,6 +59,7 @@ import kotlin.math.abs
 class AxQsEditListState<T>(
     initialItems: List<AxQsGridItem<T>>,
     initialQqsMaxRows: Int = AxQsLayoutInteractor.QQS_MAX_ROWS,
+    val allowStraddle: Boolean = false,
 ) {
     val qqsMaxRowsState = mutableIntStateOf(initialQqsMaxRows)
     val qqsMaxRows: Int
@@ -218,11 +219,12 @@ class AxQsEditListState<T>(
                 .filter { cell ->
                     cell.position.column + item.span.columns <= columns &&
                         cell.position.row + item.span.rows <= rows &&
-                        !AxQsLayoutInteractor.wouldStraddleQqs(
-                            item.span,
-                            cell.position.row,
-                            qqsMaxRows,
-                        )
+                        (allowStraddle ||
+                            !AxQsLayoutInteractor.wouldStraddleQqs(
+                                item.span,
+                                cell.position.row,
+                                qqsMaxRows,
+                            ))
                 }
                 .minByOrNull { cell ->
                     (cell.bounds.topLeft - itemTopLeft).getDistanceSquared()
