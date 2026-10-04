@@ -21,7 +21,9 @@ interface DepthWallpaperRepository {
     val isDepthEnabled: StateFlow<Boolean>
     val depthMask: StateFlow<DepthMaskModel?>
     val wallpaperZoom: StateFlow<Float>
+    val wallpaperOffset: StateFlow<Float>
 
     fun setWallpaperZoom(zoom: Float)
+    fun setWallpaperOffset(offset: Float)
     fun refresh()
 }

@@ -58,6 +58,9 @@ constructor(
     private val _wallpaperZoom = MutableStateFlow(1.0f)
     override val wallpaperZoom: StateFlow<Float> = _wallpaperZoom.asStateFlow()
 
+    private val _wallpaperOffset = MutableStateFlow(0.5f)
+    override val wallpaperOffset: StateFlow<Float> = _wallpaperOffset.asStateFlow()
+
     private val appContext = context.applicationContext ?: context
     private val contentResolver: ContentResolver = appContext.contentResolver
     private val wallpaperManager: WallpaperManager? = WallpaperManager.getInstance(appContext)
@@ -89,6 +92,10 @@ constructor(
 
     override fun setWallpaperZoom(zoom: Float) {
         _wallpaperZoom.value = zoom
+    }
+
+    override fun setWallpaperOffset(offset: Float) {
+        _wallpaperOffset.value = offset
     }
 
     override fun refresh() {

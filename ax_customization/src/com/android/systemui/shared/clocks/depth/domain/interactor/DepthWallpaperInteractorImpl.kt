@@ -68,6 +68,8 @@ constructor(
             .map { zoom -> MathUtils.lerp(wallpaperMinScale, wallpaperMaxScale, 1f - zoom) }
             .stateIn(scope, SharingStarted.Eagerly, 1f)
 
+    override val wallpaperOffset: StateFlow<Float> = repository.wallpaperOffset
+
     private val _activeDepthMask = MutableStateFlow<DepthMaskModel?>(null)
     override val activeDepthMask: StateFlow<DepthMaskModel?> = _activeDepthMask.asStateFlow()
 

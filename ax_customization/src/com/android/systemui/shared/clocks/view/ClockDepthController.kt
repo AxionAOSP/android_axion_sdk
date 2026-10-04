@@ -31,6 +31,7 @@ import com.android.systemui.shared.clocks.DepthWallpaperProvider
 import com.android.systemui.shared.clocks.depth.domain.interactor.DepthWallpaperInteractor
 import com.android.systemui.shared.clocks.depth.shared.model.DepthMaskModel
 import java.io.PrintWriter
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlinx.coroutines.CoroutineScope
@@ -111,6 +112,16 @@ class ClockDepthController(private val view: View) {
             interactor.wallpaperScale.collect { scale ->
                 if (metrics.zoom != scale) {
                     metrics = metrics.copy(zoom = scale)
+                    pathDirty = true
+                    view.postInvalidateOnAnimation()
+                }
+            }
+        }
+
+        scope.launch {
+            interactor.wallpaperOffset.collect { offset ->
+                if (abs(metrics.wallpaperOffset - offset) > 0.001f) {
+                    metrics = metrics.copy(wallpaperOffset = offset)
                     pathDirty = true
                     view.postInvalidateOnAnimation()
                 }
@@ -238,6 +249,7 @@ class ClockDepthController(private val view: View) {
             viewScaleX = viewScaleX,
             viewScaleY = viewScaleY,
             zoom = nextZoom,
+            wallpaperOffset = interactor.wallpaperOffset.value,
         )
 
         if (metrics != nextMetrics) {
@@ -259,7 +271,8 @@ class ClockDepthController(private val view: View) {
         if (wallAspect > screenAspect) {
             visibleW = (screenAspect / wallAspect) * 10000f
             visibleH = 10000f
-            cropLeft = (10000f - visibleW) / 2f
+            val offset = metrics.wallpaperOffset.coerceIn(0f, 1f)
+            cropLeft = (10000f - visibleW) * offset
             cropTop = 0f
         } else {
             visibleW = 10000f
@@ -394,6 +407,7 @@ class ClockDepthController(private val view: View) {
         val viewScaleX: Float = 1f,
         val viewScaleY: Float = 1f,
         val zoom: Float = 1f,
+        val wallpaperOffset: Float = 0.5f,
     )
 
     private companion object {

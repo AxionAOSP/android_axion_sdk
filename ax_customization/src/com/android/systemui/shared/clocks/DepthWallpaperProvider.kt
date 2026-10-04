@@ -32,10 +32,14 @@ object DepthWallpaperProvider {
     @Volatile
     private var cachedWallpaperZoom: Float = 1.0f
 
+    @Volatile
+    private var cachedWallpaperOffset: Float = 0.5f
+
     fun getRepository(context: Context): DepthWallpaperRepository {
         return repositoryInstance ?: synchronized(this) {
             repositoryInstance ?: DepthWallpaperRepositoryImpl(context.applicationContext ?: context).also { repo ->
                 repo.setWallpaperZoom(cachedWallpaperZoom)
+                repo.setWallpaperOffset(cachedWallpaperOffset)
                 repositoryInstance = repo
             }
         }
@@ -55,6 +59,9 @@ object DepthWallpaperProvider {
     val currentWallpaperZoom: Float
         get() = repositoryInstance?.wallpaperZoom?.value ?: cachedWallpaperZoom
 
+    val currentWallpaperOffset: Float
+        get() = repositoryInstance?.wallpaperOffset?.value ?: cachedWallpaperOffset
+
     fun init(context: Context) {
         getInteractor(context)
     }
@@ -64,10 +71,16 @@ object DepthWallpaperProvider {
         repositoryInstance?.setWallpaperZoom(zoom)
     }
 
+    fun setWallpaperOffset(offset: Float) {
+        cachedWallpaperOffset = offset
+        repositoryInstance?.setWallpaperOffset(offset)
+    }
+
     fun dump(pw: PrintWriter) {
         pw.println("DepthWallpaperProvider:")
         pw.println("  isEnabled=$isEnabled")
         pw.println("  currentWallpaperZoom=$currentWallpaperZoom (cached=$cachedWallpaperZoom)")
+        pw.println("  currentWallpaperOffset=$currentWallpaperOffset (cached=$cachedWallpaperOffset)")
         pw.println("  hasRepository=${repositoryInstance != null}")
         pw.println("  hasInteractor=${interactorInstance != null}")
     }

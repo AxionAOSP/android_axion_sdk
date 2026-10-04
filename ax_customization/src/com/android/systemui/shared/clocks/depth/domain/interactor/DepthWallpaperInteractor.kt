@@ -21,6 +21,7 @@ interface DepthWallpaperInteractor {
     val isDepthAvailable: StateFlow<Boolean>
     val activeDepthMask: StateFlow<DepthMaskModel?>
     val wallpaperScale: StateFlow<Float>
+    val wallpaperOffset: StateFlow<Float>
 
     fun setWallpaperZoom(zoom: Float)
     fun setVisible(visible: Boolean)
