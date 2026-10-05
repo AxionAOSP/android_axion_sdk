@@ -103,31 +103,38 @@ internal fun MediaArtwork(
     val previousBitmapState = remember { mutableStateOf<ImageBitmap?>(null) }
     val currentBitmapState = remember { mutableStateOf<ImageBitmap?>(null) }
     val transitionProgress = remember { Animatable(1f) }
+    val displayedSongKey = remember { mutableStateOf<String?>(null) }
 
     val drawable = (artwork as? IconModel.Loaded)?.drawable
     val newBitmap = remember(songKey, drawable) {
         AxMediaArtProcessor.getCardBackground(drawable, songKey)
     }
 
-    LaunchedEffect(newBitmap) {
+    LaunchedEffect(newBitmap, songKey) {
         if (newBitmap != null) {
-            if (currentBitmapState.value != null && newBitmap != currentBitmapState.value) {
-                previousBitmapState.value = currentBitmapState.value
-                currentBitmapState.value = newBitmap
-                transitionProgress.snapTo(0f)
-                transitionProgress.animateTo(
-                    1f,
-                    tween(AxMediaTokens.ArtworkCrossfadeDurationMs, easing = LinearEasing)
-                )
-                previousBitmapState.value = null
-            } else {
-                currentBitmapState.value = newBitmap
-                transitionProgress.snapTo(1f)
+            if (currentBitmapState.value !== newBitmap) {
+                if (currentBitmapState.value != null && displayedSongKey.value != null &&
+                    songKey != displayedSongKey.value
+                ) {
+                    previousBitmapState.value = currentBitmapState.value
+                    currentBitmapState.value = newBitmap
+                    transitionProgress.snapTo(0f)
+                    transitionProgress.animateTo(
+                        1f,
+                        tween(AxMediaTokens.ArtworkCrossfadeDurationMs, easing = LinearEasing)
+                    )
+                    previousBitmapState.value = null
+                } else {
+                    currentBitmapState.value = newBitmap
+                    transitionProgress.snapTo(1f)
+                }
+                displayedSongKey.value = songKey
             }
-        } else {
+        } else if (artwork == null || artwork is IconModel.Resource) {
             currentBitmapState.value = null
             previousBitmapState.value = null
             transitionProgress.snapTo(1f)
+            displayedSongKey.value = songKey
         }
     }
 
@@ -172,6 +179,7 @@ fun AxMediaAlbumCover(
     val previousBitmapState = remember { mutableStateOf<ImageBitmap?>(null) }
     val currentBitmapState = remember { mutableStateOf<ImageBitmap?>(null) }
     val transitionProgress = remember { Animatable(1f) }
+    val displayedSongKey = remember { mutableStateOf<String?>(null) }
 
     val effectiveArtwork = artwork ?: session?.background
     val drawable = (effectiveArtwork as? IconModel.Loaded)?.drawable
@@ -179,25 +187,31 @@ fun AxMediaAlbumCover(
         AxMediaArtProcessor.getThumbnail(drawable, songKey)
     }
 
-    LaunchedEffect(rawBitmap, effectiveArtwork) {
+    LaunchedEffect(rawBitmap, songKey) {
         if (rawBitmap != null) {
-            if (currentBitmapState.value != null && rawBitmap != currentBitmapState.value) {
-                previousBitmapState.value = currentBitmapState.value
-                currentBitmapState.value = rawBitmap
-                transitionProgress.snapTo(0f)
-                transitionProgress.animateTo(
-                    1f,
-                    tween(AxMediaTokens.ArtworkCrossfadeDurationMs, easing = LinearEasing)
-                )
-                previousBitmapState.value = null
-            } else {
-                currentBitmapState.value = rawBitmap
-                transitionProgress.snapTo(1f)
+            if (currentBitmapState.value !== rawBitmap) {
+                if (currentBitmapState.value != null && displayedSongKey.value != null &&
+                    songKey != displayedSongKey.value
+                ) {
+                    previousBitmapState.value = currentBitmapState.value
+                    currentBitmapState.value = rawBitmap
+                    transitionProgress.snapTo(0f)
+                    transitionProgress.animateTo(
+                        1f,
+                        tween(AxMediaTokens.ArtworkCrossfadeDurationMs, easing = LinearEasing)
+                    )
+                    previousBitmapState.value = null
+                } else {
+                    currentBitmapState.value = rawBitmap
+                    transitionProgress.snapTo(1f)
+                }
+                displayedSongKey.value = songKey
             }
         } else if (effectiveArtwork == null || effectiveArtwork is IconModel.Resource) {
             currentBitmapState.value = null
             previousBitmapState.value = null
             transitionProgress.snapTo(1f)
+            displayedSongKey.value = songKey
         }
     }
 
