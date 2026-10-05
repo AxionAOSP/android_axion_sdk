@@ -80,12 +80,13 @@ fun ContentScope.AxStackedTileWidget(
     isClickable: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
-    if (tiles.isEmpty()) return
+    val distinctTiles = remember(tiles) { tiles.distinctBy { it.spec.spec } }
+    if (distinctTiles.isEmpty()) return
 
     val view = LocalView.current
     val cellConfig = LocalAxQsCellConfig.current
     val coroutineScope = rememberCoroutineScope()
-    val pagerState = rememberPagerState(pageCount = { tiles.size })
+    val pagerState = rememberPagerState(pageCount = { distinctTiles.size })
     val tileShape = RoundedCornerShape(cellConfig.largeCornerRadius)
     val tileBackgroundColor = AxTileColorsDefaults.backgroundTileColors()
     val animatedBgColor by animateColorAsState(tileBackgroundColor, label = "AxStackedTileBg")
@@ -99,7 +100,7 @@ fun ContentScope.AxStackedTileWidget(
         }
 
     TileListener(
-        tiles = tiles,
+        tiles = distinctTiles,
         listeningEnabled = { isClickable },
     )
 
@@ -109,18 +110,18 @@ fun ContentScope.AxStackedTileWidget(
                 .fillMaxSize()
                 .clip(tileShape)
                 .background(animatedBgColor)
-                .interceptParentTouch(enabled = isClickable && tiles.size > 1, view = view)
+                .interceptParentTouch(enabled = isClickable && distinctTiles.size > 1, view = view)
                 .then(surfaceRevealModifier),
         contentAlignment = Alignment.Center,
     ) {
         VerticalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize(),
-            userScrollEnabled = isClickable && tiles.size > 1,
+            userScrollEnabled = isClickable && distinctTiles.size > 1,
             beyondViewportPageCount = 1,
-            key = { index -> tiles[index].spec.spec },
+            key = { index -> "${item.id}_${distinctTiles.getOrNull(index)?.spec?.spec ?: index}" },
         ) { pageIndex ->
-            val tile = tiles[pageIndex]
+            val tile = distinctTiles.getOrNull(pageIndex) ?: return@VerticalPager
             AxStackedTilePageContent(
                 tile = tile,
                 detailsViewModel = detailsViewModel,
@@ -130,9 +131,9 @@ fun ContentScope.AxStackedTileWidget(
             )
         }
 
-        if (tiles.size > 1) {
+        if (distinctTiles.size > 1) {
             AxVerticalDotIndicator(
-                pageCount = tiles.size,
+                pageCount = distinctTiles.size,
                 currentPage = pagerState.currentPage,
                 modifier = Modifier.align(Alignment.CenterEnd).padding(end = 10.dp),
                 onDotClick = { targetIndex ->

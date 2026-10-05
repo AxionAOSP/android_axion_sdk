@@ -48,6 +48,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -142,7 +143,9 @@ fun AxEditStackedTilePreview(
     modifier: Modifier = Modifier,
 ) {
     val view = LocalView.current
-    val effectiveCount = if (tiles.isNotEmpty()) tiles.size else liveTiles.size
+    val distinctTiles = remember(tiles) { tiles.distinctBy { it.tileSpec.spec } }
+    val distinctLiveTiles = remember(liveTiles) { liveTiles.distinctBy { it.spec.spec } }
+    val effectiveCount = if (distinctTiles.isNotEmpty()) distinctTiles.size else distinctLiveTiles.size
     val pageCount = if (effectiveCount == 0) 1 else effectiveCount + 1
     val pagerState = key(pageCount) { rememberPagerState(pageCount = { pageCount }) }
     val coroutineScope = rememberCoroutineScope()
@@ -167,20 +170,20 @@ fun AxEditStackedTilePreview(
                 beyondViewportPageCount = 1,
                 key = { pageIndex ->
                     when {
-                        pageIndex < tiles.size -> tiles[pageIndex].tileSpec.spec
-                        pageIndex < liveTiles.size -> liveTiles[pageIndex].spec.spec
+                        distinctTiles.isNotEmpty() && pageIndex < distinctTiles.size -> distinctTiles[pageIndex].tileSpec.spec
+                        distinctTiles.isEmpty() && pageIndex < distinctLiveTiles.size -> distinctLiveTiles[pageIndex].spec.spec
                         else -> "add_slot"
                     }
                 },
             ) { pageIndex ->
-                if (pageIndex < tiles.size) {
+                if (distinctTiles.isNotEmpty() && pageIndex < distinctTiles.size) {
                     AxQsEditTile(
-                        tile = tiles[pageIndex],
+                        tile = distinctTiles[pageIndex],
                         span = AxQsSpan(columns = 2, rows = 2),
                         modifier = Modifier.fillMaxSize(),
                     )
-                } else if (pageIndex < liveTiles.size) {
-                    val liveTile = liveTiles[pageIndex]
+                } else if (distinctTiles.isEmpty() && pageIndex < distinctLiveTiles.size) {
+                    val liveTile = distinctLiveTiles[pageIndex]
                     val res = LocalView.current.resources
                     val uiState by produceState(liveTile.currentState.toUiState(res), liveTile, res) {
                         liveTile.state.collect { value = it.toUiState(res) }

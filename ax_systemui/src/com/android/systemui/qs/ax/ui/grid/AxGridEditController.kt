@@ -65,6 +65,7 @@ class AxGridEditController(
                     val tileSpecs =
                         v.editTiles.map { it.tileSpec.spec }
                             .ifEmpty { v.tiles.map { it.spec.spec } }
+                            .distinct()
                     put(item.id, tileSpecs)
                 }
             }
@@ -151,10 +152,21 @@ class AxGridEditController(
         source: AxQsGridItem<AxQsGridValue>,
         target: AxQsGridItem<AxQsGridValue>,
     ): Boolean {
+        if (source.id == target.id) return false
         val isSourceTile = source.value is AxQsGridValue.Tile
         val isTargetStack = target.value is AxQsGridValue.Stack
         val isTarget2x2Tile =
             target.span == AxQsSpan(columns = 2, rows = 2) && target.value is AxQsGridValue.Tile
+        if (isTargetStack) {
+            val targetStack = target.value as AxQsGridValue.Stack
+            val sourceTile = source.value as? AxQsGridValue.Tile
+            val sourceSpec = sourceTile?.editViewModel?.tileSpec?.spec
+                ?: sourceTile?.viewModel?.spec?.spec
+                ?: source.id
+            val alreadyInStack = targetStack.editTiles.any { it.tileSpec.spec == sourceSpec } ||
+                targetStack.tiles.any { it.spec.spec == sourceSpec }
+            if (alreadyInStack) return false
+        }
         return isSourceTile && (isTargetStack || isTarget2x2Tile)
     }
 
@@ -164,10 +176,19 @@ class AxGridEditController(
     ): AxQsGridItem<AxQsGridValue>? {
         val sourceValue = source.value as? AxQsGridValue.Tile ?: return null
         val sourceEdit = sourceValue.editViewModel ?: editTilesBySpec[source.id]
+        val sourceLive = sourceValue.viewModel
         return when (val targetValue = target.value) {
             is AxQsGridValue.Stack -> {
-                val newLive = if (sourceValue.viewModel != null) targetValue.tiles + sourceValue.viewModel else targetValue.tiles
-                val newEdit = if (sourceEdit != null) targetValue.editTiles + sourceEdit else targetValue.editTiles
+                val newLive = if (sourceLive != null) {
+                    (targetValue.tiles + sourceLive).distinctBy { it.spec.spec }
+                } else {
+                    targetValue.tiles
+                }
+                val newEdit = if (sourceEdit != null) {
+                    (targetValue.editTiles + sourceEdit).distinctBy { it.tileSpec.spec }
+                } else {
+                    targetValue.editTiles
+                }
                 target.copy(
                     value = AxQsGridValue.Stack(tiles = newLive, editTiles = newEdit),
                     span = AxQsSpan(columns = 2, rows = 2),
@@ -177,8 +198,8 @@ class AxGridEditController(
                 if (target.span == AxQsSpan(columns = 2, rows = 2)) {
                     val stackId = "stack_" + System.currentTimeMillis()
                     val targetEdit = targetValue.editViewModel ?: editTilesBySpec[target.id]
-                    val liveTiles = listOfNotNull(targetValue.viewModel, sourceValue.viewModel)
-                    val editTiles = listOfNotNull(targetEdit, sourceEdit)
+                    val liveTiles = listOfNotNull(targetValue.viewModel, sourceValue.viewModel).distinctBy { it.spec.spec }
+                    val editTiles = listOfNotNull(targetEdit, sourceEdit).distinctBy { it.tileSpec.spec }
                     AxQsGridItem(
                         id = stackId,
                         span = AxQsSpan(columns = 2, rows = 2),

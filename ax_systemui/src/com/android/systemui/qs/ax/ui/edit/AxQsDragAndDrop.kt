@@ -406,10 +406,10 @@ fun <T> Modifier.axQsDropTarget(
                             onStack != null &&
                             draggedItem != null &&
                             targetItem != null &&
-                            targetItemAtOffset.first != draggedId &&
+                            targetItemAtOffset?.first != draggedId &&
                             canStack(draggedItem, targetItem)
 
-                    if (isStackTarget && targetItemAtOffset.second.contains(localOffset)) {
+                    if (isStackTarget && targetItemAtOffset?.second?.contains(localOffset) == true) {
                         state.setHoveredStackTarget(targetItemAtOffset.first)
                         return
                     }
