@@ -186,15 +186,31 @@ internal fun Modifier.axQuickSettingsSceneMotion(
 internal fun Modifier.axQsItemReveal(
     isRevealed: Boolean,
     row: Int = 0,
+    scrollStateValue: () -> Int = { 0 },
+    qqsCollapseTranslationY: () -> Float = { 0f },
     progress: () -> Float,
 ): Modifier {
-    if (isRevealed) return this
+    if (isRevealed) {
+        return graphicsLayer {
+            val transY = qqsCollapseTranslationY()
+            if (transY != 0f) {
+                translationY = transY
+            }
+        }
+    }
     return graphicsLayer {
         val expansion = progress().coerceIn(0f, 1f)
         val minScale = AxQsTokens.Animation.TILE_REVEAL_MIN_SCALE
         val staggerPx = AxQsTokens.Animation.AX_ROW_STAGGER_PX
 
-        alpha = computeAxFadeAlpha(expansion)
+        val currentScroll = scrollStateValue()
+        val collapseFade =
+            if (currentScroll > 0) {
+                ((expansion - 0.7f) / 0.3f).coerceIn(0f, 1f)
+            } else {
+                1f
+            }
+        alpha = computeAxFadeAlpha(expansion) * collapseFade
         val scale = minScale + (1f - minScale) * expansion
         scaleX = scale
         scaleY = scale

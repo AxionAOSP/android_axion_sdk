@@ -64,6 +64,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
@@ -372,6 +373,22 @@ internal fun ContentScope.AxOneGrid(
         }
     }
 
+    val qqsCollapseTranslationY: () -> Float = {
+        val progress = viewModel.expansionState.progress.coerceIn(0f, 1f)
+        val scroll = scrollState.value
+        if (!separateMode && scroll > 0 && progress < 1f) {
+            scroll * (1f - progress)
+        } else {
+            0f
+        }
+    }
+
+    LaunchedEffect(expansionProgress) {
+        if (expansionProgress <= 0f && scrollState.value > 0) {
+            scrollState.scrollTo(0)
+        }
+    }
+
     val qqsMaxRows = axQsViewModel.qqsMaxRows
     val isQsExpandingOrVisible by remember(splitShade, separateMode, isDirectQs) {
         derivedStateOf {
@@ -625,6 +642,8 @@ internal fun ContentScope.AxOneGrid(
                                                     brightnessSliderViewModel = brightnessSliderViewModel,
                                                     volumeSliderViewModel = volumeSliderViewModel,
                                                     listening = listening,
+                                                    scrollStateValue = { scrollState.value },
+                                                    qqsCollapseTranslationY = qqsCollapseTranslationY,
                                                 )
                                             },
                                         )
@@ -712,11 +731,11 @@ internal fun ContentScope.AxOneGrid(
                                             Modifier.fillMaxWidth()
                                                 .offset(y = qqsDragHandleTop)
                                                 .zIndex(1f)
-                                                .graphicsLayer {
-                                                    alpha =
-                                                        (1f - (viewModel.expansionState.progress / 0.25f))
-                                                            .coerceIn(0f, 1f)
-                                                },
+                                                 .graphicsLayer {
+                                                     alpha =
+                                                         (1f - (viewModel.expansionState.progress / 0.25f))
+                                                             .coerceIn(0f, 1f)
+                                                 },
                                             contentAlignment = Alignment.Center,
                                         ) {
                                             Box(

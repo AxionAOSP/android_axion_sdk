@@ -81,6 +81,9 @@ fun ContentScope.AxGridItemContent(
     brightnessSliderViewModel: BrightnessSliderViewModel,
     volumeSliderViewModel: AudioStreamSliderViewModel,
     listening: () -> Boolean,
+    scrollStateValue: () -> Int = { 0 },
+    qqsCollapseTranslationY: () -> Float = { 0f },
+    modifier: Modifier = Modifier,
 ) {
     val cellConfig = LocalAxQsCellConfig.current
     val qqsMaxRows = axQsViewModel.qqsMaxRows
@@ -292,6 +295,8 @@ fun ContentScope.AxGridItemContent(
                     Modifier.axQsItemReveal(
                         isRevealed = isQqsItem,
                         row = row,
+                        scrollStateValue = scrollStateValue,
+                        qqsCollapseTranslationY = qqsCollapseTranslationY,
                         progress = { viewModel.expansionState.progress },
                     )
                 }
