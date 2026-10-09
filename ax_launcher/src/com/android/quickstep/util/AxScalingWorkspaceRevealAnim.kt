@@ -23,7 +23,7 @@ import android.view.View
 import androidx.core.view.isVisible
 import com.android.app.animation.Animations
 import com.android.app.animation.Interpolators
-import com.android.axion.dragonite.AxDragonite
+import com.android.launcher3.AxLauncherSceneBooster
 import com.android.launcher3.LauncherAnimUtils.HOTSEAT_SCALE_PROPERTY_FACTORY
 import com.android.launcher3.LauncherAnimUtils.SCALE_INDEX_WORKSPACE_STATE
 import com.android.launcher3.LauncherAnimUtils.VIEW_ALPHA
@@ -210,7 +210,7 @@ class AxScalingWorkspaceRevealAnim(
                     if (blurDisabled) {
                         launcher.depthController.pauseBlursOnWindows(false)
                     }
-                    AxDragonite.onBackHomeEnd()
+                    AxLauncherSceneBooster.finishHomeGesture()
                 }
             )
         )
