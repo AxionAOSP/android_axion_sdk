@@ -30,6 +30,7 @@ object AxSceneTable {
     private const val UNKNOWN_PACKAGE = "unknown"
     private const val DURATION_BG_FREEZE_MS = 500L
     private const val DURATION_TA_HOLD_MS = 1000L
+    private const val DURATION_TA_DELAY_MS = 50L
 
     private const val SCENE_NAME_APP_START_EXIT = "APP_START_EXIT_ANIMATION"
     private const val SCENE_NAME_LAUNCHER_NORMAL = "LAUNCHER_NORMAL_ANIMATION"
@@ -69,6 +70,7 @@ object AxSceneTable {
 
     internal data class CommandConfig(
         val holdTime: Long = -1L,
+        val delayTime: Long = -1L,
         val targetProcess: String? = null,
         val restoreTag: String = "",
     )
@@ -84,11 +86,18 @@ object AxSceneTable {
         val holdTime: Long
             get() = config.get().holdTime
 
+        val delayTime: Long
+            get() = config.get().delayTime
+
         val restoreTag: String
             get() = config.get().restoreTag
 
         fun setHoldTime(time: Long) {
             config.updateAndGet { it.copy(holdTime = time) }
+        }
+
+        fun setDelayTime(time: Long) {
+            config.updateAndGet { it.copy(delayTime = time) }
         }
 
         fun getProcess(): String? = config.get().targetProcess
@@ -106,6 +115,7 @@ object AxSceneTable {
         commandName: String,
         params1: String? = null,
         holdTime: Long = -1L,
+        delayTime: Long = -1L,
         restore: String = "",
         process: String? = null,
     ): ScenarioCommand {
@@ -115,6 +125,7 @@ object AxSceneTable {
                 initialConfig =
                     CommandConfig(
                         holdTime = holdTime,
+                        delayTime = delayTime,
                         targetProcess = process,
                         restoreTag = restore,
                     ),
@@ -215,7 +226,8 @@ object AxSceneTable {
             Scenario(AxDragoniteConstants.SCENE_QS_PULL_DOWN, SCENE_NAME_QS_PULL_DOWN).apply {
                 command(
                     AxCmdTable.NAME_CMD_CPUSET_TA_CPUS,
-                    params1 = AxCpuSets.CPUSET_BACKGROUND,
+                    params1 = AxCpuSets.CPUSET_UI,
+                    delayTime = DURATION_TA_DELAY_MS,
                     holdTime = DURATION_TA_HOLD_MS,
                 )
                 command(AxCmdTable.NAME_CMD_CPUCTL_RESTRICTED_PROCS)
@@ -237,7 +249,7 @@ object AxSceneTable {
                 command(AxCmdTable.NAME_CMD_CPUCTL_RESTRICTED_PROCS)
                 command(
                     AxCmdTable.NAME_CMD_CPUSET_TA_CPUS,
-                    params1 = AxCpuSets.CPUSET_BACKGROUND,
+                    params1 = AxCpuSets.CPUSET_UI,
                     holdTime = DURATION_TA_HOLD_MS,
                 )
             }

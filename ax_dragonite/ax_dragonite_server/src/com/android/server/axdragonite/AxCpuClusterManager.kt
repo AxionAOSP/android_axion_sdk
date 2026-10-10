@@ -65,6 +65,7 @@ object AxCpuClusterManager {
         val allMask: Long,
         val efficiencyPoolMask: Long,
         val performancePoolMask: Long,
+        val uiMask: Long,
     )
 
     private data class MaskSet(
@@ -75,6 +76,7 @@ object AxCpuClusterManager {
         val boost: Long,
         val effPool: Long,
         val perfPool: Long,
+        val ui: Long,
     )
 
     private val topology: TopologyData = detectTopology()
@@ -109,6 +111,9 @@ object AxCpuClusterManager {
     val performancePoolMask: Long
         get() = topology.performancePoolMask
 
+    val uiMask: Long
+        get() = topology.uiMask
+
     private fun detectTopology(): TopologyData {
         val cores = detectCoreCount()
         val clusters = buildClusters(cores)
@@ -126,6 +131,7 @@ object AxCpuClusterManager {
             allMask,
             masks.effPool,
             masks.perfPool,
+            masks.ui,
         )
     }
 
@@ -143,15 +149,16 @@ object AxCpuClusterManager {
     }
 
     private fun resolveMasks(clusters: List<ClusterInfo>, allMask: Long): MaskSet {
+        val ui = resolveUi(clusters, allMask)
         when (clusters.size) {
             SINGLE_CLUSTER -> {
                 val m = clusters[CLUSTER_INDEX_LITTLE].mask
-                return MaskSet(m, m, m, m, m, allMask, allMask)
+                return MaskSet(m, m, m, m, m, allMask, allMask, ui)
             }
             DUAL_CLUSTER -> {
                 val l = clusters[CLUSTER_INDEX_LITTLE].mask
                 val b = clusters[CLUSTER_INDEX_BIG].mask
-                return MaskSet(l, b, b, b, b, l, b)
+                return MaskSet(l, b, b, b, b, l, b, ui)
             }
             TRI_CLUSTER -> {
                 val l = clusters[CLUSTER_INDEX_LITTLE].mask
@@ -165,6 +172,7 @@ object AxCpuClusterManager {
                     m or p,
                     resolveEffPool(l, m),
                     allMask and resolveEffPool(l, m).inv(),
+                    ui,
                 )
             }
             else -> {
@@ -173,8 +181,31 @@ object AxCpuClusterManager {
                 val p = clusters[clusters.size - 1].mask
                 val low = clusters[0].mask or clusters[1].mask
                 val high = clusters.drop(2).fold(0L) { acc, c -> acc or c.mask }
-                return MaskSet(l, m, p, high, high, low, high)
+                return MaskSet(l, m, p, high, high, low, high, ui)
             }
+        }
+    }
+
+    private fun resolveUi(clusters: List<ClusterInfo>, allMask: Long): Long {
+        when {
+            clusters.size >= 4 -> {
+                return clusters[0].mask or clusters[1].mask
+            }
+            clusters.size == TRI_CLUSTER -> {
+                val little = clusters[CLUSTER_INDEX_LITTLE].mask
+                val mid = clusters[CLUSTER_INDEX_BIG].mask
+                val smallCpus = getLowestNBits(little, min(2, little.countOneBits()))
+                val bigCpus = getLowestNBits(mid, min(2, mid.countOneBits()))
+                return smallCpus or bigCpus
+            }
+            clusters.size == DUAL_CLUSTER -> {
+                val little = clusters[CLUSTER_INDEX_LITTLE].mask
+                val big = clusters[CLUSTER_INDEX_BIG].mask
+                val smallCpus = getLowestNBits(little, min(2, little.countOneBits()))
+                val bigCpus = getLowestNBits(big, min(2, big.countOneBits()))
+                return smallCpus or bigCpus
+            }
+            else -> return allMask
         }
     }
 
@@ -193,7 +224,8 @@ object AxCpuClusterManager {
                 "Prime: 0x${masks.prime.toString(16)}, " +
                 "Boost: 0x${masks.boost.toString(16)}, " +
                 "EffPool: 0x${masks.effPool.toString(16)}, " +
-                "PerfPool: 0x${masks.perfPool.toString(16)}",
+                "PerfPool: 0x${masks.perfPool.toString(16)}, " +
+                "Ui: 0x${masks.ui.toString(16)}",
         )
     }
 
@@ -301,6 +333,10 @@ object AxCpuClusterManager {
     @JvmStatic
     fun getBackgroundCpusString(): String =
         toCpusetString(if (efficiencyPoolMask != 0L) efficiencyPoolMask else allMask)
+
+    @JvmStatic
+    fun getUiCpusString(): String =
+        toCpusetString(if (uiMask != 0L) uiMask else allMask)
 
     @JvmStatic
     fun getForegroundCpusString(): String {

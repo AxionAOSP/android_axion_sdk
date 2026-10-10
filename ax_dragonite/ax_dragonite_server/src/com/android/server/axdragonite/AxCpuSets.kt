@@ -23,6 +23,7 @@ object AxCpuSets {
     const val CPUSET_ALL = "all"
     const val CPUSET_FOREGROUND = "foreground"
     const val CPUSET_BACKGROUND = "background"
+    const val CPUSET_UI = "ui"
     const val CPUSET_RESTRICTED_BG = "restricted_bg"
     const val CPUSET_SYSTEM_BG = "system_bg"
     const val CPUSET_LITTLE = "little"
@@ -50,6 +51,7 @@ object AxCpuSets {
             CPUSET_ALL -> AxCpuClusterManager.getAllCpusString()
             CPUSET_FOREGROUND -> AxCpuClusterManager.getForegroundCpusString()
             CPUSET_BACKGROUND -> AxCpuClusterManager.getBackgroundCpusString()
+            CPUSET_UI -> AxCpuClusterManager.getUiCpusString()
             CPUSET_RESTRICTED_BG -> AxCpuClusterManager.getRestrictedBackgroundCpusString()
             CPUSET_SYSTEM_BG -> AxCpuClusterManager.getSystemBackgroundCpusString()
             CPUSET_LITTLE -> AxCpuClusterManager.getLittleCpusString()

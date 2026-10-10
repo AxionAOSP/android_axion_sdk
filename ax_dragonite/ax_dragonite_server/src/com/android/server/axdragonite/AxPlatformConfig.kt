@@ -26,6 +26,7 @@ class AxPlatformConfig {
         const val KEY_TOP_APP = "ta"
         const val KEY_FOREGROUND = "fg"
         const val KEY_BACKGROUND = "bg"
+        const val KEY_UI = "ui"
         const val KEY_SYSTEM_BACKGROUND = "sbg"
         const val KEY_RESTRICTED = "rest"
         const val KEY_FOREGROUND_INPUT = "axfg_input"
@@ -177,6 +178,7 @@ class AxPlatformConfig {
                 KEY_TOP_APP to AxCpuSets.CPUSET_ALL,
                 KEY_FOREGROUND to AxCpuSets.CPUSET_ALL,
                 KEY_BACKGROUND to AxCpuSets.CPUSET_BACKGROUND,
+                KEY_UI to AxCpuSets.CPUSET_UI,
                 KEY_SYSTEM_BACKGROUND to AxCpuSets.CPUSET_BACKGROUND,
                 KEY_RESTRICTED to AxCpuSets.CPUSET_ALL,
                 KEY_AXFG to AxCpuSets.CPUSET_FOREGROUND,

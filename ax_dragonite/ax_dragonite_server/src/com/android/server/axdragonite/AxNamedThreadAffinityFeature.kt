@@ -47,7 +47,7 @@ class AxNamedThreadAffinityFeature {
             mapOf(
                 PKG_PUBG_MOBILE to
                     listOf(
-                        NamedAffinity(THREAD_GAME, AxCpuSets.CPUSET_BACKGROUND),
+                        NamedAffinity(THREAD_GAME, AxCpuSets.CPUSET_UI),
                         NamedAffinity(THREAD_RENDER, AxCpuSets.CPUSET_PERF_MID),
                     ),
                 PKG_HONKAI_STAR_RAIL to

@@ -21,6 +21,7 @@ import android.os.SystemClock
 import com.android.internal.dragonite.AxDragoniteConstants
 import java.util.ArrayList
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.math.max
 
 open class AxSceneBoostSession(
     protected val mHost: AxDragoniteImpl,
@@ -44,11 +45,16 @@ open class AxSceneBoostSession(
     }
 
     protected fun scheduleActions(command: AxSceneTable.ScenarioCommand) {
-        boostAction?.let { mHost.mDragoniteHandler.post(it) }
-        startTime = SystemClock.elapsedRealtime()
+        val delay = max(0L, command.delayTime)
+        val boost = boostAction
+        if (boost != null) {
+            if (delay > 0) mHost.mDragoniteHandler.postDelayed(boost, delay)
+            else mHost.mDragoniteHandler.post(boost)
+        }
+        startTime = SystemClock.elapsedRealtime() + delay
         val restore = restoreAction
         if (restore != null && command.holdTime > 0) {
-            mHost.mDragoniteHandler.postDelayed(restore, command.holdTime)
+            mHost.mDragoniteHandler.postDelayed(restore, command.holdTime + delay)
             endTime = startTime + command.holdTime
         }
         mHost.attachSession(handle, this)
@@ -60,6 +66,7 @@ open class AxSceneBoostSession(
 
     open fun restore() {
         readyCommand("restore") ?: return
+        boostAction?.let { mHost.mDragoniteHandler.removeCallbacks(it) }
         val restore = restoreAction ?: return
         mHost.mDragoniteHandler.removeCallbacks(restore)
         mHost.mDragoniteHandler.post(restore)
