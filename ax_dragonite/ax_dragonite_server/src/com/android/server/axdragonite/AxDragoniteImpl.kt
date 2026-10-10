@@ -294,8 +294,12 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         val pkg = bundlePackage(bundle)
         val params = bundle?.getString(AxDragoniteConstants.KEY_PARAMS)
         for (scenarioCmd in scenario.commandList) {
-            val command = scenarioCmd.command ?: continue
-            mCommandsMap[command.id]?.execute(handle, pid, pkg, scenarioCmd, params) ?: continue
+            try {
+                val command = scenarioCmd.command ?: continue
+                mCommandsMap[command.id]?.execute(handle, pid, pkg, scenarioCmd, params) ?: continue
+            } catch (e: Exception) {
+                Slog.e(TAG, "dispatchSceneCommands failed for scene=$sceneId", e)
+            }
         }
     }
 
@@ -489,7 +493,8 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         }
 
     private fun collectPidsByComm(comm: String): IntArray {
-        val pids = Process.getPids(PROC_DIR, IntArray(MAX_PID_QUERY))
+        val pids: IntArray? = Process.getPids(PROC_DIR, IntArray(MAX_PID_QUERY))
+        if (pids == null) return IntArray(0)
         val list = ArrayList<Int>()
         for (pidValue in pids) {
             if (pidValue <= 0) break
@@ -629,7 +634,8 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
     }
 
     private fun getProcessPids(): HashMap<String, Int> {
-        val pids = Process.getPids(PROC_DIR, IntArray(MAX_PID_QUERY))
+        val pids: IntArray? = Process.getPids(PROC_DIR, IntArray(MAX_PID_QUERY))
+        if (pids == null) return HashMap()
         val map = HashMap<String, Int>()
         for (pid in pids) {
             if (pid <= 0) break
@@ -651,7 +657,7 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
             Process.getPids(
                 "$PROC_DIR${AxCmdTable.PATH_SEP}$pid$TASK_DIR_SUFFIX",
                 IntArray(MAX_TASK_QUERY),
-            )
+            ) ?: return INVALID_TID
         for (tid in tids) {
             if (tid <= 0) break
             if (match(AxPlatformConfig.getProcessComm(tid))) return tid
@@ -667,7 +673,7 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
             Process.getPids(
                 "$PROC_DIR${AxCmdTable.PATH_SEP}$pid$TASK_DIR_SUFFIX",
                 IntArray(MAX_TASK_QUERY),
-            )
+            ) ?: return null
         val hwuiTids = ArrayList<Int>()
         for (tid in tids) {
             if (tid <= 0) break
