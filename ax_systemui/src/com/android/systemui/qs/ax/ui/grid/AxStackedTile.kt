@@ -47,14 +47,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
+import com.android.compose.animation.Expandable as ComposeExpandable
+import com.android.compose.animation.rememberExpandableController
 import com.android.compose.animation.scene.ContentScope
 import com.android.compose.animation.scene.mechanics.TileRevealFlag
 import com.android.mechanics.compose.modifier.verticalTactileSurfaceReveal
+import com.android.systemui.animation.Expandable
 import com.android.systemui.haptics.msdl.qs.TileHapticsViewModel
 import com.android.systemui.lifecycle.rememberViewModel
 import com.android.systemui.qs.ax.fragment.viewmodel.AxQsFragmentComposeViewModel
@@ -63,7 +67,7 @@ import com.android.systemui.qs.ax.shared.model.AxQsGridItem
 import com.android.systemui.qs.ax.shared.model.AxQsGridValue
 import com.android.systemui.qs.ax.shared.model.AxQsSpan
 import com.android.systemui.qs.flags.QsDetailedView
-import com.android.systemui.qs.panels.ui.compose.TileListener
+import com.android.systemui.qs.panels.ui.compose.infinitegrid.verticalSquish
 import com.android.systemui.qs.panels.ui.viewmodel.DetailsViewModel
 import com.android.systemui.qs.panels.ui.viewmodel.TileViewModel
 import com.android.systemui.qs.panels.ui.viewmodel.toIconProvider
@@ -87,9 +91,13 @@ fun ContentScope.AxStackedTileWidget(
     val cellConfig = LocalAxQsCellConfig.current
     val coroutineScope = rememberCoroutineScope()
     val pagerState = rememberPagerState(pageCount = { distinctTiles.size })
-    val tileShape = RoundedCornerShape(cellConfig.largeCornerRadius)
+    val tileShape =
+        remember(cellConfig.largeCornerRadius) {
+            RoundedCornerShape(cellConfig.largeCornerRadius)
+        }
     val tileBackgroundColor = AxTileColorsDefaults.backgroundTileColors()
     val animatedBgColor by animateColorAsState(tileBackgroundColor, label = "AxStackedTileBg")
+    val stableBgColor = remember(animatedBgColor) { { animatedBgColor } }
 
     val marginBottom = with(LocalDensity.current) { QuickSettingsShade.Dimensions.Padding.toPx() }
     val surfaceRevealModifier =
@@ -99,50 +107,82 @@ fun ContentScope.AxStackedTileWidget(
             Modifier
         }
 
-    TileListener(
-        tiles = distinctTiles,
-        listeningEnabled = { isClickable },
-    )
+    val currentTile = distinctTiles.getOrNull(pagerState.currentPage) ?: distinctTiles.first()
+    val currentHapticsViewModel: TileHapticsViewModel? =
+        rememberViewModel(traceName = "TileHapticsViewModel_${currentTile.spec.spec}") {
+            viewModel.quickQuickSettingsViewModel.tileHapticsViewModelFactoryProvider
+                ?.getHapticsViewModelFactory()
+                ?.create(currentTile)
+        }
 
-    Box(
+    AxStackedTileExpandable(
+        color = stableBgColor,
+        shape = tileShape,
+        squishiness = { 1f },
+        hapticsViewModel = currentHapticsViewModel,
         modifier =
             modifier
                 .fillMaxSize()
-                .clip(tileShape)
-                .background(animatedBgColor)
-                .interceptParentTouch(enabled = isClickable && distinctTiles.size > 1, view = view)
                 .then(surfaceRevealModifier),
-        contentAlignment = Alignment.Center,
-    ) {
-        VerticalPager(
-            state = pagerState,
-            modifier = Modifier.fillMaxSize(),
-            userScrollEnabled = isClickable && distinctTiles.size > 1,
-            beyondViewportPageCount = 1,
-            key = { index -> "${item.id}_${distinctTiles.getOrNull(index)?.spec?.spec ?: index}" },
-        ) { pageIndex ->
-            val tile = distinctTiles.getOrNull(pageIndex) ?: return@VerticalPager
-            AxStackedTilePageContent(
-                tile = tile,
-                detailsViewModel = detailsViewModel,
-                viewModel = viewModel,
-                isClickable = isClickable,
+    ) { expandable ->
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .clip(tileShape)
+                    .background(animatedBgColor)
+                    .interceptParentTouch(enabled = isClickable && distinctTiles.size > 1, view = view),
+            contentAlignment = Alignment.Center,
+        ) {
+            VerticalPager(
+                state = pagerState,
                 modifier = Modifier.fillMaxSize(),
-            )
-        }
+                userScrollEnabled = isClickable && distinctTiles.size > 1,
+                beyondViewportPageCount = 1,
+                key = { index -> "${item.id}_${distinctTiles.getOrNull(index)?.spec?.spec ?: index}" },
+            ) { pageIndex ->
+                val tile = distinctTiles.getOrNull(pageIndex) ?: return@VerticalPager
+                AxStackedTilePageContent(
+                    tile = tile,
+                    detailsViewModel = detailsViewModel,
+                    viewModel = viewModel,
+                    isClickable = isClickable,
+                    expandable = expandable,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
 
-        if (distinctTiles.size > 1) {
-            AxVerticalDotIndicator(
-                pageCount = distinctTiles.size,
-                currentPage = pagerState.currentPage,
-                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 10.dp),
-                onDotClick = { targetIndex ->
-                    coroutineScope.launch {
-                        pagerState.animateScrollToPage(targetIndex)
-                    }
-                },
-            )
+            if (distinctTiles.size > 1) {
+                AxVerticalDotIndicator(
+                    pageCount = distinctTiles.size,
+                    currentPage = pagerState.currentPage,
+                    modifier = Modifier.align(Alignment.CenterEnd).padding(end = 10.dp),
+                    onDotClick = { targetIndex ->
+                        coroutineScope.launch {
+                            pagerState.animateScrollToPage(targetIndex)
+                        }
+                    },
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun AxStackedTileExpandable(
+    color: () -> Color,
+    shape: Shape,
+    squishiness: () -> Float,
+    hapticsViewModel: TileHapticsViewModel?,
+    modifier: Modifier = Modifier,
+    content: @Composable (Expandable) -> Unit,
+) {
+    ComposeExpandable(
+        controller = rememberExpandableController(color = color, shape = shape),
+        modifier = modifier.clip(shape).verticalSquish(squishiness),
+        useModifierBasedImplementation = true,
+    ) {
+        content(hapticsViewModel?.createStateAwareExpandable(it) ?: it)
     }
 }
 
@@ -152,6 +192,7 @@ private fun AxStackedTilePageContent(
     detailsViewModel: DetailsViewModel?,
     viewModel: AxQsFragmentComposeViewModel,
     isClickable: Boolean,
+    expandable: Expandable,
     modifier: Modifier = Modifier,
 ) {
     val res = LocalView.current.resources
@@ -174,7 +215,7 @@ private fun AxStackedTilePageContent(
         )
     val interactionSource = remember { MutableInteractionSource() }
     val hapticsViewModel: TileHapticsViewModel? =
-        rememberViewModel(traceName = "TileHapticsViewModel") {
+        rememberViewModel(traceName = "TileHapticsViewModel_${tile.spec.spec}") {
             viewModel.quickQuickSettingsViewModel.tileHapticsViewModelFactoryProvider
                 ?.getHapticsViewModelFactory()
                 ?.create(tile)
@@ -185,7 +226,7 @@ private fun AxStackedTilePageContent(
             QsDetailedView.isEnabled &&
                 detailsViewModel?.onTileClicked(tile.spec) == true
         if (!hasDetails) {
-            tile.mainClick(null)
+            tile.mainClick(expandable)
             hapticsViewModel?.setTileInteractionState(
                 TileHapticsViewModel.TileInteractionState.CLICKED
             )
@@ -197,7 +238,7 @@ private fun AxStackedTilePageContent(
             hapticsViewModel?.setTileInteractionState(
                 TileHapticsViewModel.TileInteractionState.LONG_CLICKED
             )
-            tile.settingsClick(null)
+            tile.settingsClick(expandable)
         }.takeIf { uiState.handlesLongClick }
 
     val handleToggleClick: (() -> Unit)? =

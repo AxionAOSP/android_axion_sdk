@@ -179,11 +179,13 @@ internal fun ContentScope.AxOneGrid(
                 val distinctSpecs = tileSpecs.distinct()
                 val stackLiveTiles = distinctSpecs.mapNotNull { tilesBySpec[it] }
                 val stackEditTiles = distinctSpecs.mapNotNull { editMap[it] }
-                map[stackId] = AxQsGridValue.Stack(
-                    tiles = stackLiveTiles,
-                    editTiles = stackEditTiles,
-                )
-                stackedTileSpecs.addAll(distinctSpecs)
+                if (stackLiveTiles.isNotEmpty() || editMap.isNotEmpty()) {
+                    map[stackId] = AxQsGridValue.Stack(
+                        tiles = stackLiveTiles,
+                        editTiles = stackEditTiles,
+                    )
+                    stackedTileSpecs.addAll(distinctSpecs)
+                }
             }
             stackedTileSpecs.forEach { spec -> map.remove(spec) }
             map
