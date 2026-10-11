@@ -19,6 +19,7 @@ package com.android.server.axdragonite
 import android.os.PowerManagerInternal as PM
 import android.util.Slog
 import com.android.internal.dragonite.AxDragoniteConstants
+import com.android.server.axdragonite.model.ClusterTopologyType
 import java.util.Collections
 import java.util.HashMap
 import java.util.concurrent.atomic.AtomicReference
@@ -31,6 +32,8 @@ object AxSceneTable {
     private const val DURATION_BG_FREEZE_MS = 500L
     private const val DURATION_TA_HOLD_MS = 1000L
     private const val DURATION_TA_DELAY_MS = 50L
+    private const val UCLAMP_MIN_APP_START_6_2 = "80"
+    private const val UCLAMP_MIN_OVERLOAD_6_2 = "100"
 
     private const val SCENE_NAME_APP_START_EXIT = "APP_START_EXIT_ANIMATION"
     private const val SCENE_NAME_LAUNCHER_NORMAL = "LAUNCHER_NORMAL_ANIMATION"
@@ -118,24 +121,14 @@ object AxSceneTable {
         delayTime: Long = -1L,
         restore: String = "",
         process: String? = null,
-    ): ScenarioCommand {
-        val cmd =
-            ScenarioCommand(
-                command = AxCmdTable.getCommand(commandName),
-                initialConfig =
-                    CommandConfig(
-                        holdTime = holdTime,
-                        delayTime = delayTime,
-                        targetProcess = process,
-                        restoreTag = restore,
-                    ),
-            )
-        if (params1 != null) {
-            cmd.putParameter(KEY_PARAMS1, params1)
+    ): ScenarioCommand =
+        ScenarioCommand(
+            command = AxCmdTable.getCommand(commandName),
+            initialConfig = CommandConfig(holdTime, delayTime, process, restore),
+        ).apply {
+            if (params1 != null) putParameter(KEY_PARAMS1, params1)
+            commandList.add(this)
         }
-        commandList.add(cmd)
-        return cmd
-    }
 
     private val scenarioMap = HashMap<String, Scenario>()
 
@@ -155,19 +148,40 @@ object AxSceneTable {
     }
 
     private fun initAppScenarios() {
+        val topo = AxCpuClusterManager.topology
         registerScenario(
             Scenario(AxDragoniteConstants.SCENE_APP_START, SCENE_NAME_APP_START_EXIT).apply {
+                if (topo.type == ClusterTopologyType.PRESET_DUAL_6_2) {
+                    command(
+                        AxCmdTable.NAME_CMD_CPUSET_FG_CPUS,
+                        params1 = AxCpuSets.CPUSET_RESTRICTED_FG,
+                        holdTime = DURATION_BG_FREEZE_MS,
+                    )
+                }
                 command(
                     AxCmdTable.NAME_CMD_CPUSET_BG_CPUS,
                     params1 = AxCpuSets.CPUSET_RESTRICTED_BG,
                 )
-                command(AxCmdTable.NAME_CMD_PROCESS_AFFINITY, params1 = AxCpuSets.CPUSET_BOOST)
-                command(
-                    AxCmdTable.NAME_CMD_CPUCTL_RESTRICTED_PROCS,
-                    restore = AxPlatformConfig.GROUP_ROOT,
-                )
+                if (topo.type == ClusterTopologyType.PRESET_DUAL_6_2) {
+                    command(AxCmdTable.NAME_CMD_CPUCTL_RESTRICTED_PROCS)
+                    command(
+                        AxCmdTable.NAME_CMD_CPUCTL_RESTRICTED_UCLAMP_MIN,
+                        params1 = UCLAMP_MIN_APP_START_6_2,
+                    )
+                } else {
+                    command(
+                        AxCmdTable.NAME_CMD_CPUCTL_RESTRICTED_PROCS,
+                        restore = AxPlatformConfig.GROUP_ROOT,
+                    )
+                }
                 command(AxCmdTable.NAME_CMD_ANIMATION_BOOST)
+                command(AxCmdTable.NAME_CMD_PROCESS_AFFINITY, params1 = AxCpuSets.CPUSET_BOOST)
                 command(AxCmdTable.NAME_CMD_PLATFORM_CONTROL, params1 = NAME_APP_START)
+                command(
+                    AxCmdTable.NAME_CMD_CPUSET_CAMERA_DAEMON_CPUS,
+                    params1 = AxCpuSets.CPUSET_LITTLE_MIN,
+                    holdTime = DURATION_BG_FREEZE_MS,
+                )
                 command(AxCmdTable.NAME_CMD_BACKGROUND_FREEZE, holdTime = DURATION_BG_FREEZE_MS)
             }
         )
@@ -200,6 +214,12 @@ object AxSceneTable {
                         AxCmdTable.NAME_CMD_CPUCTL_RESTRICTED_PROCS,
                         restore = AxPlatformConfig.GROUP_ROOT,
                     )
+                    if (topo.type == ClusterTopologyType.PRESET_DUAL_6_2) {
+                        command(
+                            AxCmdTable.NAME_CMD_CPUCTL_RESTRICTED_UCLAMP_MIN,
+                            params1 = UCLAMP_MIN_OVERLOAD_6_2,
+                        )
+                    }
                 }
         )
 
@@ -222,13 +242,15 @@ object AxSceneTable {
     }
 
     private fun initSystemUiScenarios() {
+        val topo = AxCpuClusterManager.topology
+        val qsHoldTime = if (topo.type == ClusterTopologyType.PRESET_DUAL_6_2) -1L else DURATION_TA_HOLD_MS
         registerScenario(
             Scenario(AxDragoniteConstants.SCENE_QS_PULL_DOWN, SCENE_NAME_QS_PULL_DOWN).apply {
                 command(
                     AxCmdTable.NAME_CMD_CPUSET_TA_CPUS,
                     params1 = AxCpuSets.CPUSET_UI,
                     delayTime = DURATION_TA_DELAY_MS,
-                    holdTime = DURATION_TA_HOLD_MS,
+                    holdTime = qsHoldTime,
                 )
                 command(AxCmdTable.NAME_CMD_CPUCTL_RESTRICTED_PROCS)
                 command(AxCmdTable.NAME_CMD_ANIMATION_BOOST)
@@ -237,20 +259,32 @@ object AxSceneTable {
                     params1 = AxCpuSets.CPUSET_BOOST,
                     process = AxDragoniteConstants.PKG_SYSTEMUI,
                 )
+                command(
+                    AxCmdTable.NAME_CMD_CPUSET_CAMERA_DAEMON_CPUS,
+                    params1 = AxCpuSets.CPUSET_LITTLE_MIN,
+                )
                 command(AxCmdTable.NAME_CMD_PLATFORM_CONTROL, params1 = NAME_SYSTEMUI)
             }
         )
 
+        val unlockAffinity =
+            if (topo.type == ClusterTopologyType.PRESET_DUAL_6_2) AxCpuSets.CPUSET_RESTRICTED_FG
+            else AxCpuSets.CPUSET_BOOST
+        val unlockHoldTime = if (topo.type == ClusterTopologyType.PRESET_DUAL_6_2) -1L else DURATION_TA_HOLD_MS
         registerScenario(
             Scenario(AxDragoniteConstants.SCENE_UNLOCK, SCENE_NAME_UNLOCK).apply {
-                command(AxCmdTable.NAME_CMD_PROCESS_AFFINITY, params1 = AxCpuSets.CPUSET_BOOST)
+                command(AxCmdTable.NAME_CMD_PROCESS_AFFINITY, params1 = unlockAffinity)
                 command(AxCmdTable.NAME_CMD_ANIMATION_BOOST)
                 command(AxCmdTable.NAME_CMD_PLATFORM_CONTROL, params1 = NAME_ANIMATION)
                 command(AxCmdTable.NAME_CMD_CPUCTL_RESTRICTED_PROCS)
                 command(
+                    AxCmdTable.NAME_CMD_CPUSET_CAMERA_DAEMON_CPUS,
+                    params1 = AxCpuSets.CPUSET_LITTLE_MIN,
+                )
+                command(
                     AxCmdTable.NAME_CMD_CPUSET_TA_CPUS,
                     params1 = AxCpuSets.CPUSET_UI,
-                    holdTime = DURATION_TA_HOLD_MS,
+                    holdTime = unlockHoldTime,
                 )
             }
         )
@@ -299,7 +333,8 @@ object AxSceneTable {
         registerScenario(
             Scenario(AxDragoniteConstants.SCENE_FLING_LEVEL_1, SCENE_NAME_FLING_LEVEL_1).apply {
                 command(AxCmdTable.NAME_CMD_PLATFORM_CONTROL, params1 = NAME_FLING)
-                command(AxCmdTable.NAME_CMD_SF_CONTROL_AFFINITY)
+                command(AxCmdTable.NAME_CMD_ANIMATION_BOOST)
+                command(AxCmdTable.NAME_CMD_PROCESS_AFFINITY, params1 = AxCpuSets.CPUSET_BOOST)
                 command(AxCmdTable.NAME_CMD_BACKGROUND_LOAD_LIMIT)
             }
         )

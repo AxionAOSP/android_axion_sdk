@@ -22,7 +22,6 @@ import android.os.SystemProperties
 import android.util.Slog
 import java.io.File
 import java.io.IOException
-import java.util.HashMap
 
 class AxNamedThreadAffinityFeature {
     companion object {
@@ -36,25 +35,35 @@ class AxNamedThreadAffinityFeature {
         private const val NODE_RESET = "reset"
         private const val RESET_TRIGGER_VALUE = "1"
 
-        private const val PKG_PUBG_MOBILE = "com.tencent.ig"
-        private const val PKG_HONKAI_STAR_RAIL = "com.HoYoverse.hkrpgoversea"
-        private const val THREAD_GAME = "Thread"
-        private const val THREAD_RENDER = "RenderThread"
-        private const val THREAD_UNITY_MAIN = "UnityMain"
-        private const val THREAD_UNITY_GFX = "UnityGfxDeviceW"
-
-        private val PACKAGE_ACTIONS: Map<String, List<NamedAffinity>> =
-            mapOf(
-                PKG_PUBG_MOBILE to
-                    listOf(
-                        NamedAffinity(THREAD_GAME, AxCpuSets.CPUSET_UI),
-                        NamedAffinity(THREAD_RENDER, AxCpuSets.CPUSET_PERF_MID),
-                    ),
-                PKG_HONKAI_STAR_RAIL to
-                    listOf(
-                        NamedAffinity(THREAD_UNITY_MAIN, AxCpuSets.CPUSET_PERF_MID),
-                        NamedAffinity(THREAD_UNITY_GFX, AxCpuSets.CPUSET_PERF_HIGH),
-                    ),
+        private val KNOWN_GAME_PACKAGES =
+            setOf(
+                "com.tencent.ig",
+                "com.pubg.imobile",
+                "com.pubg.krmobile",
+                "com.vng.pubgmobile",
+                "com.tencent.tmgp.pubgmhd",
+                "com.miHoYo.GenshinImpact",
+                "com.miHoYo.Yuanshen",
+                "com.HoYoverse.hkrpgoversea",
+                "com.miHoYo.hkrpg",
+                "com.HoYoverse.Nap",
+                "com.miHoYo.Nap",
+                "com.activision.callofduty.shooter",
+                "com.garena.game.codm",
+                "com.activision.callofduty.warzone",
+                "com.dts.freefireth",
+                "com.dts.freefiremax",
+                "com.mobile.legends",
+                "com.riotgames.league.wildrift",
+                "com.riotgames.league.wildrifttw",
+                "com.levelinfinite.sgameGlobal",
+                "com.tencent.tmgp.sgame",
+                "com.roblox.client",
+                "com.mojang.minecraftpe",
+                "com.blizzard.diablo.immortal",
+                "com.ea.gp.apexmobile",
+                "com.gameloft.android.ANMP.GloftA9HM",
+                "com.epicgames.fortnite",
             )
 
         @Volatile private var sInstance: AxNamedThreadAffinityFeature? = null
@@ -66,9 +75,9 @@ class AxNamedThreadAffinityFeature {
         }
     }
 
-    private data class NamedAffinity(val threadName: String, val affinity: String)
-
     private val isSupported: Boolean = hasKernelNodes()
+    private var lastPid: Int = -1
+    private val modifiedTids = ArrayList<Int>()
 
     private fun hasKernelNodes(): Boolean =
         File("$PROC_DIR$NODE_PID").exists() &&
@@ -90,55 +99,106 @@ class AxNamedThreadAffinityFeature {
         }
     }
 
+    private fun isRenderThread(comm: String): Boolean =
+        comm.startsWith("RenderThread", ignoreCase = true) ||
+            comm.startsWith("UnityMain", ignoreCase = true) ||
+            comm.startsWith("UnityGfx", ignoreCase = true) ||
+            comm.startsWith("RHIThread", ignoreCase = true) ||
+            comm.startsWith("GLThread", ignoreCase = true) ||
+            comm.startsWith("GameThread", ignoreCase = true) ||
+            comm.startsWith("MainThread", ignoreCase = true) ||
+            comm.startsWith("Godot", ignoreCase = true)
+
+    private fun isWorkerThread(comm: String): Boolean =
+        comm.startsWith("Job.Worker", ignoreCase = true) ||
+            comm.startsWith("TaskGraph", ignoreCase = true) ||
+            comm == "Thread"
+
     fun applyNamedAffinityForPid(pid: Int) {
         if (pid <= 0) {
             Slog.w(TAG, "Invalid pid: $pid")
             return
         }
+
+        val taskDir = File("/proc/$pid/task")
+        val taskFiles = taskDir.listFiles() ?: return
         val packageName = AxPlatformConfig.getProcessCmdLine(pid)
-        val actions = PACKAGE_ACTIONS[packageName] ?: return
+        val isKnownGame = KNOWN_GAME_PACKAGES.contains(packageName)
+
+        val assignments = ArrayList<Pair<Int, String>>()
+        var hasEngineThreads = false
+
+        for (taskFile in taskFiles) {
+            val tid = taskFile.name.toIntOrNull() ?: continue
+            val comm = AxPlatformConfig.getProcessComm(tid)
+            if (isRenderThread(comm)) {
+                hasEngineThreads = true
+                assignments.add(tid to comm)
+            } else if (isWorkerThread(comm)) {
+                hasEngineThreads = true
+                assignments.add(tid to comm)
+            }
+        }
+
+        if (!hasEngineThreads && !isKnownGame) return
+
+        lastPid = pid
+        modifiedTids.clear()
+
+        val boostCores = AxCpuSets.resolveCores(AxCpuSets.CPUSET_BOOST)
+        val uiCores = AxCpuSets.resolveCores(AxCpuSets.CPUSET_UI)
+        val boostCpuset = AxCpuSets.resolve(AxCpuSets.CPUSET_BOOST)
+        val uiCpuset = AxCpuSets.resolve(AxCpuSets.CPUSET_UI)
+
         if (isSupported) {
-            for (action in actions) {
-                writeNode(
-                    NODE_AFFINITY,
-                    "${action.threadName} ${AxCpuSets.resolve(action.affinity)}",
-                    "policy",
-                )
-                writeNode(NODE_PID, pid.toString(), "pid")
+            writeNode(NODE_PID, pid.toString(), "pid")
+            for ((_, comm) in assignments) {
+                val targetCpuset = if (isRenderThread(comm)) boostCpuset else uiCpuset
+                writeNode(NODE_AFFINITY, "$comm $targetCpuset", "policy")
             }
             return
         }
-        applyUserspaceAffinity(pid, actions)
-    }
 
-    private fun collectTargetAffinities(actions: List<NamedAffinity>): Map<String, IntArray> {
-        val targets = HashMap<String, IntArray>()
-        for (action in actions) {
-            AxCpuSets.resolveCores(action.affinity)?.let { targets[action.threadName] = it }
-        }
-        return targets
-    }
-
-    private fun applyUserspaceAffinity(pid: Int, actions: List<NamedAffinity>) {
-        if (pid <= 0) return
-        val targets = collectTargetAffinities(actions)
-        if (targets.isEmpty()) return
-        val taskFiles = File("/proc/$pid/task").listFiles() ?: return
-        for (taskFile in taskFiles) {
-            val tid = taskFile.name.toIntOrNull() ?: continue
-            val cores = targets[AxPlatformConfig.getProcessComm(tid)] ?: continue
-            try {
-                Process.setThreadAffinity(tid, cores)
-                if (DEBUG_LOG) {
-                    Slog.d(TAG, "Userspace set affinity for tid $tid to ${cores.contentToString()}")
+        for ((tid, comm) in assignments) {
+            val targetCores = if (isRenderThread(comm)) boostCores else uiCores
+            if (targetCores != null) {
+                try {
+                    Process.setThreadAffinity(tid, targetCores)
+                    modifiedTids.add(tid)
+                    if (DEBUG_LOG) {
+                        Slog.d(TAG, "Set affinity for tid $tid ($comm) to ${targetCores.contentToString()}")
+                    }
+                } catch (e: Exception) {
+                    Slog.w(TAG, "Failed to set affinity for tid $tid: ${e.message}")
                 }
+            }
+        }
+
+        if (boostCores != null) {
+            try {
+                Process.setThreadAffinity(pid, boostCores)
+                modifiedTids.add(pid)
             } catch (e: Exception) {
-                Slog.w(TAG, "Failed to set affinity for tid $tid: ${e.message}")
+                Slog.w(TAG, "Failed to set affinity for main thread $pid: ${e.message}")
             }
         }
     }
 
     fun resetAffinity() {
-        writeNode(NODE_RESET, RESET_TRIGGER_VALUE, "reset")
+        if (isSupported) {
+            writeNode(NODE_RESET, RESET_TRIGGER_VALUE, "reset")
+            return
+        }
+
+        val allCores = AxCpuSets.resolveCores(AxCpuSets.CPUSET_ALL) ?: return
+        for (tid in modifiedTids) {
+            try {
+                Process.setThreadAffinity(tid, allCores)
+            } catch (e: Exception) {
+                Slog.w(TAG, "Failed to reset affinity for tid $tid: ${e.message}")
+            }
+        }
+        modifiedTids.clear()
+        lastPid = -1
     }
 }

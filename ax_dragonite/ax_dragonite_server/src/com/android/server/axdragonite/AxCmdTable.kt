@@ -41,6 +41,7 @@ object AxCmdTable {
     const val GROUP_SYSTEM_BACKGROUND = "system-background"
     const val GROUP_RESTRICTED = "restricted"
     const val GROUP_DEX2OAT = "dex2oat"
+    const val GROUP_CAMERA_DAEMON = "camera-daemon"
     const val GROUP_SYSTEM = "system"
     const val GROUP_RT = "rt"
     const val GROUP_AX_FOREGROUND = "ax_foreground"
@@ -97,6 +98,9 @@ object AxCmdTable {
     const val NAME_CMD_CPUSET_BG_CPUS = "CMD_CPUSET_BG_CPUS"
     const val NAME_CMD_CPUSET_BG_PROCS = "CMD_CPUSET_BG_PROCS"
     const val NAME_CMD_CPUSET_BG_TASKS = "CMD_CPUSET_BG_TASKS"
+    const val NAME_CMD_CPUSET_CAMERA_DAEMON_CPUS = "CMD_CPUSET_CAMERA_DAEMON_CPUS"
+    const val NAME_CMD_CPUSET_CAMERA_DAEMON_PROCS = "CMD_CPUSET_CAMERA_DAEMON_PROCS"
+    const val NAME_CMD_CPUSET_CAMERA_DAEMON_TASKS = "CMD_CPUSET_CAMERA_DAEMON_TASKS"
     const val NAME_CMD_CPUSET_DEX2OAT_CPUS = "CMD_CPUSET_DEX2OAT_CPUS"
     const val NAME_CMD_CPUSET_DEX2OAT_PROCS = "CMD_CPUSET_DEX2OAT_PROCS"
     const val NAME_CMD_CPUSET_DEX2OAT_TASKS = "CMD_CPUSET_DEX2OAT_TASKS"
@@ -122,18 +126,21 @@ object AxCmdTable {
     const val CMD_CPUSET_FG_PROCS = 101
     const val CMD_CPUSET_BG_PROCS = 102
     const val CMD_CPUSET_SBG_PROCS = 103
+    const val CMD_CPUSET_CAMERA_DAEMON_PROCS = 104
     const val CMD_CPUSET_RESTRICTED_PROCS = 105
     const val CMD_CPUSET_DEX2OAT_PROCS = 106
     const val CMD_CPUSET_TA_TASKS = 150
     const val CMD_CPUSET_FG_TASKS = 151
     const val CMD_CPUSET_BG_TASKS = 152
     const val CMD_CPUSET_SBG_TASKS = 153
+    const val CMD_CPUSET_CAMERA_DAEMON_TASKS = 154
     const val CMD_CPUSET_RESTRICTED_TASKS = 155
     const val CMD_CPUSET_DEX2OAT_TASKS = 156
     const val CMD_CPUSET_TA_CPUS = 200
     const val CMD_CPUSET_FG_CPUS = 201
     const val CMD_CPUSET_BG_CPUS = 202
     const val CMD_CPUSET_SBG_CPUS = 203
+    const val CMD_CPUSET_CAMERA_DAEMON_CPUS = 204
     const val CMD_CPUSET_RESTRICTED_CPUS = 205
     const val CMD_CPUSET_DEX2OAT_CPUS = 206
     const val CMD_CPUCTL_SYS_PROCS = 300
@@ -224,6 +231,11 @@ object AxCmdTable {
                     GROUP_RESTRICTED,
                 ),
                 Triple(NAME_CMD_CPUSET_DEX2OAT_PROCS, CMD_CPUSET_DEX2OAT_PROCS, GROUP_DEX2OAT),
+                Triple(
+                    NAME_CMD_CPUSET_CAMERA_DAEMON_PROCS,
+                    CMD_CPUSET_CAMERA_DAEMON_PROCS,
+                    GROUP_CAMERA_DAEMON,
+                ),
             )
         val taskIds =
             mapOf(
@@ -233,6 +245,7 @@ object AxCmdTable {
                 GROUP_SYSTEM_BACKGROUND to CMD_CPUSET_SBG_TASKS,
                 GROUP_RESTRICTED to CMD_CPUSET_RESTRICTED_TASKS,
                 GROUP_DEX2OAT to CMD_CPUSET_DEX2OAT_TASKS,
+                GROUP_CAMERA_DAEMON to CMD_CPUSET_CAMERA_DAEMON_TASKS,
             )
         val cpuIds =
             mapOf(
@@ -242,6 +255,7 @@ object AxCmdTable {
                 GROUP_SYSTEM_BACKGROUND to CMD_CPUSET_SBG_CPUS,
                 GROUP_RESTRICTED to CMD_CPUSET_RESTRICTED_CPUS,
                 GROUP_DEX2OAT to CMD_CPUSET_DEX2OAT_CPUS,
+                GROUP_CAMERA_DAEMON to CMD_CPUSET_CAMERA_DAEMON_CPUS,
             )
         val taskNames =
             mapOf(
@@ -251,6 +265,7 @@ object AxCmdTable {
                 GROUP_SYSTEM_BACKGROUND to NAME_CMD_CPUSET_SBG_TASKS,
                 GROUP_RESTRICTED to NAME_CMD_CPUSET_RESTRICTED_TASKS,
                 GROUP_DEX2OAT to NAME_CMD_CPUSET_DEX2OAT_TASKS,
+                GROUP_CAMERA_DAEMON to NAME_CMD_CPUSET_CAMERA_DAEMON_TASKS,
             )
         val cpuNames =
             mapOf(
@@ -260,6 +275,7 @@ object AxCmdTable {
                 GROUP_SYSTEM_BACKGROUND to NAME_CMD_CPUSET_SBG_CPUS,
                 GROUP_RESTRICTED to NAME_CMD_CPUSET_RESTRICTED_CPUS,
                 GROUP_DEX2OAT to NAME_CMD_CPUSET_DEX2OAT_CPUS,
+                GROUP_CAMERA_DAEMON to NAME_CMD_CPUSET_CAMERA_DAEMON_CPUS,
             )
         for ((name, id, group) in cpusetGroups) {
             add(NodeDef(name, id, nodePath(CPUSET_DIR, group, FILE_CGROUP_PROCS)))

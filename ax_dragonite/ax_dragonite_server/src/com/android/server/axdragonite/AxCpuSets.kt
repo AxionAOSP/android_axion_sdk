@@ -22,19 +22,14 @@ import kotlin.math.min
 object AxCpuSets {
     const val CPUSET_ALL = "all"
     const val CPUSET_FOREGROUND = "foreground"
-    const val CPUSET_BACKGROUND = "background"
     const val CPUSET_UI = "ui"
     const val CPUSET_RESTRICTED_BG = "restricted_bg"
-    const val CPUSET_SYSTEM_BG = "system_bg"
-    const val CPUSET_LITTLE = "little"
+    const val CPUSET_RESTRICTED_FG = "restricted_fg"
     const val CPUSET_LITTLE_MIN = "little_min"
-    const val CPUSET_BIG = "big"
     const val CPUSET_BOOST = "boost"
-    const val CPUSET_PERF_MID = "perf_mid"
-    const val CPUSET_PERF_HIGH = "perf_high"
     const val CPUSET_BOOST_MASK_DEC = "boost_mask_dec"
 
-    const val DEFAULT_SF_BOOST_AFFINITY = 240
+    const val DEFAULT_SF_BOOST_AFFINITY = 156
     const val DEFAULT_SF_RESTORE_AFFINITY = 255
     private const val MASK_32_BIT = 0xFFFFFFFFL
     private const val DEX_RESTORE_MIN_THREADS = 2
@@ -46,21 +41,17 @@ object AxCpuSets {
 
     @JvmStatic
     fun resolve(cpuset: String?): String {
-        if (cpuset.isNullOrEmpty()) return AxCpuClusterManager.getAllCpusString()
+        val topo = AxCpuClusterManager.topology
+        if (cpuset.isNullOrEmpty()) return topo.all.toString()
         return when (cpuset) {
-            CPUSET_ALL -> AxCpuClusterManager.getAllCpusString()
-            CPUSET_FOREGROUND -> AxCpuClusterManager.getForegroundCpusString()
-            CPUSET_BACKGROUND -> AxCpuClusterManager.getBackgroundCpusString()
-            CPUSET_UI -> AxCpuClusterManager.getUiCpusString()
-            CPUSET_RESTRICTED_BG -> AxCpuClusterManager.getRestrictedBackgroundCpusString()
-            CPUSET_SYSTEM_BG -> AxCpuClusterManager.getSystemBackgroundCpusString()
-            CPUSET_LITTLE -> AxCpuClusterManager.getLittleCpusString()
-            CPUSET_LITTLE_MIN -> AxCpuClusterManager.getLittleMinCpusString()
-            CPUSET_BIG -> AxCpuClusterManager.getBigCpusString()
-            CPUSET_BOOST -> AxCpuClusterManager.getBoostCpusString()
-            CPUSET_PERF_MID -> AxCpuClusterManager.getMidPerformanceCpusString()
-            CPUSET_PERF_HIGH -> AxCpuClusterManager.getHighPerformanceCpusString()
-            CPUSET_BOOST_MASK_DEC -> AxCpuClusterManager.boostMask.toString()
+            CPUSET_ALL -> topo.all.toString()
+            CPUSET_FOREGROUND -> topo.foreground.toString()
+            CPUSET_UI -> topo.ui.toString()
+            CPUSET_RESTRICTED_BG -> topo.restrictedBackground.toString()
+            CPUSET_RESTRICTED_FG -> (topo.restrictedForeground ?: topo.foreground).toString()
+            CPUSET_LITTLE_MIN -> topo.littleMin.toString()
+            CPUSET_BOOST -> topo.boost.toString()
+            CPUSET_BOOST_MASK_DEC -> topo.boost.mask.toString()
             else -> cpuset
         }
     }
@@ -68,16 +59,16 @@ object AxCpuSets {
     @JvmStatic
     fun resolveCores(cpuset: String?): IntArray? {
         if (cpuset.isNullOrEmpty()) return null
-        if (cpuset == CPUSET_BOOST_MASK_DEC) {
-            return AxCpuClusterManager.maskToCores(AxCpuClusterManager.boostMask)
+        if (cpuset == CPUSET_BOOST_MASK_DEC || cpuset == CPUSET_BOOST) {
+            return AxCpuClusterManager.topology.boost.cores
         }
         return parseCores(resolve(cpuset))
     }
 
     private fun parseCores(cpuset: String): IntArray? {
-        val maxCore = AxCpuClusterManager.numCores
+        val maxCore = AxCpuClusterManager.topology.numCores
         val cores = ArrayList<Int>()
-        for (range in cpuset.split(AxCommandExec.COMMA)) {
+        for (range in cpuset.split(",")) {
             collectRange(range.trim(), maxCore, cores)
         }
         return cores.takeIf { it.isNotEmpty() }?.toIntArray()
@@ -104,7 +95,7 @@ object AxCpuSets {
     @JvmStatic
     fun dexRestoreThreads(): String =
         clampThreads(
-            AxCpuClusterManager.numCores,
+            AxCpuClusterManager.topology.numCores,
             CORES_DIVISOR_RESTORE,
             DEX_RESTORE_MIN_THREADS,
             DEX_RESTORE_MAX_THREADS,
@@ -113,7 +104,7 @@ object AxCpuSets {
     @JvmStatic
     fun dexLimitThreads(): String =
         clampThreads(
-            AxCpuClusterManager.numCores,
+            AxCpuClusterManager.topology.numCores,
             CORES_DIVISOR_LIMIT,
             DEX_LIMIT_MIN_THREADS,
             DEX_LIMIT_MAX_THREADS,
@@ -124,15 +115,15 @@ object AxCpuSets {
 
     @JvmStatic
     fun sfBoostAffinity(): Int =
-        maskToAffinity(AxCpuClusterManager.boostMask, DEFAULT_SF_BOOST_AFFINITY)
+        maskToAffinity(AxCpuClusterManager.topology.boost.mask, DEFAULT_SF_BOOST_AFFINITY)
 
     @JvmStatic
     fun sfRestoreAffinity(): Int =
-        maskToAffinity(AxCpuClusterManager.allMask, DEFAULT_SF_RESTORE_AFFINITY)
+        maskToAffinity(AxCpuClusterManager.topology.all.mask, DEFAULT_SF_RESTORE_AFFINITY)
 
     @JvmStatic
     fun resolveMask(decimalMask: String?): String {
-        if (CPUSET_BOOST_MASK_DEC == decimalMask) return AxCpuClusterManager.boostMask.toString()
+        if (CPUSET_BOOST_MASK_DEC == decimalMask) return AxCpuClusterManager.topology.boost.mask.toString()
         return decimalMask ?: ""
     }
 }

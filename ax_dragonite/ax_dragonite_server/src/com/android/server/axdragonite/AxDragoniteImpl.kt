@@ -198,6 +198,7 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
                 AxCmdTable.CMD_CPUSET_SBG_PROCS to AxCmdTable.CMD_CPUSET_SBG_CPUS,
                 AxCmdTable.CMD_CPUSET_RESTRICTED_PROCS to AxCmdTable.CMD_CPUSET_RESTRICTED_CPUS,
                 AxCmdTable.CMD_CPUSET_DEX2OAT_PROCS to AxCmdTable.CMD_CPUSET_DEX2OAT_CPUS,
+                AxCmdTable.CMD_CPUSET_CAMERA_DAEMON_PROCS to AxCmdTable.CMD_CPUSET_CAMERA_DAEMON_CPUS,
             )
         registerCommands(cpusetGroups.map { it.first }, ::adjustCpusetProcs)
         registerCommands(cpusetGroups.map { it.second }, ::adjustCpusetCpus)
@@ -209,6 +210,7 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
                 AxCmdTable.CMD_CPUSET_SBG_TASKS,
                 AxCmdTable.CMD_CPUSET_RESTRICTED_TASKS,
                 AxCmdTable.CMD_CPUSET_DEX2OAT_TASKS,
+                AxCmdTable.CMD_CPUSET_CAMERA_DAEMON_TASKS,
             ),
             ::adjustCpusetTasks,
         )
@@ -711,7 +713,7 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
             CPUSET_AX_FOREGROUND_CPUS,
             mPlatformConfig.getOrDefault(
                 AxPlatformConfig.KEY_BACKGROUND,
-                AxCpuSets.CPUSET_BACKGROUND,
+                AxCpuSets.CPUSET_UI,
             ),
         )
         SystemProperties.set(
@@ -728,14 +730,14 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
             CPUSET_AX_FOREGROUND_CPUS,
             mPlatformConfig.getOrDefault(
                 AxPlatformConfig.KEY_FOREGROUND_INPUT,
-                AxCpuSets.CPUSET_BACKGROUND,
+                AxCpuSets.CPUSET_UI,
             ),
         )
         FileUtils.stringToFile(
             CPUSET_DEX2OAT_CPUS,
             mPlatformConfig.getOrDefault(
                 AxPlatformConfig.KEY_DEX_INPUT,
-                AxCpuSets.CPUSET_BACKGROUND,
+                AxCpuSets.CPUSET_UI,
             ),
         )
         FileUtils.stringToFile(
@@ -1141,9 +1143,9 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         if (AxCmdTable.GROUP_DEX2OAT != group || cpus != null) return
         val targetCpus =
             if (durationMs == 0L) {
-                AxCpuClusterManager.getRestrictedDex2oatCpusString()
+                AxCpuClusterManager.topology.restrictedDex2oat.toString()
             } else {
-                AxCpuClusterManager.getBackgroundCpusString()
+                AxCpuClusterManager.topology.ui.toString()
             }
         try {
             FileUtils.stringToFile(File(CPUSET_DEX2OAT_CPUS), targetCpus)
