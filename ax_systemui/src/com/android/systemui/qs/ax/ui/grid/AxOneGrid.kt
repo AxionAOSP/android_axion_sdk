@@ -58,6 +58,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -453,45 +454,41 @@ internal fun ContentScope.AxOneGrid(
                 separateMode &&
                     !isDirectQs &&
                     mediaViewModel.hasVisibleSessions(AxMediaSurface.SEPARATE_QQS)
-            LaunchedEffect(
-                headerTopPadding,
-                effectiveRowHeight,
-                spacing,
-                density,
-                separateMode,
-                isDirectQs,
-                separateMediaVisible,
-                axQsViewModel.qqsMaxRows,
-            ) {
+            val qqsHeightPx =
                 if (!splitShade) {
-                    val qqsHeightPx =
-                        with(density) {
-                            if (separateMode && !isDirectQs) {
-                                if (separateMediaVisible) {
-                                    (headerTopPadding +
-                                            48.dp +
-                                            spacing +
-                                            nonQsGridMediaHeight +
-                                            spacing)
-                                        .roundToPx()
-                                } else {
-                                    (headerTopPadding + 48.dp + 8.dp).roundToPx()
-                                }
+                    with(density) {
+                        if (separateMode && !isDirectQs) {
+                            if (separateMediaVisible) {
+                                (headerTopPadding +
+                                        48.dp +
+                                        spacing +
+                                        nonQsGridMediaHeight +
+                                        spacing)
+                                    .roundToPx()
                             } else {
-                                val currentQqsMaxRows = axQsViewModel.qqsMaxRows
-                                val qqsSpacing =
-                                    if (currentQqsMaxRows > 1) spacing * (currentQqsMaxRows - 1) else 0.dp
-                                val tilesAndHandleHeight =
-                                    (effectiveRowHeight * currentQqsMaxRows +
-                                            qqsSpacing +
-                                            spacing +
-                                            DragHandleHeight +
-                                            DragHandleBottomPadding)
-                                        .roundToPx()
-                                (headerTopPadding + 48.dp + spacing).roundToPx() +
-                                    tilesAndHandleHeight
+                                (headerTopPadding + 48.dp + 8.dp).roundToPx()
                             }
+                        } else {
+                            val currentQqsMaxRows = axQsViewModel.qqsMaxRows
+                            val qqsSpacing =
+                                if (currentQqsMaxRows > 1) spacing * (currentQqsMaxRows - 1) else 0.dp
+                            val tilesAndHandleHeight =
+                                (effectiveRowHeight * currentQqsMaxRows +
+                                        qqsSpacing +
+                                        spacing +
+                                        DragHandleHeight +
+                                        DragHandleBottomPadding)
+                                    .roundToPx()
+                            (headerTopPadding + 48.dp + spacing).roundToPx() +
+                                tilesAndHandleHeight
                         }
+                    }
+                } else {
+                    0
+                }
+
+            SideEffect {
+                if (!splitShade && qqsHeightPx > 0 && viewModel.qqsHeight != qqsHeightPx) {
                     viewModel.qqsHeight = qqsHeightPx
                 }
             }
@@ -593,12 +590,24 @@ internal fun ContentScope.AxOneGrid(
                                                 .then(gridEntranceModifier)
                                                 .then(dropTargetModifier)
                                     ) {
+                                val isScrollEnabled =
+                                    splitShade ||
+                                        isEditing ||
+                                        scrollState.value > 0 ||
+                                        viewModel.isQsFullyExpanded ||
+                                        viewModel.expansionState.progress >= 1f
                                 Column(
                                     modifier =
                                         Modifier.fillMaxSize()
                                             .onGloballyPositioned { viewportBounds.value = it.boundsInRoot() }
-                                            .clipScrollableContainer(Orientation.Vertical)
-                                            .verticalScroll(scrollState, overscrollEffect = null)
+                                            .thenIf(isScrollEnabled) {
+                                                Modifier.clipScrollableContainer(Orientation.Vertical)
+                                            }
+                                            .verticalScroll(
+                                                state = scrollState,
+                                                enabled = isScrollEnabled,
+                                                overscrollEffect = null,
+                                            )
                                 ) {
                                     val gridItemsToRender = if (isEditing) editController.listState.items else gridItems
                                     if (gridItemsToRender.isNotEmpty()) {
