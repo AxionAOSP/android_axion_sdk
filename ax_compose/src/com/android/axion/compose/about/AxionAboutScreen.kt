@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025 AxionOS
+ * Copyright (C) 2025-2026 AxionOS
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -95,9 +95,10 @@ private class StableImageBitmap(val bitmap: ImageBitmap?)
 
 @Composable
 fun AxionAboutScreen(
-  onNavigateBack: () -> Unit,
+  onNavigateBack: () -> Unit = {},
   onNavigateToDeviceInfo: () -> Unit,
   onEditDeviceName: (String) -> Unit,
+  showTopBar: Boolean = true,
   modifier: Modifier = Modifier,
 ) {
   val context = LocalContext.current
@@ -140,13 +141,14 @@ fun AxionAboutScreen(
       title = "About phone",
       onBackClick = onNavigateBack,
       collapsedByDefault = false,
+      showTopBar = showTopBar,
     ) { paddingValues ->
       Column(
         modifier =
           Modifier.fillMaxSize()
             .padding(paddingValues)
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp),
+            .padding(horizontal = 24.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp),
       ) {
         BannerSection(

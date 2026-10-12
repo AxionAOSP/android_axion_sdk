@@ -55,6 +55,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -102,33 +103,50 @@ private val safeDrawingWindowInsets: WindowInsets
     @Composable
     get() = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top)
 
+val LocalScaffoldEmbedded = compositionLocalOf { false }
+
+val LocalOnScaffoldTitleChange = compositionLocalOf<((String) -> Unit)?> { null }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AxionScaffold(
     title: String,
-    onBackClick: () -> Unit,
+    onBackClick: () -> Unit = {},
     modifier: Modifier = Modifier,
     collapsedByDefault: Boolean = true,
     containerColor: Color = MaterialTheme.colorScheme.surfaceContainer,
+    showTopBar: Boolean = true,
     actions: @Composable RowScope.() -> Unit = {},
     content: @Composable (PaddingValues) -> Unit,
 ) {
+    val embedded = LocalScaffoldEmbedded.current
+    val effectiveShowTopBar = showTopBar && !embedded
+
+    val onTitleChange = LocalOnScaffoldTitleChange.current
+    LaunchedEffect(title, embedded) {
+        if (embedded) {
+            onTitleChange?.invoke(title)
+        }
+    }
+
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
 
     Scaffold(
-        modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        modifier = if (effectiveShowTopBar) modifier.nestedScroll(scrollBehavior.nestedScrollConnection) else modifier,
         containerColor = containerColor,
         topBar = {
-            AxionLargeTopAppBar(
-                title = title,
-                scrollBehavior = scrollBehavior,
-                collapsedByDefault = collapsedByDefault,
-                containerColor = containerColor,
-                navigationIcon = { ExpressiveBackButton(onClick = onBackClick) },
-                actions = actions,
-            )
+            if (effectiveShowTopBar) {
+                AxionLargeTopAppBar(
+                    title = title,
+                    scrollBehavior = scrollBehavior,
+                    collapsedByDefault = collapsedByDefault,
+                    containerColor = containerColor,
+                    navigationIcon = { ExpressiveBackButton(onClick = onBackClick) },
+                    actions = actions,
+                )
+            }
         },
-        contentWindowInsets = WindowInsets.safeDrawing,
+        contentWindowInsets = if (effectiveShowTopBar) WindowInsets.safeDrawing else WindowInsets(0, 0, 0, 0),
         content = content,
     )
 }

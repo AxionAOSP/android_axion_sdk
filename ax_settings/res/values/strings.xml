@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="gms_enabled_title">Google services</string>
+    <string name="wellbeing_title">Digital wellbeing</string>
+    <string name="axion_hub_title">Personalize</string>
+    <string name="axion_themepicker_title">Wallpaper &amp; styles</string>
+</resources>
