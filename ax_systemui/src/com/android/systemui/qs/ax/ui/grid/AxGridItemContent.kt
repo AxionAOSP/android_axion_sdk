@@ -195,7 +195,7 @@ fun ContentScope.AxGridItemContent(
             resizable = resizable,
             modifier = Modifier.fillMaxSize(),
             itemModifier = itemModifier,
-            showRemoveBadge = true,
+            showRemoveBadge = !isStack,
             onRemoveClick = { editController.removeItem(item) },
             onResizeClick = {
                 if (resizable) {
@@ -262,15 +262,17 @@ fun ContentScope.AxGridItemContent(
                         }
                     }
                     is AxQsGridValue.Stack -> {
-                        key(item.id, value.editTiles.map { it.tileSpec.spec }, value.tiles.map { it.spec.spec }) {
-                            AxEditStackedTilePreview(
-                                tiles = value.editTiles,
-                                liveTiles = value.tiles,
-                                isSelected = isSelected,
-                                onRemoveStack = { editController.removeItem(item) },
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
+                        AxEditStackedTilePreview(
+                            tiles = value.editTiles,
+                            liveTiles = value.tiles,
+                            isSelected = isSelected,
+                            onSelect = {
+                                editController.selectedId.value = if (isSelected) null else item.id
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                            },
+                            onRemoveStack = { editController.removeItem(item) },
+                            modifier = Modifier.fillMaxSize(),
+                        )
                     }
                     is AxQsGridValue.Control -> {
                         AxQsControlPreview(

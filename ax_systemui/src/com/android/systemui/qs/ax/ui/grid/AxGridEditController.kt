@@ -312,7 +312,7 @@ fun rememberAxGridEditController(
     editModeViewModel: EditModeViewModel,
     resetEpoch: Int,
 ): AxGridEditController {
-    val selectedId = remember { mutableStateOf<String?>(null) }
+    val selectedId = remember(isEditing, resetEpoch) { mutableStateOf<String?>(null) }
     val showResetDialog = remember { mutableStateOf(false) }
 
     val listState =

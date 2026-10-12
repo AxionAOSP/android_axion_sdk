@@ -24,6 +24,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -54,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -134,26 +136,57 @@ fun AxEditStackPlaceholderPreview(
     }
 }
 
+private sealed interface StackEditPage {
+    val tag: String
+    data class EditTile(val tile: EditTileViewModel) : StackEditPage {
+        override val tag: String = tile.tileSpec.spec
+    }
+    data class LiveTile(val tile: TileViewModel) : StackEditPage {
+        override val tag: String = tile.spec.spec
+    }
+    data object Placeholder : StackEditPage {
+        override val tag: String = "placeholder"
+    }
+}
+
 @Composable
 fun AxEditStackedTilePreview(
     tiles: List<EditTileViewModel>,
     liveTiles: List<TileViewModel> = emptyList(),
     isSelected: Boolean,
     onRemoveStack: () -> Unit,
+    onSelect: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val view = LocalView.current
     val distinctTiles = remember(tiles) { tiles.distinctBy { it.tileSpec.spec } }
     val distinctLiveTiles = remember(liveTiles) { liveTiles.distinctBy { it.spec.spec } }
+    val pages =
+        remember(distinctTiles, distinctLiveTiles) {
+            when {
+                distinctTiles.isNotEmpty() -> distinctTiles.map { StackEditPage.EditTile(it) } + StackEditPage.Placeholder
+                distinctLiveTiles.isNotEmpty() -> distinctLiveTiles.map { StackEditPage.LiveTile(it) } + StackEditPage.Placeholder
+                else -> listOf(StackEditPage.Placeholder)
+            }
+        }
     val effectiveCount = if (distinctTiles.isNotEmpty()) distinctTiles.size else distinctLiveTiles.size
-    val pageCount = if (effectiveCount == 0) 1 else effectiveCount + 1
+    val pageCount = pages.size
     val pagerState = key(pageCount) { rememberPagerState(pageCount = { pageCount }) }
     val coroutineScope = rememberCoroutineScope()
+
+    val selectGestureModifier =
+        Modifier.pointerInput(Unit) {
+            detectTapGestures(
+                onTap = { onSelect() },
+                onLongPress = { onSelect() },
+            )
+        }
 
     Box(
         modifier =
             modifier
                 .fillMaxSize()
+                .then(selectGestureModifier)
                 .interceptParentTouch(enabled = effectiveCount > 1, view = view),
         contentAlignment = Alignment.Center,
     ) {
@@ -168,43 +201,83 @@ fun AxEditStackedTilePreview(
                 modifier = Modifier.fillMaxSize(),
                 userScrollEnabled = true,
                 beyondViewportPageCount = 1,
-                key = { pageIndex ->
-                    when {
-                        distinctTiles.isNotEmpty() && pageIndex < distinctTiles.size -> distinctTiles[pageIndex].tileSpec.spec
-                        distinctTiles.isEmpty() && pageIndex < distinctLiveTiles.size -> distinctLiveTiles[pageIndex].spec.spec
-                        else -> "add_slot"
-                    }
-                },
+                key = { pageIndex -> pages.getOrNull(pageIndex)?.tag ?: pageIndex.toString() },
             ) { pageIndex ->
-                if (distinctTiles.isNotEmpty() && pageIndex < distinctTiles.size) {
-                    AxQsEditTile(
-                        tile = distinctTiles[pageIndex],
-                        span = AxQsSpan(columns = 2, rows = 2),
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else if (distinctTiles.isEmpty() && pageIndex < distinctLiveTiles.size) {
-                    val liveTile = distinctLiveTiles[pageIndex]
-                    val res = LocalView.current.resources
-                    val uiState by produceState(liveTile.currentState.toUiState(res), liveTile, res) {
-                        liveTile.state.collect { value = it.toUiState(res) }
+                val page = pages.getOrNull(pageIndex)
+                val isTilePage = page is StackEditPage.EditTile || page is StackEditPage.LiveTile
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    when (page) {
+                        is StackEditPage.EditTile -> {
+                            AxQsEditTile(
+                                tile = page.tile,
+                                span = AxQsSpan(columns = 2, rows = 2),
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                        is StackEditPage.LiveTile -> {
+                            val liveTile = page.tile
+                            val res = LocalView.current.resources
+                            val uiState by produceState(liveTile.currentState.toUiState(res), liveTile, res) {
+                                liveTile.state.collect { value = it.toUiState(res) }
+                            }
+                            val icon by produceState(liveTile.currentState.toIconProvider(), liveTile) {
+                                liveTile.state.collect { value = it.toIconProvider() }
+                            }
+                            AxTile(
+                                uiState = uiState,
+                                iconProvider = { getAxTileIcon(icon) },
+                                compact = false,
+                                span = AxQsSpan(columns = 2, rows = 2),
+                                isClickable = false,
+                                isDualTarget = uiState.handlesSecondaryClick,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                        is StackEditPage.Placeholder, null -> {
+                            AxEditStackPlaceholderPreview(
+                                showIndicator = false,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                     }
-                    val icon by produceState(liveTile.currentState.toIconProvider(), liveTile) {
-                        liveTile.state.collect { value = it.toIconProvider() }
+
+                    if (isTilePage) {
+                        AnimatedVisibility(
+                            visible = isSelected,
+                            enter = fadeIn() + scaleIn(initialScale = 0.85f),
+                            exit = fadeOut() + scaleOut(targetScale = 0.85f),
+                            modifier = Modifier.align(Alignment.Center),
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(percent = 50),
+                                color = Color(0xFFE53935),
+                                contentColor = Color.White,
+                                shadowElevation = 0.dp,
+                                modifier =
+                                    Modifier.width(58.dp)
+                                        .height(32.dp)
+                                        .clickable(
+                                            enabled = isSelected,
+                                            onClick = onRemoveStack,
+                                        ),
+                            ) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier.fillMaxSize(),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Remove,
+                                        contentDescription = stringResource(R.string.ax_qs_remove_stack),
+                                        tint = Color.White,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                }
+                            }
+                        }
                     }
-                    AxTile(
-                        uiState = uiState,
-                        iconProvider = { getAxTileIcon(icon) },
-                        compact = false,
-                        span = AxQsSpan(columns = 2, rows = 2),
-                        isClickable = false,
-                        isDualTarget = uiState.handlesSecondaryClick,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    AxEditStackPlaceholderPreview(
-                        showIndicator = false,
-                        modifier = Modifier.fillMaxSize(),
-                    )
                 }
             }
 
@@ -219,41 +292,6 @@ fun AxEditStackedTilePreview(
                         }
                     },
                 )
-            }
-        }
-
-        if (isSelected && effectiveCount > 0) {
-            AnimatedVisibility(
-                visible = isSelected,
-                enter = fadeIn() + scaleIn(initialScale = 0.85f),
-                exit = fadeOut() + scaleOut(targetScale = 0.85f),
-                modifier = Modifier.align(Alignment.Center),
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(percent = 50),
-                    color = Color(0xFFE53935),
-                    contentColor = Color.White,
-                    shadowElevation = 0.dp,
-                    modifier =
-                        Modifier.width(58.dp)
-                            .height(32.dp)
-                            .clickable(
-                                enabled = isSelected && effectiveCount > 0,
-                                onClick = onRemoveStack,
-                            ),
-                ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.fillMaxSize(),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Remove,
-                            contentDescription = stringResource(R.string.ax_qs_remove_stack),
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
-                }
             }
         }
     }

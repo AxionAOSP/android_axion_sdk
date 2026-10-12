@@ -284,7 +284,11 @@ internal fun ContentScope.AxOneGrid(
         )
 
     DisposableEffect(isEditing) {
+        if (!isEditing) {
+            editController.selectedId.value = null
+        }
         onDispose {
+            editController.selectedId.value = null
             if (editController.listState.dragInProgress) {
                 view.cancelDragAndDrop()
                 editController.listState.cancel()
