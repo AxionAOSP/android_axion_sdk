@@ -122,7 +122,8 @@ class AxNamedThreadAffinityFeature {
 
         val taskDir = File("/proc/$pid/task")
         val taskFiles = taskDir.listFiles() ?: return
-        val packageName = AxPlatformConfig.getProcessCmdLine(pid)
+        val rawCmdLine = AxPlatformConfig.getProcessCmdLine(pid)
+        val packageName = rawCmdLine.substringBefore(':')
         val isKnownGame = KNOWN_GAME_PACKAGES.contains(packageName)
 
         val assignments = ArrayList<Pair<Int, String>>()
