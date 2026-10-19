@@ -28,7 +28,7 @@ object AxSceneTable {
     private const val TAG = "AxSceneTable"
     const val KEY_PARAMS1 = "params1"
     private const val PARAM_VALUE_DISABLED = "0"
-    private const val UNKNOWN_PACKAGE = "unknown"
+    const val UNKNOWN_PACKAGE = "unknown"
     private const val DURATION_BG_FREEZE_MS = 500L
     private const val DURATION_TA_HOLD_MS = 1000L
     private const val DURATION_TA_DELAY_MS = 50L

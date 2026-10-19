@@ -138,6 +138,7 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
 
     private val mCommandsMap = HashMap<Int, AxCommandExec>()
     private var mGameModeEnabled = false
+    private var mGameModeHandle = AxDragoniteConstants.INVALID_HANDLE
 
     init {
         logDebug(TAG, "create AxDragonite")
@@ -404,9 +405,15 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         cmd: AxSceneTable.ScenarioCommand,
         params: String?,
     ) {
-        val resumedPid = AxSceneTable.getResumedAppPid(params, cmd)
-        val resumedPkg = AxSceneTable.getResumedPackageName(params, cmd)
-        logDebug(TAG, "setAxNameThreadAffinity")
+        var resumedPid = AxSceneTable.getResumedAppPid(params, cmd)
+        var resumedPkg = AxSceneTable.getResumedPackageName(params, cmd)
+        if (resumedPid <= 0) {
+            resumedPid = if (adjustPid > 0) adjustPid else (mProcessList?.axGetTopAppPid() ?: -1)
+        }
+        if (resumedPkg == AxSceneTable.UNKNOWN_PACKAGE) {
+            resumedPkg = packageName ?: (mProcessList?.axGetTopAppPackageName() ?: AxSceneTable.UNKNOWN_PACKAGE)
+        }
+        logDebug(TAG, "setAxNameThreadAffinity: pid = $resumedPid, pkg = $resumedPkg")
         AxNameThreadAffinitySession(
                 this,
                 handle,
@@ -1133,9 +1140,12 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
     override fun updateGameModeBoost(enabled: Boolean) {
         mGameModeEnabled = enabled
         if (enabled) {
-            sceneBoostAcquire(AxDragoniteConstants.SCENE_GAME_1, null)
+            mGameModeHandle = sceneBoostAcquire(AxDragoniteConstants.SCENE_GAME_1, null)
         } else {
-            sceneBoostRelease(AxDragoniteConstants.SCENE_GAME_1)
+            if (mGameModeHandle != AxDragoniteConstants.INVALID_HANDLE) {
+                sceneBoostRelease(mGameModeHandle)
+                mGameModeHandle = AxDragoniteConstants.INVALID_HANDLE
+            }
         }
     }
 

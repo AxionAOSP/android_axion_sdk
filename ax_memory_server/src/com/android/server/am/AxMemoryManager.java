@@ -883,12 +883,13 @@ public class AxMemoryManager implements IAxMemoryManager {
         if (pkg == null || pkg.isEmpty()) {
             return false;
         }
-        if (pkg.equals(this.mActiveGamePackage)) {
+        final String basePkg = pkg.contains(":") ? pkg.substring(0, pkg.indexOf(':')) : pkg;
+        if (basePkg.equals(this.mActiveGamePackage)) {
             return true;
         }
         if (this.mContext != null) {
             try {
-                ApplicationInfo ai = this.mContext.getPackageManager().getApplicationInfo(pkg, 0);
+                ApplicationInfo ai = this.mContext.getPackageManager().getApplicationInfo(basePkg, 0);
                 if (ai != null && (ai.category == ApplicationInfo.CATEGORY_GAME || (ai.flags & ApplicationInfo.FLAG_IS_GAME) != 0)) {
                     return true;
                 }
