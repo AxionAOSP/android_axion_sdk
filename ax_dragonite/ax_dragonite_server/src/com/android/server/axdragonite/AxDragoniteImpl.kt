@@ -28,6 +28,7 @@ import android.os.Parcel
 import android.os.Process
 import android.os.RemoteException
 import android.os.ServiceManager
+import android.os.SystemClock
 import android.os.SystemProperties
 import android.os.Trace
 import android.util.Slog
@@ -36,9 +37,14 @@ import com.android.internal.os.BackgroundThread
 import com.android.server.UiThread
 import com.android.server.am.ProcessList
 import java.io.File
+import java.io.FileDescriptor
 import java.io.IOException
+import java.io.PrintWriter
 import java.util.ArrayList
 import java.util.HashMap
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.math.max
 
 private typealias SceneHandler =
@@ -110,10 +116,13 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
 
         private const val SF_AFFINITY_BINDER_CODE = 2007
         private const val DEBUG_PROP = "persist.dragonite.debug"
+        private const val GRACE_PERIOD_MS = 5000L
+        private const val COLD_START_TIMEOUT_MS = 10000L
+        private const val BINDER_DUMP_TIMEOUT_SEC = 2L
     }
 
-    private val debug = SystemProperties.getBoolean(DEBUG_PROP, false)
-    private var processPidCache = HashMap<String, Int>()
+    private val debug get() = SystemProperties.getBoolean(DEBUG_PROP, false)
+    private val processPidCache = ConcurrentHashMap<String, Int>()
     private var currentActiveHandle = AxDragoniteConstants.INVALID_HANDLE
     var mBackgroundLoadLimit = BACKGROUND_LIMIT_ENABLED
     var mLimitBoostDisabled = true
@@ -163,6 +172,7 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
             AxDragoniteConstants.BOOST_SCHED_PRIORITY,
         )
         mDragoniteExt.init()
+        BackgroundThread.getHandler().removeCallbacks(mSceneReleaseRunnable)
         BackgroundThread.getHandler().post(mSceneReleaseRunnable)
         initKswapdPids()
     }
@@ -306,25 +316,67 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         }
     }
 
-    fun checkSessionStatus() {
-        val activeRecords = mSessionRecords.getActiveRecords()
-        logDebug(TAG, "checkSessionStatus: records count = ${activeRecords.size}")
-        if (activeRecords.isEmpty()) return
-        for (session in activeRecords) {
-            val sessionBundle = session.getBundle()
-            val pid = bundlePid(sessionBundle)
-            if (pid <= 0) continue
-            val pkg = bundlePackage(sessionBundle)
-            if (!isProcessDied(pkg, pid)) continue
-            logDebug(TAG, "process = $pkg, pid = $pid died, release ${session.handle}")
-            release(session.handle)
+    internal fun isSessionDead(session: ActiveSession): Boolean {
+        val sessionBundle = session.getBundle()
+        val pkg = bundlePackage(sessionBundle)
+        val pid = bundlePid(sessionBundle)
+        val duration =
+            sessionBundle?.getInt(AxDragoniteConstants.KEY_DURATION, MISSING_DURATION)
+                ?: MISSING_DURATION
+        val ageMs = SystemClock.elapsedRealtime() - session.createTime
+
+        if (pkg.isNullOrEmpty()) {
+            return if (pid > 0) {
+                val cmdline = AxPlatformConfig.getProcessCmdLine(pid)
+                cmdline.isEmpty()
+            } else {
+                if (duration > 0) ageMs > (duration + GRACE_PERIOD_MS) else false
+            }
+        }
+
+        if (pid > 0) {
+            val cmdline = AxPlatformConfig.getProcessCmdLine(pid)
+            return cmdline.isEmpty() || !cmdline.startsWith(pkg)
+        } else {
+            val currentPid = getPidByProcessName(pkg)
+            if (currentPid > 0) {
+                sessionBundle?.putInt(AxDragoniteConstants.KEY_PID, currentPid)
+                return false
+            }
+            val timeout = if (duration > 0) (duration + GRACE_PERIOD_MS) else COLD_START_TIMEOUT_MS
+            return ageMs > timeout
         }
     }
 
-    private fun isProcessDied(pkg: String?, pid: Int): Boolean {
-        if (pid <= 0) return false
-        val cmdline = AxPlatformConfig.getProcessCmdLine(pid)
-        return cmdline.isEmpty() || (pkg != null && !cmdline.contains(pkg))
+    fun checkSessionStatus(): Int {
+        val activeRecords = mSessionRecords.getActiveRecords()
+        logDebug(TAG, "checkSessionStatus: records count = ${activeRecords.size}")
+        if (activeRecords.isEmpty()) return 0
+        var cleanedCount = 0
+        for (session in activeRecords) {
+            if (isSessionDead(session)) {
+                val pkg = bundlePackage(session.getBundle())
+                val pid = bundlePid(session.getBundle())
+                Slog.w(TAG, "process = $pkg, pid = $pid died or cleared, release stuck handle ${session.handle}")
+                release(session.handle)
+                cleanedCount++
+            }
+        }
+        return cleanedCount
+    }
+
+    fun isProcessDied(pkg: String?, pid: Int): Boolean {
+        if (pkg.isNullOrEmpty()) {
+            if (pid <= 0) return false
+            val cmdline = AxPlatformConfig.getProcessCmdLine(pid)
+            return cmdline.isEmpty()
+        }
+        if (pid > 0) {
+            val cmdline = AxPlatformConfig.getProcessCmdLine(pid)
+            return cmdline.isEmpty() || !cmdline.startsWith(pkg)
+        }
+        val currentPid = getPidByProcessName(pkg)
+        return currentPid <= 0
     }
 
     private fun backgroundLoadLimit(
@@ -1007,21 +1059,32 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
             Slog.d(TAG, "Scene id: $sceneId is not exist!")
             return AxDragoniteConstants.INVALID_HANDLE
         }
+        val actualBundle = bundle ?: Bundle()
         var handle =
-            bundle?.getInt(AxDragoniteConstants.KEY_HANDLE, AxDragoniteConstants.INVALID_HANDLE)
-                ?: AxDragoniteConstants.INVALID_HANDLE
-        val duration =
-            bundle?.getInt(AxDragoniteConstants.KEY_DURATION, MISSING_DURATION) ?: MISSING_DURATION
+            actualBundle.getInt(AxDragoniteConstants.KEY_HANDLE, AxDragoniteConstants.INVALID_HANDLE)
+        var duration =
+            actualBundle.getInt(AxDragoniteConstants.KEY_DURATION, MISSING_DURATION)
+        if (duration <= 0) {
+            duration = when (sceneId) {
+                AxDragoniteConstants.SCENE_ROTATION -> AxDragoniteConstants.DURATION_ROTATION_MS
+                AxDragoniteConstants.SCENE_APP_START -> AxDragoniteConstants.DURATION_APP_LAUNCH_MS
+                AxDragoniteConstants.SCENE_FLING -> AxDragoniteConstants.DURATION_FLING_MS
+                else -> MISSING_DURATION
+            }
+            if (duration > 0) {
+                actualBundle.putInt(AxDragoniteConstants.KEY_DURATION, duration)
+            }
+        }
         if (
             handle <= AxDragoniteConstants.INVALID_HANDLE ||
                 !mSessionRecords.isHandleAllocated(handle)
         ) {
-            handle = mSessionRecords.acquireRecord(sceneId, bundle)
+            handle = mSessionRecords.acquireRecord(sceneId, actualBundle)
             if (handle == AxDragoniteConstants.INVALID_HANDLE) {
                 traceEnd()
                 return handle
             }
-            activateScene(handle, sceneId, bundle, duration)
+            activateScene(handle, sceneId, actualBundle, duration)
             traceEnd()
             return handle
         }
@@ -1029,7 +1092,9 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         mSessionRecords.bringToFront(handle)
         restoreHandle(currentActiveHandle)
         currentActiveHandle = handle
-        dispatchScene(sceneId, bundle)
+        mSessionRecords.getRecord(handle)?.clearTasks()
+        mSessionRecords.getRecord(handle)?.updateBundle(actualBundle)
+        dispatchScene(sceneId, actualBundle)
         if (duration > 0) {
             scheduleTimeout(handle, duration)
         }
@@ -1050,6 +1115,7 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
             Slog.d(TAG, "invalid handle, ignore!")
             return
         }
+        mDragoniteHandler.removeMessages(handle + HANDLE_MESSAGE_OFFSET)
         mManagerHandler.post(SceneRelease(this, handle))
     }
 
@@ -1065,13 +1131,33 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
             .postDelayed(mInputBoostResetRunnable, mPlatformConfig.getDurationInput().toLong())
     }
 
-    private fun getPidByProcessName(processName: String?): Int {
+    fun getPidByProcessName(processName: String?): Int {
         if (processName.isNullOrEmpty()) return -1
-        processPidCache[processName]?.let {
-            return it
+        try {
+            logDebug(TAG, "get process pid by name, processName = $processName")
+            processPidCache[processName]?.let { procPid ->
+                val procCmdLine = AxPlatformConfig.getProcessCmdLine(procPid)
+                if (procCmdLine.isNotEmpty()) {
+                    val procName = procCmdLine.split(AxCommandExec.SLASH)
+                    if (procName[procName.size - 1] == processName) {
+                        return procPid
+                    }
+                }
+                processPidCache.remove(processName)
+            }
+            traceBegin("getPidByProcessName")
+            val pidsMap = getProcessPids()
+            val rawPid = pidsMap[processName]
+            traceEnd()
+            if (rawPid != null && rawPid > 0) {
+                processPidCache[processName] = rawPid
+                logDebug(TAG, "process pid is $rawPid")
+                return rawPid
+            }
+            return -1
+        } catch (unused: Exception) {
+            return -1
         }
-        processPidCache = getProcessPids()
-        return processPidCache[processName] ?: -1
     }
 
     private fun restoreHandle(handle: Int) {
@@ -1086,6 +1172,7 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         currentActiveHandle = mSessionRecords.lastActiveHandle
         if (currentActiveHandle == AxDragoniteConstants.INVALID_HANDLE) return
         val activeRecord = mSessionRecords.lastActiveRecord ?: return
+        activeRecord.rebindHandle(currentActiveHandle)
         dispatchScene(activeRecord.sceneId, activeRecord.getBundle())
     }
 
@@ -1127,6 +1214,12 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         bundle.putBoolean(AxDragoniteConstants.KEY_IS_COLD, isCold)
         bundle.putInt(AxDragoniteConstants.KEY_UID, uid)
         bundle.putInt(AxDragoniteConstants.KEY_PID, pid)
+        val duration = if (isCold) {
+            AxDragoniteConstants.DURATION_APP_LAUNCH_COLD_MS
+        } else {
+            AxDragoniteConstants.DURATION_APP_LAUNCH_WARM_MS
+        }
+        bundle.putInt(AxDragoniteConstants.KEY_DURATION, duration)
         benchSceneId(pkg, component)?.let { sceneBoostAcquire(it, bundle) }
         sceneBoostAcquire(AxDragoniteConstants.SCENE_APP_START, bundle)
     }
@@ -1161,6 +1254,281 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
             FileUtils.stringToFile(File(CPUSET_DEX2OAT_CPUS), targetCpus)
         } catch (e: IOException) {
             logDebug(TAG, "Failed to adjust dex2oat cpuset")
+        }
+    }
+
+    fun resetAll() {
+        Slog.w(TAG, "resetAll: releasing all boost handles and resetting pools")
+        for (i in 0 until SessionRecords.MAX_HANDLES) {
+            mDragoniteHandler.removeMessages(i + HANDLE_MESSAGE_OFFSET)
+        }
+        val activeRecords = mSessionRecords.getActiveRecords()
+        for (session in activeRecords) {
+            session.restoreAll()
+        }
+        mSessionRecords.resetAll()
+        currentActiveHandle = AxDragoniteConstants.INVALID_HANDLE
+        sfBindControllInternal(false)
+        adjustBackgroundLimit(false)
+        adjustKswapdAffinity(false)
+        mLimitBoostDisabled = true
+    }
+
+    override fun dump(fd: FileDescriptor, pw: PrintWriter, args: Array<out String>?) {
+        val safeArgs = args ?: emptyArray()
+        val cmd = safeArgs.firstOrNull()?.lowercase()
+        when (cmd) {
+            null, "", "status", "--status" -> dumpStatus(pw)
+            "-h", "--help", "help" -> dumpHelp(pw)
+            "--handles", "handles" -> dumpHandles(pw)
+            "--scenes", "scenes" -> dumpScenes(pw)
+            "--cleanup", "cleanup" -> dumpCleanup(pw)
+            "--release", "release" -> dumpRelease(pw, safeArgs.getOrNull(1))
+            "--reset", "reset" -> dumpReset(pw)
+            "--acquire", "acquire" -> dumpAcquire(pw, safeArgs.getOrNull(1), safeArgs.getOrNull(2))
+            "--debug", "debug" -> dumpDebug(pw, safeArgs.getOrNull(1))
+            else -> {
+                pw.println("Unknown command: $cmd")
+                pw.println()
+                dumpHelp(pw)
+            }
+        }
+    }
+
+    private fun dumpHelp(pw: PrintWriter) {
+        pw.println("Axion Dragonite Subsystem (dumpsys activity dragonite)")
+        pw.println("Usage: adb shell dumpsys activity dragonite [command]")
+        pw.println()
+        pw.println("Commands:")
+        pw.println("  (no args)                          Dump overall status, active handles, and session health")
+        pw.println("  handles, --handles                 Dump active handles and session details")
+        pw.println("  scenes, --scenes                   Dump registered boost scenarios and commands")
+        pw.println("  cleanup, --cleanup                 Detect and release stuck handles from dead processes")
+        pw.println("  release, --release <handle>        Force-release a specific active handle")
+        pw.println("  reset, --reset                     Emergency reset: release all handles & reset pool")
+        pw.println("  acquire, --acquire <id> [dur_ms]   Trigger test boost acquisition for a scene")
+        pw.println("  debug, --debug <on|off>            Enable or disable verbose debug logging")
+        pw.println("  help, -h, --help                   Display this help message")
+    }
+
+    private fun dumpStatus(pw: PrintWriter) {
+        pw.println("===============================================================================")
+        pw.println("                    Axion Dragonite Subsystem Status")
+        pw.println("===============================================================================")
+        pw.println("Command: adb shell dumpsys activity dragonite")
+        pw.println("Debug Logging Enabled: $debug ($DEBUG_PROP)")
+        pw.println("Game Mode Active: $mGameModeEnabled")
+        pw.println("Current Active Handle: $currentActiveHandle")
+        pw.println("Background Load Limit: $mBackgroundLoadLimit")
+        pw.println("Limit Boost Disabled: $mLimitBoostDisabled")
+        pw.println("Kswapd PIDs: ${mKswapdPids?.contentToString() ?: "none"}")
+        pw.println("Kswapd Boost Affinity: ${mKswapdAffinityBoost?.contentToString() ?: "none"}")
+        pw.println("Default Kswapd Affinity: ${mDefaultKswapdAffinity?.contentToString() ?: "none"}")
+        pw.println()
+        dumpHandles(pw)
+        pw.println()
+        pw.println("Run 'adb shell dumpsys activity dragonite --help' to see diagnostic commands.")
+        pw.println("===============================================================================")
+    }
+
+    private fun dumpHandles(pw: PrintWriter) {
+        val allocatedHandles = mSessionRecords.getAllocatedHandles()
+        val availableCount = mSessionRecords.getAvailableHandlesCount()
+        val activeRecords = mSessionRecords.getActiveRecords()
+        val now = SystemClock.elapsedRealtime()
+
+        pw.println("-------------------------------------------------------------------------------")
+        pw.println("Handles & Active Boost Sessions:")
+        pw.println("-------------------------------------------------------------------------------")
+        pw.println("Capacity: ${SessionRecords.MAX_HANDLES} handles (0..${SessionRecords.MAX_HANDLES - 1})")
+        pw.println("Allocated Handles Count: ${allocatedHandles.size} (Allocated: $allocatedHandles)")
+        pw.println("Available Handles Count: $availableCount")
+        pw.println("Active Records Count: ${activeRecords.size}")
+
+        if (allocatedHandles.size >= SessionRecords.MAX_HANDLES) {
+            pw.println("!!! WARNING: HANDLE POOL EXHAUSTED (100/100)! ALL FUTURE BOOSTS WILL FAIL! !!!")
+            pw.println("!!! Use 'dumpsys activity dragonite cleanup' or 'dumpsys activity dragonite reset' to recover.  !!!")
+        } else if (allocatedHandles.size >= SessionRecords.MAX_HANDLES * 0.8) {
+            pw.println("! WARNING: Handle pool high usage (${allocatedHandles.size}/${SessionRecords.MAX_HANDLES}). Potential leak!")
+        }
+
+        if (activeRecords.isEmpty()) {
+            pw.println("No active boost sessions.")
+            return
+        }
+
+        var deadProcessCount = 0
+        for (session in activeRecords) {
+            val handle = session.handle
+            val isCurrent = handle == currentActiveHandle
+            val bundle = session.getBundle()
+            val pid = bundlePid(bundle)
+            val pkg = bundlePackage(bundle) ?: "unknown"
+            val duration = bundle?.getInt(AxDragoniteConstants.KEY_DURATION, MISSING_DURATION) ?: MISSING_DURATION
+            val scenario = AxSceneTable.getScenario(session.sceneId)
+            val scenarioName = scenario?.scenarioName ?: "UNKNOWN"
+            val ageMs = now - session.createTime
+            val processDead = isSessionDead(session)
+
+            if (processDead) deadProcessCount++
+
+            val statusFlag = when {
+                processDead -> " [DEAD PROCESS - STUCK BOOST!]"
+                isCurrent -> " [CURRENT ACTIVE]"
+                else -> ""
+            }
+
+            pw.println()
+            pw.println("  [Handle #$handle]$statusFlag")
+            pw.println("    Scene: ${session.sceneId} ($scenarioName)")
+            pw.println("    Client: $pkg (PID: $pid) -> ${if (processDead) "DEAD / TERMINATED" else "ALIVE"}")
+            pw.println("    Age: ${ageMs}ms (${ageMs / 1000}s)")
+            pw.println("    Duration: ${if (duration > 0) "${duration}ms" else "No duration (manual release required)"}")
+            val tasks = session.getTasks()
+            pw.println("    Attached Tasks (${tasks.size}):")
+            for (task in tasks) {
+                val cmd = task.cmd
+                pw.println("      - [Type ${task.sessionType}] cmd: ${cmd?.command?.name} (id: ${cmd?.command?.id}), hold: ${cmd?.holdTime}ms, delay: ${cmd?.delayTime}ms")
+            }
+        }
+
+        if (deadProcessCount > 0) {
+            pw.println()
+            pw.println("-------------------------------------------------------------------------------")
+            pw.println("!!! DETECTED $deadProcessCount STUCK HANDLE(S) WITH DEAD CLIENT PROCESSES! !!!")
+            pw.println("Run 'adb shell dumpsys activity dragonite cleanup' to automatically release them.")
+            pw.println("-------------------------------------------------------------------------------")
+        }
+    }
+
+    private fun dumpScenes(pw: PrintWriter) {
+        pw.println("-------------------------------------------------------------------------------")
+        pw.println("Registered Dragonite Scenarios:")
+        pw.println("-------------------------------------------------------------------------------")
+        val scenarios = AxSceneTable.getAllScenarios().sortedBy { it.scenarioId }
+        for (scenario in scenarios) {
+            pw.println("Scene ID: ${scenario.scenarioId} -> \"${scenario.scenarioName}\" (${scenario.commandList.size} commands)")
+            for (cmd in scenario.commandList) {
+                val command = cmd.command
+                pw.println("  Command: ${command?.name} (id=${command?.id}), holdTime=${cmd.holdTime}ms, delayTime=${cmd.delayTime}ms, process=${cmd.getProcess() ?: "any"}")
+            }
+        }
+    }
+
+    private fun dumpCleanup(pw: PrintWriter) {
+        pw.println("Running dead process scan and cleanup...")
+        val cleaned = checkSessionStatus()
+        if (cleaned > 0) {
+            pw.println("Cleanup complete: released $cleaned stuck handle(s) from dead processes.")
+        } else {
+            pw.println("Cleanup complete: no dead processes found holding active handles.")
+        }
+    }
+
+    private fun dumpRelease(pw: PrintWriter, handleStr: String?) {
+        if (handleStr.isNullOrEmpty()) {
+            pw.println("Error: missing handle argument. Usage: dumpsys activity dragonite release <handle>")
+            return
+        }
+        val handle = handleStr.toIntOrNull()
+        if (handle == null) {
+            pw.println("Error: invalid handle format '$handleStr'. Must be an integer.")
+            return
+        }
+        if (!mSessionRecords.isHandleAllocated(handle)) {
+            pw.println("Error: handle $handle is not currently allocated.")
+            return
+        }
+        val latch = CountDownLatch(1)
+        mDragoniteHandler.removeMessages(handle + HANDLE_MESSAGE_OFFSET)
+        mManagerHandler.post {
+            try {
+                releaseScene(handle)
+            } finally {
+                latch.countDown()
+            }
+        }
+        val completed = latch.await(BINDER_DUMP_TIMEOUT_SEC, TimeUnit.SECONDS)
+        if (completed) {
+            pw.println("Successfully released handle $handle.")
+        } else {
+            pw.println("Release initiated for handle $handle (waiting for manager thread).")
+        }
+    }
+
+    private fun dumpReset(pw: PrintWriter) {
+        val latch = CountDownLatch(1)
+        mManagerHandler.post {
+            try {
+                resetAll()
+            } finally {
+                latch.countDown()
+            }
+        }
+        val completed = latch.await(BINDER_DUMP_TIMEOUT_SEC, TimeUnit.SECONDS)
+        if (completed) {
+            pw.println("Dragonite emergency reset executed:")
+            pw.println("  - All active sessions released and restored")
+            pw.println("  - All pending timers cancelled")
+            pw.println("  - Handle pools reset to full capacity (${SessionRecords.MAX_HANDLES})")
+            pw.println("  - Affinities and background limits restored to default")
+        } else {
+            pw.println("Warning: Dragonite emergency reset timed out waiting for manager thread.")
+        }
+    }
+
+    private fun dumpAcquire(pw: PrintWriter, sceneStr: String?, durationStr: String?) {
+        if (sceneStr.isNullOrEmpty()) {
+            pw.println("Error: missing sceneId argument. Usage: dumpsys activity dragonite acquire <sceneId> [durationMs]")
+            return
+        }
+        val sceneId = sceneStr.toIntOrNull() ?: run {
+            val match = AxSceneTable.getAllScenarios().firstOrNull {
+                it.scenarioName.equals(sceneStr, ignoreCase = true)
+            }
+            match?.scenarioId
+        }
+        if (sceneId == null || AxSceneTable.getScenario(sceneId) == null) {
+            pw.println("Error: unknown scene '$sceneStr'. Run 'dumpsys activity dragonite scenes' for a list.")
+            return
+        }
+        val duration = durationStr?.toIntOrNull() ?: 1000
+        val bundle = Bundle().apply {
+            putInt(AxDragoniteConstants.KEY_DURATION, duration)
+            putString(AxDragoniteConstants.KEY_PACKAGE_NAME, "com.android.shell")
+            putInt(AxDragoniteConstants.KEY_PID, Process.myPid())
+        }
+        val handle = sceneBoostAcquire(sceneId, bundle)
+        val scenarioName = AxSceneTable.getScenario(sceneId)?.scenarioName ?: "UNKNOWN"
+        if (handle <= AxDragoniteConstants.INVALID_HANDLE) {
+            pw.println("Failed to acquire boost for scene $sceneId ($scenarioName)! Handle allocation failed (all ${SessionRecords.MAX_HANDLES} handles may be in use).")
+        } else {
+            pw.println("Acquired scene $sceneId ($scenarioName) -> handle=$handle, duration=${duration}ms")
+        }
+    }
+
+    private fun dumpDebug(pw: PrintWriter, modeStr: String?) {
+        when (modeStr?.lowercase()) {
+            "on", "true", "1" -> {
+                try {
+                    SystemProperties.set(DEBUG_PROP, "true")
+                    pw.println("Dragonite debug logging enabled.")
+                } catch (e: Exception) {
+                    pw.println("Failed to set property $DEBUG_PROP: ${e.message}")
+                }
+            }
+            "off", "false", "0" -> {
+                try {
+                    SystemProperties.set(DEBUG_PROP, "false")
+                    pw.println("Dragonite debug logging disabled.")
+                } catch (e: Exception) {
+                    pw.println("Failed to set property $DEBUG_PROP: ${e.message}")
+                }
+            }
+            else -> {
+                pw.println("Current debug state: $debug ($DEBUG_PROP)")
+                pw.println("Usage: dumpsys activity dragonite debug <on|off>")
+            }
         }
     }
 }

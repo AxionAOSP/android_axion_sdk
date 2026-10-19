@@ -17,6 +17,8 @@
 package com.android.server.axdragonite;
 
 import android.os.Bundle;
+import java.io.FileDescriptor;
+import java.io.PrintWriter;
 
 public interface IAxDragonite {
     int sceneBoostAcquire(int sceneId, Bundle bundle);
@@ -27,4 +29,5 @@ public interface IAxDragonite {
     void onSystemFling(int duration);
     void updateGameModeBoost(boolean enabled);
     void adjustCpusetCpus(String group, String cpus, long durationMs);
+    void dump(FileDescriptor fd, PrintWriter pw, String[] args);
 }

@@ -395,6 +395,8 @@ object AxSceneTable {
 
     @JvmStatic fun getScenario(id: Int): Scenario? = scenarioMap[id.toString()]
 
+    @JvmStatic fun getAllScenarios(): Collection<Scenario> = scenarioMap.values
+
     data class PowerHints(
         val axPowerMode: Int,
         val fallbackBoosts: List<Int> = emptyList(),

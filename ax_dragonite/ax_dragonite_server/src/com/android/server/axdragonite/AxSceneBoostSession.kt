@@ -18,7 +18,9 @@ package com.android.server.axdragonite
 
 import android.os.Bundle
 import android.os.SystemClock
+import android.util.Slog
 import com.android.internal.dragonite.AxDragoniteConstants
+import com.android.internal.os.BackgroundThread
 import java.util.ArrayList
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.max
@@ -217,8 +219,17 @@ internal class SceneBoostRunnable(
 }
 
 internal class SceneReleaseRunnable(private val mHost: AxDragoniteImpl) : Runnable {
+    companion object {
+        const val CHECK_INTERVAL_MS = 30000L
+    }
+
     override fun run() {
-        mHost.checkSessionStatus()
+        try {
+            mHost.checkSessionStatus()
+        } catch (e: Exception) {
+            Slog.e(AxDragoniteImpl.TAG, "Error checking session status", e)
+        }
+        BackgroundThread.getHandler().postDelayed(this, CHECK_INTERVAL_MS)
     }
 }
 
@@ -239,22 +250,62 @@ internal class SceneRelease(private val mHost: AxDragoniteImpl, val mHandle: Int
 
 internal class ActiveSession(
     val host: AxDragoniteImpl,
-    val handle: Int,
+    var handle: Int,
     val sceneId: Int,
     bundle: Bundle?,
 ) {
     private var mBundle: Bundle? = bundle?.deepCopy()
     private val mTasks = ArrayList<AxSceneBoostSession>()
+    val createTime: Long = SystemClock.elapsedRealtime()
+    var updateTime: Long = createTime
+    var isRestoring: Boolean = false
 
     fun addTask(task: AxSceneBoostSession) {
-        mTasks.add(task)
+        synchronized(mTasks) {
+            if (!isRestoring) {
+                mTasks.add(task)
+                return
+            }
+            host.logDebug(AxDragoniteImpl.TAG, "restoring, ignore: ${task.cmd?.command?.name}")
+            task.restore()
+        }
     }
 
     fun getBundle(): Bundle? = mBundle
 
+    fun updateBundle(bundle: Bundle?) {
+        mBundle = bundle?.deepCopy()
+        updateTime = SystemClock.elapsedRealtime()
+    }
+
+    fun rebindHandle(newHandle: Int) {
+        handle = newHandle
+        mBundle?.putInt(AxDragoniteConstants.KEY_HANDLE, newHandle)
+    }
+
+    fun getTasks(): List<AxSceneBoostSession> = synchronized(mTasks) { ArrayList(mTasks) }
+
+    fun clearTasks() {
+        synchronized(mTasks) {
+            restoreAll()
+        }
+    }
+
     fun restoreAll() {
-        for (session in mTasks) {
-            session.restore()
+        synchronized(mTasks) {
+            if (isRestoring) {
+                host.logDebug(AxDragoniteImpl.TAG, "restoring and clear, ignore!")
+            }
+            isRestoring = true
+            val now = SystemClock.elapsedRealtime()
+            for (session in mTasks) {
+                val endTime = session.endTime
+                if (endTime <= 0L || endTime > now) {
+                    session.restore()
+                }
+            }
+            mTasks.clear()
+            isRestoring = false
         }
     }
 
@@ -264,7 +315,7 @@ internal class ActiveSession(
 
 internal class SessionRecords(private val mHost: AxDragoniteImpl) {
     companion object {
-        private const val MAX_HANDLES = 100
+        const val MAX_HANDLES = 100
         private const val INVALID_HANDLE = -1
     }
 
@@ -304,6 +355,27 @@ internal class SessionRecords(private val mHost: AxDragoniteImpl) {
         @Synchronized get() = lastRecord()
 
     @Synchronized fun isHandleAllocated(handle: Int): Boolean = mAllocatedHandles.contains(handle)
+
+    @Synchronized
+    fun getAllocatedHandles(): List<Int> = ArrayList(mAllocatedHandles)
+
+    @Synchronized
+    fun getAvailableHandlesCount(): Int = mAvailableHandles.size
+
+    @Synchronized
+    fun getAllocatedHandlesCount(): Int = mAllocatedHandles.size
+
+    @Synchronized
+    fun resetAll(): List<ActiveSession> {
+        val oldRecords = ArrayList(mActiveRecords)
+        mActiveRecords.clear()
+        mAllocatedHandles.clear()
+        mAvailableHandles.clear()
+        for (i in 0 until MAX_HANDLES) {
+            mAvailableHandles.add(i)
+        }
+        return oldRecords
+    }
 
     @Synchronized
     fun acquireRecord(sceneId: Int, bundle: Bundle?): Int {

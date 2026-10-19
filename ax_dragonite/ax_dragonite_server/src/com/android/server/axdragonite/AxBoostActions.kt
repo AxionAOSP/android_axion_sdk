@@ -174,7 +174,7 @@ internal class ThreadAffinity(
     private val mCpus: IntArray?,
 ) : Runnable {
     override fun run() {
-        val cores = mCpus ?: return mHost.traceEnd()
+        val cores = mCpus ?: AxCpuSets.resolveCores(AxCpuSets.CPUSET_ALL) ?: return mHost.traceEnd()
         mHost.logDebug(AxDragoniteImpl.TAG, "set $mTid to ${cores.contentToString()}")
         mHost.traceBegin("ThreadAffinity_tid${mTid}_affinity:$cores")
         try {
