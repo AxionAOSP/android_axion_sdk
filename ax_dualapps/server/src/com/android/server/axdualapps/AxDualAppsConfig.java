@@ -22,6 +22,7 @@ import android.app.AppOpsManager.PackageOps;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Resources;
+import android.os.Binder;
 import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.text.TextUtils;
@@ -82,6 +83,10 @@ public class AxDualAppsConfig {
         loadDefaultResources();
     }
 
+    public void setAppOpsService(AppOpsService appOpsService) {
+        this.mAppOpsService = appOpsService;
+    }
+
     public static boolean isDebugLoggingEnabled() {
         return SystemProperties.getBoolean(PROP_DEBUG, false);
     }
@@ -131,7 +136,12 @@ public class AxDualAppsConfig {
         if (this.mAppOpsService == null) {
             return false;
         }
-        return this.mAppOpsService.checkOperation(OP_DUAL_APPS, UserHandle.getUid(0, callingUid), packageName) == AppOpsManager.MODE_ALLOWED;
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            return this.mAppOpsService.checkOperation(OP_DUAL_APPS, UserHandle.getUid(0, callingUid), packageName) == AppOpsManager.MODE_ALLOWED;
+        } finally {
+            Binder.restoreCallingIdentity(identity);
+        }
     }
 
     public List<String> getEnabledPackageNames() {
@@ -150,31 +160,41 @@ public class AxDualAppsConfig {
         if (this.mAppOpsService == null) {
             return Collections.emptyList();
         }
-        List<PackageOps> packagesForOps = this.mAppOpsService.getPackagesForOps(new int[]{OP_DUAL_APPS});
-        if (packagesForOps == null) {
-            return Collections.emptyList();
-        }
-        List<PackageOps> result = new ArrayList<>();
-        for (PackageOps ops : packagesForOps) {
-            if (UserHandle.getUserId(ops.getUid()) == 0) {
-                for (OpEntry entry : ops.getOps()) {
-                    if (entry.getMode() == AppOpsManager.MODE_ALLOWED) {
-                        result.add(ops);
-                        break;
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            List<PackageOps> packagesForOps = this.mAppOpsService.getPackagesForOps(new int[]{OP_DUAL_APPS});
+            if (packagesForOps == null) {
+                return Collections.emptyList();
+            }
+            List<PackageOps> result = new ArrayList<>();
+            for (PackageOps ops : packagesForOps) {
+                if (UserHandle.getUserId(ops.getUid()) == 0) {
+                    for (OpEntry entry : ops.getOps()) {
+                        if (entry.getMode() == AppOpsManager.MODE_ALLOWED) {
+                            result.add(ops);
+                            break;
+                        }
                     }
                 }
             }
+            return result;
+        } finally {
+            Binder.restoreCallingIdentity(identity);
         }
-        return result;
     }
 
     public void resetAllPackageOps() {
         if (this.mAppOpsService == null) {
             return;
         }
-        List<PackageOps> opsList = getEnabledPackageOps();
-        for (PackageOps ops : opsList) {
-            this.mAppOpsService.setMode(OP_DUAL_APPS, ops.getUid(), ops.getPackageName(), AppOpsManager.MODE_IGNORED);
+        final long identity = Binder.clearCallingIdentity();
+        try {
+            List<PackageOps> opsList = getEnabledPackageOps();
+            for (PackageOps ops : opsList) {
+                this.mAppOpsService.setMode(OP_DUAL_APPS, ops.getUid(), ops.getPackageName(), AppOpsManager.MODE_IGNORED);
+            }
+        } finally {
+            Binder.restoreCallingIdentity(identity);
         }
     }
 

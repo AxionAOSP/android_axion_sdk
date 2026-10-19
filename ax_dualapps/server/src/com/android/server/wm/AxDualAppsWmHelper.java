@@ -69,7 +69,7 @@ public class AxDualAppsWmHelper {
 
     private void setSavedChooserActivityUserId(String targetPackage, String callingPackage, int userId) {
         try {
-            this.mSavedChooserUserIdMap.put(callingPackage + "@" + targetPackage, Integer.valueOf(userId));
+            this.mSavedChooserUserIdMap.put(targetPackage + "@" + callingPackage, Integer.valueOf(userId));
         } catch (Exception ignored) {
         }
     }

@@ -66,6 +66,7 @@ public class AxDualAppsService extends SystemService {
         sInstance = this;
         this.mWmHelper = new AxDualAppsWmHelper();
         this.mUserHelper = new AxDualUserHelper(context);
+        this.mConfig = new AxDualAppsConfig(context, null);
     }
 
     public static AxDualAppsService get() {
@@ -90,7 +91,40 @@ public class AxDualAppsService extends SystemService {
             AppOpsService appOps = (AppOpsService) ServiceManager.getService(Context.APP_OPS_SERVICE);
             if (this.mConfig == null) {
                 this.mConfig = new AxDualAppsConfig(getContext(), appOps);
+            } else {
+                this.mConfig.setAppOpsService(appOps);
             }
+            sanitizeDualSpacePackages();
+        }
+    }
+
+    private void sanitizeDualSpacePackages() {
+        if (!isDualSpaceExists() || this.mConfig == null) {
+            return;
+        }
+        PackageManagerInternal pmInternal = LocalServices.getService(PackageManagerInternal.class);
+        if (pmInternal == null) {
+            return;
+        }
+        List<ApplicationInfo> installedApps = pmInternal.getInstalledApplications(0L, DUAL_APPS_USER_ID, SYSTEM_UID);
+        if (installedApps == null || installedApps.isEmpty()) {
+            return;
+        }
+        List<String> toRemove = new ArrayList<>();
+        for (ApplicationInfo app : installedApps) {
+            if (isDualAppsUid(app)) {
+                String pkg = app.packageName;
+                if (!this.mConfig.isBasicPackage(pkg) && !this.mConfig.isDualAppEnabled(pkg)) {
+                    toRemove.add(pkg);
+                }
+            }
+        }
+        if (!toRemove.isEmpty()) {
+            pmInternal.commitPackageStateMutation(null, mutator -> {
+                for (String pkg : toRemove) {
+                    mutator.forPackage(pkg).userState(DUAL_APPS_USER_ID).setInstalled(false);
+                }
+            });
         }
     }
 
@@ -438,6 +472,32 @@ public class AxDualAppsService extends SystemService {
         }
     }
 
+    public boolean isDualAppEnabled(String packageName) {
+        return this.mConfig != null && this.mConfig.isDualAppEnabled(packageName);
+    }
+
+    private boolean shouldFilterDualAppResolveInfo(ResolveInfo info, int dualUserId, List<String> hidden) {
+        if (info == null || info.activityInfo == null || info.userHandle == null) {
+            return false;
+        }
+        if (info.userHandle.getIdentifier() != dualUserId) {
+            return false;
+        }
+        String pkg = info.activityInfo.packageName;
+        return hidden.contains(pkg) || !isDualAppEnabled(pkg);
+    }
+
+    private static boolean isSameActivityInUser(ResolveInfo a, ResolveInfo b) {
+        if (a == null || b == null || a.activityInfo == null || b.activityInfo == null) {
+            return false;
+        }
+        int userA = a.userHandle != null ? a.userHandle.getIdentifier() : -10000;
+        int userB = b.userHandle != null ? b.userHandle.getIdentifier() : -10000;
+        return userA == userB
+                && TextUtils.equals(a.activityInfo.packageName, b.activityInfo.packageName)
+                && TextUtils.equals(a.activityInfo.name, b.activityInfo.name);
+    }
+
     public void overrideCombineActivitiesResult(int userId, List<ResolveInfo> activities, List<CrossProfileDomainInfo> crossDomains) {
         int dualUserId = getDualAppsUserId();
         if (crossDomains == null || crossDomains.isEmpty()) {
@@ -445,7 +505,23 @@ public class AxDualAppsService extends SystemService {
         }
         if ((userId == 0 || userId == dualUserId) && isDualSpaceExists()) {
             List<String> hidden = queryHiddenPackagesInternal();
-            activities.removeIf(info -> info.userHandle != null && info.userHandle.getIdentifier() == dualUserId && hidden.contains(info.activityInfo.packageName));
+            if (activities != null && !activities.isEmpty()) {
+                activities.removeIf(info -> shouldFilterDualAppResolveInfo(info, dualUserId, hidden));
+            }
+            crossDomains.removeIf(domainInfo -> {
+                ResolveInfo info = domainInfo != null ? domainInfo.getResolveInfo() : null;
+                if (shouldFilterDualAppResolveInfo(info, dualUserId, hidden)) {
+                    return true;
+                }
+                if (info != null && activities != null) {
+                    for (ResolveInfo existing : activities) {
+                        if (isSameActivityInUser(existing, info)) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            });
         }
     }
 

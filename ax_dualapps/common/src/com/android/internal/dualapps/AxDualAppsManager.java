@@ -391,6 +391,29 @@ public class AxDualAppsManager {
         }
     }
 
+    private static int getResolvedUserId(ResolvedComponentInfo info) {
+        if (info != null && info.getCount() > 0) {
+            ResolveInfo ri = info.getResolveInfoAt(0);
+            if (ri != null && ri.userHandle != null) {
+                return ri.userHandle.getIdentifier();
+            }
+        }
+        return -10000;
+    }
+
+    private static boolean containsResolvedComponent(List<ResolvedComponentInfo> list, ResolvedComponentInfo candidate) {
+        if (list == null || candidate == null || candidate.name == null) {
+            return false;
+        }
+        int candidateUserId = getResolvedUserId(candidate);
+        for (ResolvedComponentInfo item : list) {
+            if (item != null && candidate.name.equals(item.name) && getResolvedUserId(item) == candidateUserId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public List<ResolvedComponentInfo> overrideResolversForIntent(
             ResolverListController controller,
             boolean isBrowsing,
@@ -402,17 +425,41 @@ public class AxDualAppsManager {
         if ((userId != 0 && !isDualAppsUserId(userId)) || !isDualSpaceInitialized()) {
             return null;
         }
+        List<String> hiddenPackages = queryHiddenPackages();
+        List<String> allowPackages = queryAllowPackages();
         List<ResolvedComponentInfo> result = new ArrayList<>();
-        result.addAll(controller.getResolversForIntentAsUser(isBrowsing, filterSelf, queryAll, intents, UserHandle.of(userId)));
+        List<ResolvedComponentInfo> currentResults =
+                controller.getResolversForIntentAsUser(isBrowsing, filterSelf, queryAll, intents, UserHandle.of(userId));
+        if (currentResults != null) {
+            for (ResolvedComponentInfo info : currentResults) {
+                if (info == null || info.name == null) {
+                    continue;
+                }
+                String pkg = info.name.getPackageName();
+                int itemUserId = getResolvedUserId(info);
+                if (itemUserId == DUAL_APPS_USER_ID && (hiddenPackages.contains(pkg) || !allowPackages.contains(pkg))) {
+                    continue;
+                }
+                if (!containsResolvedComponent(result, info)) {
+                    result.add(info);
+                }
+            }
+        }
         try {
             int targetUserId = getOwnerOrCloneUserId(userId);
-            List<ResolvedComponentInfo> otherUserResults = new ArrayList<>();
-            otherUserResults.addAll(controller.getResolversForIntentAsUser(isBrowsing, filterSelf, queryAll, intents, UserHandle.of(targetUserId)));
-            if (!otherUserResults.isEmpty() && !TextUtils.isEmpty(callingPackage)) {
-                List<String> hiddenPackages = queryHiddenPackages();
+            List<ResolvedComponentInfo> otherUserResults =
+                    controller.getResolversForIntentAsUser(isBrowsing, filterSelf, queryAll, intents, UserHandle.of(targetUserId));
+            if (otherUserResults != null && !otherUserResults.isEmpty() && !TextUtils.isEmpty(callingPackage)) {
                 for (ResolvedComponentInfo info : otherUserResults) {
+                    if (info == null || info.name == null) {
+                        continue;
+                    }
                     String pkg = info.name.getPackageName();
-                    if (!hiddenPackages.contains(pkg) && !callingPackage.equals(pkg)) {
+                    int itemUserId = getResolvedUserId(info);
+                    if (itemUserId == DUAL_APPS_USER_ID && (hiddenPackages.contains(pkg) || !allowPackages.contains(pkg))) {
+                        continue;
+                    }
+                    if (!hiddenPackages.contains(pkg) && !callingPackage.equals(pkg) && !containsResolvedComponent(result, info)) {
                         result.add(info);
                     }
                 }
