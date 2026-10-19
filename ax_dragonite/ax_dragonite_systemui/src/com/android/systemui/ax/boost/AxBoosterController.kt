@@ -47,19 +47,32 @@ class AxBoosterController @Inject constructor(@Main private val mainHandler: Han
 
     private val isBoostingMap = ConcurrentHashMap<Int, Boolean>()
     private val boostHandleMap = ConcurrentHashMap<Int, Int>()
+    private val timeoutRunnables =
+        ConcurrentHashMap<Int, Runnable>()
     private val releaseKeyguardGoneRunnable = Runnable { releaseUnlockBoost() }
 
+    private fun scheduleSceneTimeout(sceneId: Int, durationMs: Long) {
+        cancelSceneTimeout(sceneId)
+        val runnable = Runnable { setBoosting(sceneId, false, "timeout") }
+        timeoutRunnables[sceneId] = runnable
+        mainHandler.postDelayed(runnable, durationMs)
+    }
+
+    private fun cancelSceneTimeout(sceneId: Int) {
+        timeoutRunnables.remove(sceneId)?.let { mainHandler.removeCallbacks(it) }
+    }
     private fun getDataBundle(sceneId: Int): Bundle {
         return Bundle().apply {
             putInt(AxDragoniteConstants.KEY_PID, Process.myPid())
             putString(AxDragoniteConstants.KEY_PACKAGE, PACKAGE_SYSTEMUI)
             putString(AxDragoniteConstants.KEY_PACKAGE_NAME, PACKAGE_SYSTEMUI)
             when (sceneId) {
+                BOOST_SCENE_ID_NOTIFICATION_EXPAND,
                 BOOST_SCENE_ID_UNLOCK ->
                     putInt(AxDragoniteConstants.KEY_DURATION, DURATION_UNLOCK_MS)
                 BOOST_SCENE_ID_ANIMATION -> {
                     boostHandleMap[BOOST_SCENE_ID_ANIMATION]
-                        ?.takeIf { it > 0 }
+                        ?.takeIf { it >= 0 }
                         ?.let { putInt(AxDragoniteConstants.KEY_HANDLE, it) }
                     putInt(AxDragoniteConstants.KEY_DURATION, DURATION_ANIMATION_MS)
                 }
@@ -87,15 +100,28 @@ class AxBoosterController @Inject constructor(@Main private val mainHandler: Han
 
     private fun sceneBoostAcquire(sceneId: Int) {
         try {
-            val newHandle = AxDragoniteInternal.sceneBoostAcquire(sceneId, getDataBundle(sceneId))
-            val oldHandle = boostHandleMap.put(sceneId, newHandle)
-            if (DEBUG) Slog.d(TAG, "sceneBoostAcquire id=$sceneId new=$newHandle old=$oldHandle")
+            val bundle = getDataBundle(sceneId)
+            val durationMs =
+                bundle.getInt(AxDragoniteConstants.KEY_DURATION, DURATION_ANIMATION_MS).toLong()
+            val newHandle = AxDragoniteInternal.sceneBoostAcquire(sceneId, bundle)
+            if (newHandle >= 0) {
+                val oldHandle = boostHandleMap.put(sceneId, newHandle)
+                if (durationMs > 0L) {
+                    scheduleSceneTimeout(sceneId, durationMs)
+                }
+                if (DEBUG) Slog.d(TAG, "sceneBoostAcquire id=$sceneId new=$newHandle old=$oldHandle")
+            } else {
+                cancelSceneTimeout(sceneId)
+                isBoostingMap[sceneId] = false
+            }
         } catch (e: Exception) {
             Slog.w(TAG, "acquireBoost() id=$sceneId Exception: ${e.message}")
+            isBoostingMap[sceneId] = false
         }
     }
 
     private fun sceneBoostRelease(sceneId: Int) {
+        cancelSceneTimeout(sceneId)
         try {
             val handle = boostHandleMap.remove(sceneId) ?: return
             AxDragoniteInternal.sceneBoostRelease(handle)

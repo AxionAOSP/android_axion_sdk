@@ -67,7 +67,8 @@ open class AxSceneBoostSession(
     }
 
     open fun restore() {
-        readyCommand("restore") ?: return
+        val command = cmd ?: return
+        mHost.logDebug(AxDragoniteImpl.TAG, "restore ${command.command?.name}")
         boostAction?.let { mHost.mDragoniteHandler.removeCallbacks(it) }
         val restore = restoreAction ?: return
         mHost.mDragoniteHandler.removeCallbacks(restore)
@@ -121,7 +122,8 @@ internal class BackgroundFreezeBoostSession(
     }
 
     override fun restore() {
-        readyCommand("restore") ?: return
+        val command = cmd ?: return
+        mHost.logDebug(AxDragoniteImpl.TAG, "restore ${command.command?.name}")
     }
 }
 
@@ -189,7 +191,9 @@ internal class ThreadBoostSession(
     runnable2: Runnable?,
 ) : AxSceneBoostSession(host, 5, handle, cmd, runnable, runnable2) {
     override fun restore() {
-        readyCommand("restore") ?: return
+        val command = cmd ?: return
+        mHost.logDebug(AxDragoniteImpl.TAG, "restore ${command.command?.name}")
+        boostAction?.let { mHost.mDragoniteHandler.removeCallbacks(it) }
         val restore = restoreAction
         if (restore != null) {
             mHost.mDragoniteHandler.removeCallbacks(restore)
@@ -207,16 +211,6 @@ internal class KswapdBoostSession(
     runnable: Runnable,
     runnable2: Runnable,
 ) : AxSceneBoostSession(host, 10, handle, cmd, runnable, runnable2)
-
-internal class SceneBoostRunnable(
-    private val mHost: AxDragoniteImpl,
-    val mSceneId: Int,
-    val mBundle: Bundle?,
-) : Runnable {
-    override fun run() {
-        mHost.dispatchSceneCommands(mSceneId, mBundle)
-    }
-}
 
 internal class SceneReleaseRunnable(private val mHost: AxDragoniteImpl) : Runnable {
     companion object {
@@ -250,62 +244,76 @@ internal class SceneRelease(private val mHost: AxDragoniteImpl, val mHandle: Int
 
 internal class ActiveSession(
     val host: AxDragoniteImpl,
-    var handle: Int,
+    val handle: Int,
     val sceneId: Int,
     bundle: Bundle?,
 ) {
-    private var mBundle: Bundle? = bundle?.deepCopy()
+    @Volatile
+    private var mBundle: Bundle? =
+        bundle?.deepCopy()?.apply { putInt(AxDragoniteConstants.KEY_HANDLE, handle) }
     private val mTasks = ArrayList<AxSceneBoostSession>()
     val createTime: Long = SystemClock.elapsedRealtime()
-    var updateTime: Long = createTime
+    @Volatile var updateTime: Long = createTime
     var isRestoring: Boolean = false
 
     fun addTask(task: AxSceneBoostSession) {
-        synchronized(mTasks) {
-            if (!isRestoring) {
-                mTasks.add(task)
-                return
+        val shouldRestore =
+            synchronized(mTasks) {
+                if (!isRestoring) {
+                    mTasks.add(task)
+                    false
+                } else {
+                    true
+                }
             }
+        if (shouldRestore) {
             host.logDebug(AxDragoniteImpl.TAG, "restoring, ignore: ${task.cmd?.command?.name}")
             task.restore()
         }
     }
 
-    fun getBundle(): Bundle? = mBundle
+    @Synchronized fun getBundle(): Bundle? = mBundle?.deepCopy()
 
-    fun updateBundle(bundle: Bundle?) {
-        mBundle = bundle?.deepCopy()
-        updateTime = SystemClock.elapsedRealtime()
+    @Synchronized
+    fun setResolvedPid(pid: Int) {
+        val copy = mBundle?.deepCopy() ?: Bundle()
+        copy.putInt(AxDragoniteConstants.KEY_PID, pid)
+        copy.putInt(AxDragoniteConstants.KEY_HANDLE, handle)
+        mBundle = copy
     }
 
-    fun rebindHandle(newHandle: Int) {
-        handle = newHandle
-        mBundle?.putInt(AxDragoniteConstants.KEY_HANDLE, newHandle)
+    @Synchronized
+    fun updateBundle(bundle: Bundle?) {
+        mBundle = bundle?.deepCopy()?.apply { putInt(AxDragoniteConstants.KEY_HANDLE, handle) }
+        updateTime = SystemClock.elapsedRealtime()
     }
 
     fun getTasks(): List<AxSceneBoostSession> = synchronized(mTasks) { ArrayList(mTasks) }
 
+    fun hasActiveTasks(): Boolean = synchronized(mTasks) { mTasks.isNotEmpty() }
+
     fun clearTasks() {
-        synchronized(mTasks) {
-            restoreAll()
-        }
+        restoreAll()
     }
 
     fun restoreAll() {
+        val tasksToRestore: List<AxSceneBoostSession>
         synchronized(mTasks) {
             if (isRestoring) {
                 host.logDebug(AxDragoniteImpl.TAG, "restoring and clear, ignore!")
+                return
             }
             isRestoring = true
-            val now = SystemClock.elapsedRealtime()
-            for (session in mTasks) {
-                val endTime = session.endTime
-                if (endTime <= 0L || endTime > now) {
-                    session.restore()
-                }
-            }
+            tasksToRestore = ArrayList(mTasks)
             mTasks.clear()
             isRestoring = false
+        }
+        val now = SystemClock.elapsedRealtime()
+        for (session in tasksToRestore) {
+            val endTime = session.endTime
+            if (endTime <= 0L || endTime > now) {
+                session.restore()
+            }
         }
     }
 
@@ -407,10 +415,14 @@ internal class SessionRecords(private val mHost: AxDragoniteImpl) {
 
     @Synchronized fun getRecord(handle: Int): ActiveSession? = findRecord(handle)
 
-    @Synchronized
     fun addSession(handle: Int, session: AxSceneBoostSession) {
-        findRecord(handle)?.addTask(session)
-            ?: mHost.logDebug(AxDragoniteImpl.TAG, "can't get ActiveSession: $handle")
+        val record = getRecord(handle)
+        if (record != null) {
+            record.addTask(session)
+        } else {
+            mHost.logDebug(AxDragoniteImpl.TAG, "can't get ActiveSession: $handle")
+            session.restore()
+        }
     }
 
     @Synchronized

@@ -49,10 +49,12 @@ constructor(
                 .map { it > 0.0f && it < 1.0f }
                 .combine(unlocked) { active, isUnlocked -> active && isUnlocked }
         val intent =
-            shadeInteractor.isAnyExpanded.combine(shadeInteractor.isAnyFullyExpanded.map { !it }) {
-                open,
-                belowTop ->
-                open && belowTop
+            combine(
+                shadeInteractor.isAnyExpanded,
+                shadeInteractor.isAnyFullyExpanded.map { !it },
+                unlocked,
+            ) { open, belowTop, isUnlocked ->
+                open && belowTop && isUnlocked
             }
         val animating =
             shadeAnimationInteractor.isAnyFlingAnimationRunning.combine(

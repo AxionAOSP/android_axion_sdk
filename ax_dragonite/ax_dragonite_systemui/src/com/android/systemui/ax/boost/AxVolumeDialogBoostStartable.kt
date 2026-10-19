@@ -40,7 +40,9 @@ constructor(
         boosterController.acquireVolumeDialogShowBoost()
     }
 
-    override fun onDismissRequested(reason: Int) {}
+    override fun onDismissRequested(reason: Int) {
+        boosterController.releaseVolumeDialogShowBoost()
+    }
 
     override fun onStateChanged(state: VolumeDialogController.State?) {}
 

@@ -96,11 +96,20 @@ class AxLauncherSceneBooster private constructor() {
         fun releaseAll() {
             val host = get()
             synchronized(host.tokenLock) {
-                for (sceneId in HashSet(host.tokensByScene.keys)) {
-                    host.releaseScene(sceneId)
-                }
+                host.homeToken = null
                 host.tokensByScene.clear()
+            }
+            Executors.UI_HELPER_EXECUTOR.execute {
+                val handles = ArrayList(host.activeHandlesByScene.values)
                 host.activeHandlesByScene.clear()
+                for (handle in handles) {
+                    if (handle < 0) continue
+                    try {
+                        AxDragoniteInternal.sceneBoostRelease(handle)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "sceneBoostRelease failed for handle $handle", e)
+                    }
+                }
             }
         }
     }
@@ -174,19 +183,27 @@ class AxLauncherSceneBooster private constructor() {
     }
 
     private fun acquireSceneIpc(sceneId: Int, tid: Int) {
+        val callerTid = Process.myTid()
         Executors.UI_HELPER_EXECUTOR.execute {
+            val isStillActive =
+                synchronized(tokenLock) { !tokensByScene[sceneId].isNullOrEmpty() }
+            if (!isStillActive) return@execute
             try {
+                val existingHandle = activeHandlesByScene.remove(sceneId)
+                if (existingHandle != null && existingHandle >= 0) {
+                    AxDragoniteInternal.sceneBoostRelease(existingHandle)
+                }
                 val data = Bundle()
                 val myPid = Process.myPid()
-                val mainThreadId = Process.myTid()
+                val helperTid = Process.myTid()
                 data.putInt(AxDragoniteConstants.KEY_PID, myPid)
                 if (tid != -1) {
                     data.putString(
                         AxDragoniteConstants.KEY_PARAMS,
-                        "501:$tid,$mainThreadId;600:$tid",
+                        "501:$tid,$helperTid;600:$tid",
                     )
                 } else {
-                    data.putString(AxDragoniteConstants.KEY_PARAMS, "501:$mainThreadId")
+                    data.putString(AxDragoniteConstants.KEY_PARAMS, "501:$callerTid,$helperTid")
                 }
                 data.putString(AxDragoniteConstants.KEY_PACKAGE, PACKAGE_LAUNCHER)
                 data.putString(AxDragoniteConstants.KEY_PACKAGE_NAME, PACKAGE_LAUNCHER)
@@ -195,8 +212,14 @@ class AxLauncherSceneBooster private constructor() {
                 }
 
                 val handle = AxDragoniteInternal.sceneBoostAcquire(sceneId, data)
-                if (handle > 0) {
-                    activeHandlesByScene[sceneId] = handle
+                if (handle >= 0) {
+                    val stillActiveAfterAcquire =
+                        synchronized(tokenLock) { !tokensByScene[sceneId].isNullOrEmpty() }
+                    if (stillActiveAfterAcquire) {
+                        activeHandlesByScene[sceneId] = handle
+                    } else {
+                        AxDragoniteInternal.sceneBoostRelease(handle)
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "sceneBoostAcquire failed for scene $sceneId", e)
@@ -205,9 +228,12 @@ class AxLauncherSceneBooster private constructor() {
     }
 
     private fun releaseScene(sceneId: Int) {
-        val handle = activeHandlesByScene.remove(sceneId) ?: return
-        if (handle <= 0) return
         Executors.UI_HELPER_EXECUTOR.execute {
+            val hasTokens =
+                synchronized(tokenLock) { !tokensByScene[sceneId].isNullOrEmpty() }
+            if (hasTokens) return@execute
+            val handle = activeHandlesByScene.remove(sceneId) ?: return@execute
+            if (handle < 0) return@execute
             try {
                 AxDragoniteInternal.sceneBoostRelease(handle)
             } catch (e: Exception) {

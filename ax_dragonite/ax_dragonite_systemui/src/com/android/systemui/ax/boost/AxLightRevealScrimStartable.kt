@@ -35,8 +35,12 @@ constructor(
 
     override fun start() {
         scope.launch {
+            var wasTransitioning = false
             lightRevealScrimInteractor.revealAmount.collect { amount ->
-                if (amount in 0.001f..0.999f) {
+                val transitioning = amount in 0.001f..0.999f
+                if (transitioning == wasTransitioning) return@collect
+                wasTransitioning = transitioning
+                if (transitioning) {
                     boosterController.acquireUnlockedScreenAnimationOffBoost()
                 } else {
                     boosterController.releaseUnlockedScreenAnimationOffBoost()

@@ -188,7 +188,7 @@ class AxPlatformConfig {
                 KEY_BACKGROUND_INPUT to AxCpuSets.CPUSET_RESTRICTED_BG,
                 KEY_DURATION_INPUT to DEFAULT_DURATION_INPUT.toString(),
                 KEY_DEX_RESTORE_THREADS to AxCpuSets.dexRestoreThreads(),
-                KEY_DEX_THREADS to AxCpuSets.CPUSET_ALL,
+                KEY_DEX_THREADS to AxCpuSets.dexLimitThreads(),
                 KEY_INSPECT_DURATION to DEFAULT_INSPECT_DURATION.toString(),
                 KEY_SURFACE_AFFINITY to AxCpuSets.CPUSET_BOOST_MASK_DEC,
                 KEY_SWAP_AFFINITY_BOOST to AxCpuSets.CPUSET_ALL,

@@ -29,12 +29,17 @@ constructor(
     private val boosterController: AxBoosterController,
 ) : CoreStartable, StatusBarStateController.StateListener {
 
+    private var isBoostActive = false
+
     override fun start() {
         statusBarStateController.addCallback(this)
     }
 
     override fun onDozeAmountChanged(linear: Float, eased: Float) {
-        if (isTransitioning(linear)) {
+        val transitioning = isTransitioning(linear)
+        if (transitioning == isBoostActive) return
+        isBoostActive = transitioning
+        if (transitioning) {
             boosterController.acquireDozeAnimationBoost()
         } else {
             boosterController.releaseDozeAnimationBoost()
@@ -42,7 +47,10 @@ constructor(
     }
 
     override fun onDozingChanged(isDozing: Boolean) {
-        if (!isDozing) boosterController.releaseDozeAnimationBoost()
+        if (!isDozing && isBoostActive) {
+            isBoostActive = false
+            boosterController.releaseDozeAnimationBoost()
+        }
     }
 
     private fun isTransitioning(fraction: Float) = fraction > 0.0f && fraction < 1.0f
