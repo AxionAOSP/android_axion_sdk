@@ -99,6 +99,8 @@ internal class BackgroundFreezeBoostSession(
     handle: Int,
     cmd: AxSceneTable.ScenarioCommand,
 ) : AxSceneBoostSession(host) {
+    private var frozenApps: ArrayList<AxProcessInfo>? = null
+
     companion object {
         private const val DEFAULT_BG_FREEZE_HOLD_TIME = 600L
         private const val MAX_BG_FREEZE_HOLD_TIME = 1000L
@@ -115,15 +117,15 @@ internal class BackgroundFreezeBoostSession(
 
     override fun execute() {
         val command = readyCommand("execute") ?: return
-        val frozenApps = mHost.frozenAppList
-        boostAction = Runnable { mHost.setFrozenForAll(frozenApps, true) }
-        restoreAction = Runnable { mHost.setFrozenForAll(frozenApps, false) }
+        boostAction = Runnable {
+            frozenApps = mHost.frozenAppList
+            mHost.setFrozenForAll(frozenApps, true)
+        }
+        restoreAction = Runnable {
+            mHost.setFrozenForAll(frozenApps, false)
+            frozenApps = null
+        }
         scheduleActions(command)
-    }
-
-    override fun restore() {
-        val command = cmd ?: return
-        mHost.logDebug(AxDragoniteImpl.TAG, "restore ${command.command?.name}")
     }
 }
 
