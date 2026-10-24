@@ -66,16 +66,15 @@ class AxBoosterController @Inject constructor(@Main private val mainHandler: Han
             putInt(AxDragoniteConstants.KEY_PID, Process.myPid())
             putString(AxDragoniteConstants.KEY_PACKAGE, PACKAGE_SYSTEMUI)
             putString(AxDragoniteConstants.KEY_PACKAGE_NAME, PACKAGE_SYSTEMUI)
+            boostHandleMap[sceneId]
+                ?.takeIf { it >= 0 }
+                ?.let { putInt(AxDragoniteConstants.KEY_HANDLE, it) }
             when (sceneId) {
                 BOOST_SCENE_ID_NOTIFICATION_EXPAND,
                 BOOST_SCENE_ID_UNLOCK ->
                     putInt(AxDragoniteConstants.KEY_DURATION, DURATION_UNLOCK_MS)
-                BOOST_SCENE_ID_ANIMATION -> {
-                    boostHandleMap[BOOST_SCENE_ID_ANIMATION]
-                        ?.takeIf { it >= 0 }
-                        ?.let { putInt(AxDragoniteConstants.KEY_HANDLE, it) }
+                BOOST_SCENE_ID_ANIMATION ->
                     putInt(AxDragoniteConstants.KEY_DURATION, DURATION_ANIMATION_MS)
-                }
             }
         }
     }
@@ -106,16 +105,29 @@ class AxBoosterController @Inject constructor(@Main private val mainHandler: Han
             val newHandle = AxDragoniteInternal.sceneBoostAcquire(sceneId, bundle)
             if (newHandle >= 0) {
                 val oldHandle = boostHandleMap.put(sceneId, newHandle)
+                if (oldHandle != null && oldHandle >= 0 && oldHandle != newHandle) {
+                    AxDragoniteInternal.sceneBoostRelease(oldHandle)
+                }
                 if (durationMs > 0L) {
                     scheduleSceneTimeout(sceneId, durationMs)
                 }
                 if (DEBUG) Slog.d(TAG, "sceneBoostAcquire id=$sceneId new=$newHandle old=$oldHandle")
             } else {
+                val oldHandle = boostHandleMap.remove(sceneId)
+                if (oldHandle != null && oldHandle >= 0) {
+                    AxDragoniteInternal.sceneBoostRelease(oldHandle)
+                }
                 cancelSceneTimeout(sceneId)
                 isBoostingMap[sceneId] = false
             }
         } catch (e: Exception) {
             Slog.w(TAG, "acquireBoost() id=$sceneId Exception: ${e.message}")
+            val oldHandle = boostHandleMap.remove(sceneId)
+            if (oldHandle != null && oldHandle >= 0) {
+                try {
+                    AxDragoniteInternal.sceneBoostRelease(oldHandle)
+                } catch (ignored: Exception) {}
+            }
             isBoostingMap[sceneId] = false
         }
     }
