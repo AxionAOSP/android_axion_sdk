@@ -1142,14 +1142,12 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         mManagerHandler.post {
             val record = mSessionRecords.getRecord(handle) ?: return@post
             val prevHandle = currentActiveHandle
-            if (prevHandle != handle || !record.hasActiveTasks()) {
-                if (prevHandle != handle) {
-                    restoreHandle(prevHandle)
-                }
-                currentActiveHandle = handle
-                record.clearTasks()
-                dispatchSceneCommands(sceneId, sceneBundle)
+            if (prevHandle != handle) {
+                restoreHandle(prevHandle)
             }
+            currentActiveHandle = handle
+            record.clearTasks()
+            dispatchSceneCommands(sceneId, sceneBundle)
         }
         traceEnd()
         return handle
