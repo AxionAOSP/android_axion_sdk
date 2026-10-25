@@ -93,7 +93,7 @@ constructor(
     private val history = ArrayDeque<ZoomHistoryEvent>(HISTORY_MAX_SIZE)
 
     @Volatile
-    var currentEffectiveZoom: Float = 1.0f
+    var currentEffectiveZoom: Float = 0.0f
         private set
 
     @Volatile
@@ -280,14 +280,14 @@ constructor(
     }
 
     private fun resolveTarget(): ZoomResolution {
-        if (wallpaperZoomDisabled) return ZoomResolution(1.0f, null)
+        if (wallpaperZoomDisabled) return ZoomResolution(0.0f, null)
 
         val override = getActiveZoom(WallpaperZoomOwner.SYSTEM_OVERRIDE)
-        if (override > 0f) return ZoomResolution((1.0f - override).coerceIn(0f, 1f), WallpaperZoomOwner.SYSTEM_OVERRIDE)
+        if (override > 0f) return ZoomResolution(override.coerceIn(0f, 1f), WallpaperZoomOwner.SYSTEM_OVERRIDE)
 
         if (!launcherZoomEnabled) {
             val keyguard = getActiveZoom(WallpaperZoomOwner.KEYGUARD_WAKE_ANIM)
-            if (keyguard < 1.0f) return ZoomResolution(keyguard, WallpaperZoomOwner.KEYGUARD_WAKE_ANIM)
+            if (keyguard > 0.0f) return ZoomResolution(keyguard, WallpaperZoomOwner.KEYGUARD_WAKE_ANIM)
         }
 
         val shade = getActiveZoom(WallpaperZoomOwner.NOTIFICATION_SHADE)
@@ -299,13 +299,13 @@ constructor(
         } else 0f
 
         val progress = maxOf(launcher, overlay)
-        if (progress <= 0f) return ZoomResolution(1.0f, null)
+        if (progress <= 0f) return ZoomResolution(0.0f, null)
 
         val owner = when {
             overlay > 0f -> if (shade >= unfold) WallpaperZoomOwner.NOTIFICATION_SHADE else WallpaperZoomOwner.UNFOLD
             else -> WallpaperZoomOwner.APP_ZOOM
         }
-        return ZoomResolution((1.0f - progress).coerceIn(0f, 1f), owner)
+        return ZoomResolution(progress.coerceIn(0f, 1f), owner)
     }
 
     private fun getCurrentRawTargetZoom(): Float = resolveTarget().targetZoom
@@ -336,7 +336,7 @@ constructor(
 
         if (zoomChanged || handoffEngine.isAnimating) {
             currentEffectiveZoom = effectiveZoom
-            val lockscreenZoom = if (wallpaperZoomDisabled || launcherZoomEnabled) 1.0f else effectiveZoom
+            val lockscreenZoom = if (wallpaperZoomDisabled || launcherZoomEnabled) 0.0f else effectiveZoom
             DepthWallpaperProvider.setWallpaperZoom(lockscreenZoom)
             val applied = applyWallpaperZoom(effectiveZoom)
 
