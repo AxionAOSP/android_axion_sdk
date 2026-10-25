@@ -38,6 +38,7 @@ import androidx.annotation.Nullable;
 
 import com.android.app.animation.Interpolators;
 import com.android.launcher3.DeviceProfile;
+import com.android.launcher3.LauncherPrefsExt;
 import com.android.launcher3.R;
 import com.android.launcher3.Utilities;
 import com.android.launcher3.statehandlers.DepthController;
@@ -177,13 +178,15 @@ public abstract class AxStackRecentsView<
                 + " target=" + endTarget + " handles=" + count(remoteTargetHandles));
         if (endTarget == RECENTS) {
             setRecentsWallpaperZoomOverride(0f);
-            SystemUiProxy systemUiProxy = SystemUiProxy.INSTANCE.get(getContext());
-            animatorSet.addListener(new AnimatorListenerAdapter() {
-                @Override
-                public void onAnimationStart(Animator animation) {
-                    AxWallpaperZoom.startZoomOut(systemUiProxy);
-                }
-            });
+            if (!LauncherPrefsExt.DISABLE_WALLPAPER_ZOOM.get(getContext())) {
+                SystemUiProxy systemUiProxy = SystemUiProxy.INSTANCE.get(getContext());
+                animatorSet.addListener(new AnimatorListenerAdapter() {
+                    @Override
+                    public void onAnimationStart(Animator animation) {
+                        AxWallpaperZoom.startZoomOut(systemUiProxy);
+                    }
+                });
+            }
             startStackEntranceAnimation(false, animatorSet);
         } else {
             setRecentsWallpaperZoomOverride(Float.NaN);
@@ -403,7 +406,7 @@ public abstract class AxStackRecentsView<
         animation.addListener(new AnimatorListenerAdapter() {
             @Override
             public void onAnimationStart(Animator animator) {
-                if (zoomWallpaper) {
+                if (zoomWallpaper && !LauncherPrefsExt.DISABLE_WALLPAPER_ZOOM.get(getContext())) {
                     AxWallpaperZoom.startZoomIn(SystemUiProxy.INSTANCE.get(getContext()));
                 }
                 if (!useStackAnimation || mLaunchTask != taskView) {
