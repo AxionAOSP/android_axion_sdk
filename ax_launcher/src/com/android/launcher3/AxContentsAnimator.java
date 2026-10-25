@@ -70,6 +70,9 @@ final class AxContentsAnimator {
                     views.forEach(
                             view -> {
                                 SCALE_PROPERTY.set(view, 1f);
+                                if (view instanceof Workspace<?> workspace) {
+                                    workspace.resetScalePivot();
+                                }
                                 Animations.Companion.setOngoingAnimation(view, null);
                             });
                     if (mUpdatesPaused) {
@@ -81,6 +84,11 @@ final class AxContentsAnimator {
                 new AnimatorListenerAdapter() {
                     @Override
                     public void onAnimationEnd(Animator animation) {
+                        endListener.run();
+                    }
+
+                    @Override
+                    public void onAnimationCancel(Animator animation) {
                         endListener.run();
                     }
                 });
@@ -104,6 +112,9 @@ final class AxContentsAnimator {
     }
 
     private static void playAppOpen(AnimatorSet animator, View view, float startScale) {
+        if (view instanceof Workspace<?> workspace) {
+            workspace.prepareScalePivot();
+        }
         SCALE_PROPERTY.set(view, startScale);
         Animations.Companion.setOngoingAnimation(view, animator);
 

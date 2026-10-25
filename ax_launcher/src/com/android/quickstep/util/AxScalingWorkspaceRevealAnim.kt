@@ -202,6 +202,7 @@ class AxScalingWorkspaceRevealAnim(
 
                     Animations.setOngoingAnimation(workspace, animation = null)
                     Animations.setOngoingAnimation(hotseat, animation = null)
+                    workspace.resetScalePivot()
                     if (blurDisabled) {
                         launcher.depthController.pauseBlursOnWindows(false)
                     }
