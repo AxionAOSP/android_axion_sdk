@@ -163,6 +163,14 @@ final class AxPlayerImpl {
                         }
                         mOpeningTargets.release();
                     }
+
+                    @Override
+                    public void onAnimationCancel(Animator animation) {
+                        if (mSourceView instanceof BubbleTextView icon) {
+                            icon.setStayPressed(false);
+                        }
+                        mOpeningTargets.release();
+                    }
                 });
 
         AnimatorSet animator = new AnimatorSet();

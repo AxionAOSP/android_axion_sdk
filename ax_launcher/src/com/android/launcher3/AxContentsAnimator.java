@@ -70,7 +70,6 @@ final class AxContentsAnimator {
                     views.forEach(
                             view -> {
                                 SCALE_PROPERTY.set(view, 1f);
-                                view.setLayerType(View.LAYER_TYPE_NONE, null);
                                 Animations.Companion.setOngoingAnimation(view, null);
                             });
                     if (mUpdatesPaused) {
@@ -106,7 +105,6 @@ final class AxContentsAnimator {
 
     private static void playAppOpen(AnimatorSet animator, View view, float startScale) {
         SCALE_PROPERTY.set(view, startScale);
-        view.setLayerType(View.LAYER_TYPE_HARDWARE, null);
         Animations.Companion.setOngoingAnimation(view, animator);
 
         ObjectAnimator scale =
