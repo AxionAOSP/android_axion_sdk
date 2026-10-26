@@ -41,8 +41,10 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import android.provider.Settings
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.android.axion.sandbox.security.SandboxSecurityManager.BiometricType
@@ -78,6 +80,18 @@ fun PatternScreen(
     val errorMessage = remember { mutableStateOf("") }
     val dotPositions = remember { mutableStateOf<Map<Int, Offset>>(emptyMap()) }
     val haptic = LocalHapticFeedback.current
+    val context = LocalContext.current
+    val isPatternVisible = remember {
+        try {
+            Settings.Secure.getInt(
+                context.contentResolver,
+                Settings.Secure.LOCK_PATTERN_VISIBLE,
+                1
+            ) != 0
+        } catch (e: Exception) {
+            true
+        }
+    }
     val scope = rememberCoroutineScope()
     val errorMismatch = stringResource(R.string.pattern_error_mismatch)
     val errorIncorrect = stringResource(R.string.pattern_error_incorrect)
@@ -242,15 +256,31 @@ fun PatternScreen(
                         dotPositions.value = positions
 
                         val currentSelectedDots = selectedDots.value
-                        if (currentSelectedDots.size > 1) {
-                            for (i in 0 until currentSelectedDots.size - 1) {
-                                val from = positions[currentSelectedDots[i]]
-                                val to = positions[currentSelectedDots[i + 1]]
-                                if (from != null && to != null) {
+                        if (isSetup || isPatternVisible) {
+                            if (currentSelectedDots.size > 1) {
+                                for (i in 0 until currentSelectedDots.size - 1) {
+                                    val from = positions[currentSelectedDots[i]]
+                                    val to = positions[currentSelectedDots[i + 1]]
+                                    if (from != null && to != null) {
+                                        drawLine(
+                                            color = lineColor,
+                                            start = from,
+                                            end = to,
+                                            strokeWidth = 8.dp.toPx(),
+                                            cap = StrokeCap.Round
+                                        )
+                                    }
+                                }
+                            }
+
+                            val touchPos = currentTouchPosition.value
+                            if (currentSelectedDots.isNotEmpty() && touchPos != null) {
+                                val lastDot = positions[currentSelectedDots.last()]
+                                if (lastDot != null) {
                                     drawLine(
-                                        color = lineColor,
-                                        start = from,
-                                        end = to,
+                                        color = lineColor.copy(alpha = 0.5f),
+                                        start = lastDot,
+                                        end = touchPos,
                                         strokeWidth = 8.dp.toPx(),
                                         cap = StrokeCap.Round
                                     )
@@ -258,42 +288,29 @@ fun PatternScreen(
                             }
                         }
 
-                        val touchPos = currentTouchPosition.value
-                        if (currentSelectedDots.isNotEmpty() && touchPos != null) {
-                            val lastDot = positions[currentSelectedDots.last()]
-                            if (lastDot != null) {
-                                drawLine(
-                                    color = lineColor.copy(alpha = 0.5f),
-                                    start = lastDot,
-                                    end = touchPos,
-                                    strokeWidth = 8.dp.toPx(),
-                                    cap = StrokeCap.Round
-                                )
-                            }
-                        }
-
                         for ((index, dotCenter) in positions) {
                             val isSelected = currentSelectedDots.contains(index)
+                            val showSelection = isSelected && (isSetup || isPatternVisible || isError.value)
                             val color = when {
                                 isError.value -> errorColor
-                                isSelected -> dotColor
+                                showSelection -> dotColor
                                 else -> dotInactiveColor
                             }
 
-                            val dotScale = dotScalingAnimatables[index].value
+                            val dotScale = if (showSelection) dotScalingAnimatables[index].value else 1f
                             val appearAlpha = dotAppearFadeAnimatables[index].value
                             val appearOffsetY = (1f - dotAppearOffsetAnimatables[index].value) * 30f
                             val animatedCenter = Offset(dotCenter.x, dotCenter.y + appearOffsetY)
 
                             drawCircle(
-                                color = color.copy(alpha = (if (isSelected) 0.3f else 0.2f) * appearAlpha),
+                                color = color.copy(alpha = (if (showSelection) 0.3f else 0.2f) * appearAlpha),
                                 radius = dotRadius * 2.5f * dotScale,
                                 center = animatedCenter
                             )
 
                             drawCircle(
                                 color = color.copy(alpha = appearAlpha),
-                                radius = (if (isSelected) dotRadius * 1.3f else dotRadius) * dotScale,
+                                radius = (if (showSelection) dotRadius * 1.3f else dotRadius) * dotScale,
                                 center = animatedCenter
                             )
                         }
