@@ -469,9 +469,8 @@ private fun AxBrightnessSlider(
             viewModel.onIconClick()
         },
         icon = { iconModifier ->
-            Icon(
-                painter = painterResource(iconRes),
-                contentDescription = null,
+            SystemUiIcon(
+                icon = com.android.systemui.common.shared.model.Icon.Resource(iconRes, null),
                 modifier = iconModifier,
             )
         },

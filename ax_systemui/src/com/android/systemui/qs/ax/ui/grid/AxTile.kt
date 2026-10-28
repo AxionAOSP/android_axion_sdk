@@ -104,6 +104,8 @@ import com.android.systemui.qs.tileimpl.QSTileImpl
 import com.android.systemui.qs.ui.composable.QuickSettingsShade
 import com.android.systemui.qs.ui.compose.borderOnFocus
 import com.android.systemui.res.R
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.android.systemui.statusbar.connectivity.ThemeIconController
 import kotlinx.coroutines.CoroutineScope
 
 @Composable
@@ -136,8 +138,9 @@ fun ContentScope.AxTile(
         val effectiveClickable = isClickable && uiState.state != STATE_UNAVAILABLE
         val isDualTarget = uiState.handlesSecondaryClick
 
+        val themeVer by ThemeIconController.themeVersion.collectAsStateWithLifecycle()
         val icon by
-            produceState(tile.currentState.toIconProvider(), tile) {
+            produceState(tile.currentState.toIconProvider(), tile, themeVer) {
                 tile.state.collect { value = it.toIconProvider() }
             }
 
@@ -425,7 +428,12 @@ private fun Modifier.axTileCombinedClickable(
 internal fun Context.getAxTileIcon(icon: IconProvider): Icon {
     return icon.icon?.let {
         if (it is QSTileImpl.ResourceIcon) {
-            Icon.Resource(it.resId, null)
+            val themed = ThemeIconController.getThemedQsIcon(this, it.resId)
+            if (themed != null) {
+                Icon.Loaded(themed, null, it.resId)
+            } else {
+                Icon.Resource(it.resId, null)
+            }
         } else {
             Icon.Loaded(it.getDrawable(this), null)
         }

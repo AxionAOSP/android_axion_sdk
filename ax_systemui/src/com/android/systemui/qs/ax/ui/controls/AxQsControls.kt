@@ -73,16 +73,13 @@ internal fun AxQsBrightnessButton(
         onClick = viewModel::onIconClick,
         modifier = modifier,
     ) { tint ->
-        MaterialIcon(
-            painter =
-                painterResource(
-                    if (active) {
-                        SysuiR.drawable.ic_qs_brightness_auto_on
-                    } else {
-                        SysuiR.drawable.ic_qs_brightness_auto_off
-                    }
-                ),
-            contentDescription = null,
+        val resId = if (active) {
+            SysuiR.drawable.ic_qs_brightness_auto_on
+        } else {
+            SysuiR.drawable.ic_qs_brightness_auto_off
+        }
+        Icon(
+            icon = com.android.systemui.common.shared.model.Icon.Resource(resId, null),
             tint = tint,
             modifier = Modifier.size(cellConfig.iconSize),
         )
