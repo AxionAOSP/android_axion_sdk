@@ -127,7 +127,8 @@ final class AxLauncherSwipeHandlerExt {
 
     static void startHomeZoom(Context context) {
         AxLauncherSceneBooster.startHomeGesture();
-        boolean enabled = AxQuickstepTransitionManagerExt.isAxAnimEngineEnabled(context);
+        boolean enabled = AxQuickstepTransitionManagerExt.isAxAnimEngineEnabled(context)
+                && !LauncherPrefsExt.DISABLE_WALLPAPER_ZOOM.get(context);
         AxAnimationEngine.trace(TAG, "homeZoom enabled=" + enabled);
         if (enabled) {
             AxWallpaperZoom.startHomeGesture(SystemUiProxy.INSTANCE.get(context));

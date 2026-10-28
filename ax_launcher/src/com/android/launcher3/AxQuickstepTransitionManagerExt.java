@@ -96,6 +96,11 @@ public final class AxQuickstepTransitionManagerExt {
                 public void onAnimationEnd(Animator animation) {
                     AxLauncherSceneBooster.endAppTransition();
                 }
+
+                @Override
+                public void onAnimationCancel(Animator animation) {
+                    AxLauncherSceneBooster.endAppTransition();
+                }
             });
             return anim;
         }
