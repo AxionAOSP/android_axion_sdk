@@ -181,8 +181,6 @@ class AxScalingWorkspaceRevealAnim(
             AxHomeGestureTargetHelper(siblingAnimation, windowTargetRect, launcher, targetView)
         targetHelper.update()
 
-        workspace.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-        hotseat.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         animation.addListener(
             AnimatorListeners.forEndCallback(
                 Runnable {
@@ -202,11 +200,9 @@ class AxScalingWorkspaceRevealAnim(
                         )
                     }
 
-                    workspace.setLayerType(View.LAYER_TYPE_NONE, null)
-                    hotseat.setLayerType(View.LAYER_TYPE_NONE, null)
-
                     Animations.setOngoingAnimation(workspace, animation = null)
                     Animations.setOngoingAnimation(hotseat, animation = null)
+                    workspace.resetScalePivot()
                     if (blurDisabled) {
                         launcher.depthController.pauseBlursOnWindows(false)
                     }

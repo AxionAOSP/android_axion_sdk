@@ -218,8 +218,10 @@ final class AxValueAnimPlayer {
                 && LauncherPrefsExt.APP_LAUNCH_BLUR_ENABLED.get(mLauncher);
         DepthController depthController = blurEnabled ? mLauncher.getDepthController() : null;
         float targetDepth = LauncherState.BACKGROUND_APP.getDepth(mLauncher);
+        boolean zoomEnabled = mPlayWallpaperZoom
+                && !LauncherPrefsExt.DISABLE_WALLPAPER_ZOOM.get(mLauncher);
         return AxWallpaperZoom.createAppOpenAnimator(
-                mSystemUiProxy, depthController, targetDepth, mPlayWallpaperZoom);
+                mSystemUiProxy, depthController, targetDepth, zoomEnabled);
     }
 
     private void applyFrame(

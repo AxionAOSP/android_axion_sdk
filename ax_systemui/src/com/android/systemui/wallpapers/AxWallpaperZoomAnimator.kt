@@ -185,7 +185,7 @@ constructor(
         stop()
         state = state.copy(isPrepped = true, hasRevealed = false)
         val currentZoom = wallpaperZoomController.currentEffectiveZoom
-        val prepZoom = if (currentZoom < 1.0f) currentZoom else WAKE_START_ZOOM
+        val prepZoom = if (currentZoom > 0f) currentZoom else WAKE_START_ZOOM
         apply(prepZoom, "wakePrep:$fromState")
 
         if (state.isAodWallpaper) {
@@ -231,7 +231,7 @@ constructor(
             return
         }
         val currentZoom = wallpaperZoomController.currentEffectiveZoom
-        val current = (animator?.animatedValue as? Float) ?: if (currentZoom < 1.0f) currentZoom else state.zoomOut
+        val current = (animator?.animatedValue as? Float) ?: if (currentZoom > 0f) currentZoom else state.zoomOut
         if (abs(current - LOCKSCREEN_RESTING_ZOOM) < 0.001f) {
             return
         }
@@ -247,7 +247,7 @@ constructor(
 
     fun animateToResting(durationMs: Long = UNLOCK_TRANSITION_DURATION_MS) {
         val currentZoom = wallpaperZoomController.currentEffectiveZoom
-        val current = (animator?.animatedValue as? Float) ?: if (currentZoom < 1.0f) currentZoom else state.zoomOut
+        val current = (animator?.animatedValue as? Float) ?: if (currentZoom > 0f) currentZoom else state.zoomOut
         if (abs(current - LOCKSCREEN_RESTING_ZOOM) < 0.001f) {
             clear()
             return
@@ -257,7 +257,7 @@ constructor(
 
     private fun animate(from: Float, to: Float, durationMs: Long, reason: String) {
         val currentZoom = wallpaperZoomController.currentEffectiveZoom
-        val startVal = (animator?.animatedValue as? Float) ?: if (currentZoom < 1.0f) currentZoom else from
+        val startVal = (animator?.animatedValue as? Float) ?: if (currentZoom > 0f) currentZoom else from
         stop()
         if (abs(startVal - to) < 0.001f) {
             apply(to, reason)
@@ -323,7 +323,7 @@ constructor(
         private const val REVEAL_START_THRESHOLD = 0.1f
         private const val REVEAL_DURATION_MS = 800L
         private const val UNLOCK_TRANSITION_DURATION_MS = 650L
-        const val WAKE_START_ZOOM = 0f
-        const val LOCKSCREEN_RESTING_ZOOM = 1f
+        const val WAKE_START_ZOOM = 1f
+        const val LOCKSCREEN_RESTING_ZOOM = 0f
     }
 }

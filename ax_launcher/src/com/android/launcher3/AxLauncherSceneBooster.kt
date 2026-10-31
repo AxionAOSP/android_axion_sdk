@@ -216,7 +216,10 @@ class AxLauncherSceneBooster private constructor() {
                     val stillActiveAfterAcquire =
                         synchronized(tokenLock) { !tokensByScene[sceneId].isNullOrEmpty() }
                     if (stillActiveAfterAcquire) {
-                        activeHandlesByScene[sceneId] = handle
+                        val prev = activeHandlesByScene.put(sceneId, handle)
+                        if (prev != null && prev >= 0 && prev != handle) {
+                            AxDragoniteInternal.sceneBoostRelease(prev)
+                        }
                     } else {
                         AxDragoniteInternal.sceneBoostRelease(handle)
                     }

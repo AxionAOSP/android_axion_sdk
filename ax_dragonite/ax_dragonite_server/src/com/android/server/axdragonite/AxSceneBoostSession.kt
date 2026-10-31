@@ -231,7 +231,6 @@ internal class SceneReleaseRunnable(private val mHost: AxDragoniteImpl) : Runnab
 
 internal class InputBoostResetRunnable(private val mHost: AxDragoniteImpl) : Runnable {
     override fun run() {
-        mHost.sfBindControllInternal(false)
         mHost.adjustBackgroundLimit(false)
         mHost.adjustKswapdAffinity(false)
         mHost.mLimitBoostDisabled = true

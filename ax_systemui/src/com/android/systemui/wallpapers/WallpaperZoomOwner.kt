@@ -35,7 +35,7 @@ enum class WallpaperZoomOwner(
         id = 1,
         priority = 80,
         description = "Keyguard Wake / Unlock",
-        restingZoom = 1.0f,
+        restingZoom = 0.0f,
         maxHoldingDurationMs = 3_000L,
     ),
 
