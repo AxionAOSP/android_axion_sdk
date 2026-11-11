@@ -889,14 +889,20 @@ public class AxMemoryManager implements IAxMemoryManager {
         }
         if (this.mContext != null) {
             try {
-                ApplicationInfo ai = this.mContext.getPackageManager().getApplicationInfo(basePkg, 0);
-                if (ai != null && (ai.category == ApplicationInfo.CATEGORY_GAME || (ai.flags & ApplicationInfo.FLAG_IS_GAME) != 0)) {
-                    return true;
-                }
+                return isGameApp(this.mContext.getPackageManager().getApplicationInfo(basePkg, 0));
             } catch (Exception ignored) {
             }
         }
         return false;
+    }
+
+    private boolean isGameProcess(ProcessRecordInternal pri) {
+        final ApplicationInfo ai = ((ProcessRecord) pri).info;
+        return ai != null && (ai.packageName.equals(this.mActiveGamePackage) || isGameApp(ai));
+    }
+
+    private static boolean isGameApp(ApplicationInfo ai) {
+        return ai.category == ApplicationInfo.CATEGORY_GAME || (ai.flags & ApplicationInfo.FLAG_IS_GAME) != 0;
     }
 
     public boolean isCameraPackage(String pkg) {
@@ -963,7 +969,7 @@ public class AxMemoryManager implements IAxMemoryManager {
 
     @Override
     public int getTargetAdj(ProcessRecordInternal pri) {
-        if (pri != null && isGamePackage(pri.processName)) {
+        if (pri != null && isGameProcess(pri)) {
             return this.mTargetAdjTiers[0];
         }
         SimpleAppRecord sar = AxUsageManager.getInstance().geedHighUsedRecord(false, pri != null ? pri.processName : null);
@@ -980,7 +986,7 @@ public class AxMemoryManager implements IAxMemoryManager {
         if (pri == null || "com.android.settings".equals(pri.processName) || !pri.getHasShownUi()) {
             return false;
         }
-        if (isGamePackage(pri.processName)) {
+        if (isGameProcess(pri)) {
             return true;
         }
         if (!this.mEnableOptHighUsed) {
