@@ -61,6 +61,8 @@ class AxPlatformConfig {
 
         private const val TAG = "AxPlatformConfig"
         private val PROC_FILE_BUFFER = intArrayOf(4096)
+        private val PROC_COMM_FORMAT =
+            intArrayOf(Process.PROC_OUT_STRING or Process.PROC_NEWLINE_TERM)
         private const val DEFAULT_CPU_SHARES = 1024
         private const val BOOSTED_CPU_SHARES = 2048
         const val UCLAMP_RESTORE_MIN = "0"
@@ -132,16 +134,18 @@ class AxPlatformConfig {
         @JvmStatic
         fun parseAffinityCores(affinity: String?): IntArray? = AxCpuSets.resolveCores(affinity)
 
-        private fun readProcField(pid: Int, field: String): String {
+        private fun readProcField(pid: Int, field: String, format: IntArray): String {
             val out = arrayOfNulls<String>(1)
             val path = "$PROC_DIR$pid${AxCmdTable.PATH_SEP}$field"
-            if (!Process.readProcFile(path, PROC_FILE_BUFFER, out, null, null)) return ""
+            if (!Process.readProcFile(path, format, out, null, null)) return ""
             return out[0]?.trim() ?: ""
         }
 
-        @JvmStatic fun getProcessCmdLine(pid: Int): String = readProcField(pid, FILE_CMDLINE)
+        @JvmStatic
+        fun getProcessCmdLine(pid: Int): String = readProcField(pid, FILE_CMDLINE, PROC_FILE_BUFFER)
 
-        @JvmStatic fun getProcessComm(pid: Int): String = readProcField(pid, FILE_COMM)
+        @JvmStatic
+        fun getProcessComm(pid: Int): String = readProcField(pid, FILE_COMM, PROC_COMM_FORMAT)
 
         @JvmStatic
         fun paramsFromUser(params: String?, cmdId: Int): String? {
