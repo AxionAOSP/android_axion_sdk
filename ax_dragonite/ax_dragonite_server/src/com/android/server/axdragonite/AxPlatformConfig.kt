@@ -150,9 +150,15 @@ class AxPlatformConfig {
         @JvmStatic
         fun paramsFromUser(params: String?, cmdId: Int): String? {
             if (params.isNullOrEmpty()) return null
-            if (cmdId in paramCmds) return params
-            Slog.d(TAG, "no need params, return!")
-            return null
+            if (cmdId !in paramCmds) {
+                Slog.d(TAG, "no need params, return!")
+                return null
+            }
+            val prefix = "$cmdId:"
+            return params
+                .split(AxCommandExec.SEMICOLON)
+                .firstOrNull { it.startsWith(prefix) && it.length > prefix.length }
+                ?.substring(prefix.length)
         }
 
         @JvmStatic
