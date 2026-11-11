@@ -28,6 +28,7 @@ import java.util.Set;
 public final class AxOomAdjusterHelper {
     private static final String AXION_PREFIX = "com.axion.";
     private static final String SYSTEMUI_PROCESS_NAME = "com.android.systemui";
+    private static final String LAUNCHER_PROCESS_NAME = "com.android.launcher3";
     private static final int SCHED_GROUP_TOP_APP = 3;
 
     private static final Set<String> APP_WHITELIST = Set.of(
@@ -57,6 +58,14 @@ public final class AxOomAdjusterHelper {
             return THREAD_GROUP_AX_FOREGROUND;
         }
         return THREAD_GROUP_RESTRICTED;
+    }
+
+    public static int getProcessGroup(String processName, int group) {
+        if (SYSTEMUI_PROCESS_NAME.equals(processName)
+                || LAUNCHER_PROCESS_NAME.equals(processName)) {
+            return THREAD_GROUP_RESTRICTED;
+        }
+        return group;
     }
 
     public static int getDefaultProcessGroup(int oldSchedGroup, ProcessRecordInternal app) {
