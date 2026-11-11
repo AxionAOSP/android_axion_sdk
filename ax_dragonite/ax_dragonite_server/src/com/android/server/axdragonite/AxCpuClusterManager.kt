@@ -17,9 +17,8 @@
 package com.android.server.axdragonite
 
 import android.util.Slog
+import com.android.server.axdragonite.model.AxCpuProfile
 import com.android.server.axdragonite.model.ClusterInfo
-import com.android.server.axdragonite.model.ClusterPreset
-import com.android.server.axdragonite.model.ClusterTopologyType
 import com.android.server.axdragonite.model.Cpuset
 import com.android.server.axdragonite.model.TopologyData
 import java.io.File
@@ -35,42 +34,17 @@ object AxCpuClusterManager {
     const val RANGE_DELIMITER = "-"
 
     const val DEFAULT_CORE_COUNT = 8
-    const val SINGLE_CLUSTER = 1
-    const val DUAL_CLUSTER = 2
-    const val TRI_CLUSTER = 3
-    const val QUAD_CLUSTER = 4
     const val FALLBACK_FREQ_BASE = 100000L
 
-    const val CORES_LITTLE_4_4 = 4
-    const val CORES_LITTLE_6_2 = 6
-    const val CORES_LITTLE_3_4_1 = 3
-    const val CORES_LITTLE_4_3_1 = 4
-    const val CORES_LITTLE_FLAGSHIP_MAX = 2
-
-    const val CORES_UI_4_4 = 4
-    const val CORES_REST_BG_4_4 = 3
-
-    const val CORES_UI_6_2 = 5
-    const val CORES_REST_BG_6_2 = 2
-
-    const val CORES_MID_3_4_1 = 4
-    const val CORES_MID_4_3_1 = 3
-
-    const val CORES_UI_LITTLE_DEFAULT = 2
-    const val CORES_UI_BIG_DEFAULT = 2
-    const val CORES_REST_BG_BIG_DEFAULT = 1
     const val CORES_DEX2OAT_RESTRICTED = 1
     const val CORES_LITTLE_MIN_DEFAULT = 2
-    const val PRIME_CORE_COUNT_SINGULAR = 1
     const val CORES_DIVISOR_QUARTER = 4
 
     val topology: TopologyData = detectTopology()
 
     private fun detectTopology(): TopologyData {
         val cores = detectCoreCount()
-        val clusters = buildClusters(cores)
-        val allMask = clusters.fold(0L) { acc, c -> acc or c.mask }
-        val topo = resolveTopology(cores, clusters, allMask)
+        val topo = resolveTopology(cores, buildClusters(cores))
         logTopology(topo)
         return topo
     }
@@ -84,113 +58,46 @@ object AxCpuClusterManager {
                 ClusterInfo(index, freq, cpus, cpus.fold(0L) { mask, cpu -> mask or (1L shl cpu) })
             }
 
-    private fun resolvePreset(cores: Int, clusters: List<ClusterInfo>, allMask: Long): ClusterPreset {
-        fun c(i: Int): Long = clusters.getOrNull(i)?.mask ?: 0L
-        val littleMask = c(0)
-        val littleCount = littleMask.countOneBits()
-
-        if (clusters.size <= SINGLE_CLUSTER) {
-            val mask = littleMask.takeIf { it != 0L } ?: allMask
-            return ClusterPreset.single(allMask, ClusterPreset.takeLowestBits(allMask, max(1, cores / CORES_DIVISOR_QUARTER)), mask)
-        }
-
-        if (clusters.size == DUAL_CLUSTER) {
-            if (littleCount == CORES_LITTLE_6_2) {
-                return ClusterPreset.of(
-                    type = ClusterTopologyType.PRESET_DUAL_6_2,
-                    smallMask = littleMask,
-                    bigMask = 0L,
-                    boostMask = c(1),
-                    restrictedFgMask = littleMask,
-                    uiSmall = CORES_UI_6_2,
-                    uiBig = 0,
-                    restSmall = CORES_REST_BG_6_2,
-                    restBig = 0,
-                )
-            }
-            if (littleCount == CORES_LITTLE_4_4) {
-                return ClusterPreset.of(
-                    type = ClusterTopologyType.PRESET_DUAL_4_4,
-                    smallMask = littleMask,
-                    bigMask = 0L,
-                    boostMask = allMask and littleMask.inv(),
-                    uiSmall = CORES_UI_4_4,
-                    uiBig = 0,
-                    restSmall = CORES_REST_BG_4_4,
-                    restBig = 0,
-                )
-            }
-        }
-
-        if (clusters.size == TRI_CLUSTER) {
-            if (littleCount == CORES_LITTLE_3_4_1 && c(1).countOneBits() == CORES_MID_3_4_1) {
-                return ClusterPreset.of(
-                    type = ClusterTopologyType.PRESET_TRI_3_4_1,
-                    smallMask = littleMask,
-                    bigMask = c(1),
-                    boostMask = allMask and littleMask.inv(),
-                    uiSmall = CORES_UI_LITTLE_DEFAULT,
-                    uiBig = CORES_UI_BIG_DEFAULT,
-                    restSmall = CORES_UI_LITTLE_DEFAULT,
-                    restBig = CORES_REST_BG_BIG_DEFAULT,
-                )
-            }
-            if (littleCount == CORES_LITTLE_4_3_1 && c(1).countOneBits() == CORES_MID_4_3_1) {
-                return ClusterPreset.of(
-                    type = ClusterTopologyType.PRESET_TRI_4_3_1,
-                    smallMask = littleMask,
-                    bigMask = 0L,
-                    boostMask = allMask and littleMask.inv(),
-                    uiSmall = CORES_UI_4_4,
-                    uiBig = 0,
-                    restSmall = CORES_REST_BG_4_4,
-                    restBig = 0,
-                )
-            }
-        }
-
-        if (clusters.size >= QUAD_CLUSTER || littleCount <= CORES_LITTLE_FLAGSHIP_MAX) {
-            return ClusterPreset.of(
-                type = ClusterTopologyType.PRESET_QUAD_2_3_2_1,
-                smallMask = c(0),
-                bigMask = c(2),
-                boostMask = c(1) or c(3),
-            )
-        }
-
-        val big = allMask and littleMask.inv()
-        return ClusterPreset.of(ClusterTopologyType.GENERIC_MULTI_CLUSTER, littleMask, big, big)
-    }
-
-    private fun resolveTopology(cores: Int, clusters: List<ClusterInfo>, allMask: Long): TopologyData {
-        fun c(i: Int): Long = clusters.getOrNull(i)?.mask ?: 0L
-        val preset = resolvePreset(cores, clusters, allMask)
-        val fgMask =
-            if (clusters.size >= TRI_CLUSTER && clusters.last().mask.countOneBits() == PRIME_CORE_COUNT_SINGULAR) {
-                allMask and clusters.last().mask.inv()
-            } else {
-                allMask
-            }
+    private fun resolveTopology(cores: Int, clusters: List<ClusterInfo>): TopologyData {
+        val allMask = clusters.fold(0L) { mask, cluster -> mask or cluster.mask }
+        val littleMask = clusters.firstOrNull()?.mask ?: 0L
+        val little = littleMask.countOneBits()
+        val profile = AxCpuProfile.forLayout(little, cores)
+        val counts = profile.scaledTo(little, cores)
+        fun littleCpus(count: Int) = Cpuset(takeLowestBits(littleMask, count))
 
         return TopologyData(
             numCores = cores,
-            type = preset.type,
+            profile = profile,
             clusters = clusters,
             all = Cpuset(allMask),
-            foreground = Cpuset(fgMask),
-            ui = Cpuset(if (preset.uiMask != 0L) preset.uiMask else allMask),
-            restrictedBackground = Cpuset(preset.restrictedBgMask),
-            restrictedDex2oat = Cpuset(ClusterPreset.takeLowestBits(c(0), CORES_DEX2OAT_RESTRICTED)),
-            littleMin = Cpuset(ClusterPreset.takeLowestBits(c(0), max(1, min(CORES_LITTLE_MIN_DEFAULT, cores / CORES_DIVISOR_QUARTER)))),
-            boost = Cpuset(preset.boostMask),
-            restrictedForeground = preset.restrictedFgMask?.let(::Cpuset),
+            foreground = Cpuset(allMask),
+            ui = littleCpus(counts.ui),
+            restrictedBackground = littleCpus(counts.restrictedBackground),
+            restrictedDex2oat = littleCpus(CORES_DEX2OAT_RESTRICTED),
+            littleMin =
+                littleCpus(max(1, min(CORES_LITTLE_MIN_DEFAULT, cores / CORES_DIVISOR_QUARTER))),
+            boost = Cpuset((allMask and littleMask.inv()).takeIf { it != 0L } ?: allMask),
+            background = littleCpus(counts.background),
+            inputForeground = littleCpus(counts.inputForeground),
+            inputBackground = littleCpus(counts.inputBackground),
+            restrictedForeground = Cpuset(littleMask).takeIf { profile.restrictForegroundToLittle },
+            dexRestoreThreads = counts.dexRestoreThreads,
+            dexLimitThreads = counts.dexLimitThreads,
         )
     }
 
+    private fun takeLowestBits(mask: Long, count: Int): Long {
+        var taken = 0L
+        repeat(count) { taken = taken or (mask and taken.inv()).takeLowestOneBit() }
+        return taken
+    }
+
     private fun logTopology(t: TopologyData) {
+        val clusterSizes = t.clusters.joinToString("+") { it.cpus.size.toString() }
         Slog.i(
             TAG,
-            "CPU Topology detected: ${t.numCores} cores, ${t.clusters.size} clusters, preset: ${t.type}. " +
+            "CPU Topology detected: ${t.numCores} cores, clusters $clusterSizes, profile: ${t.profile.name}. " +
                 "Boost: 0x${t.boost.mask.toString(16)}, " +
                 "Ui: 0x${t.ui.mask.toString(16)}, " +
                 "RestrictedBg: 0x${t.restrictedBackground.mask.toString(16)}",
@@ -212,7 +119,4 @@ object AxCpuClusterManager {
 
     private fun readFirstLine(file: File): String? =
         runCatching { file.bufferedReader().use { it.readLine() } }.getOrNull()
-
-    fun getLowestNBits(mask: Long, count: Int): Long =
-        ClusterPreset.takeLowestBits(mask, count)
 }

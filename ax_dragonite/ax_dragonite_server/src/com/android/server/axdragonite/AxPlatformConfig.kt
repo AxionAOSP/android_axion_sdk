@@ -70,8 +70,8 @@ class AxPlatformConfig {
         private const val PROC_DIR = "/proc/"
         private const val FILE_CMDLINE = "cmdline"
         private const val FILE_COMM = "comm"
-        private val FALLBACK_BG_CPUS = AxCpuSets.CPUSET_UI
-        private val FALLBACK_SBG_CPUS = AxCpuSets.CPUSET_UI
+        private val FALLBACK_BG_CPUS = AxCpuSets.CPUSET_BACKGROUND
+        private val FALLBACK_SBG_CPUS = AxCpuSets.CPUSET_BACKGROUND
 
         private val cpusetGroups =
             mapOf(
@@ -187,15 +187,15 @@ class AxPlatformConfig {
             mapOf(
                 KEY_TOP_APP to AxCpuSets.CPUSET_ALL,
                 KEY_FOREGROUND to AxCpuSets.CPUSET_ALL,
-                KEY_BACKGROUND to AxCpuSets.CPUSET_UI,
+                KEY_BACKGROUND to AxCpuSets.CPUSET_BACKGROUND,
                 KEY_UI to AxCpuSets.CPUSET_UI,
-                KEY_SYSTEM_BACKGROUND to AxCpuSets.CPUSET_UI,
+                KEY_SYSTEM_BACKGROUND to AxCpuSets.CPUSET_BACKGROUND,
                 KEY_RESTRICTED to AxCpuSets.CPUSET_ALL,
                 KEY_AXFG to AxCpuSets.CPUSET_FOREGROUND,
                 KEY_DEX to AxCpuSets.CPUSET_FOREGROUND,
-                KEY_FOREGROUND_INPUT to AxCpuSets.CPUSET_UI,
-                KEY_DEX_INPUT to AxCpuSets.CPUSET_UI,
-                KEY_BACKGROUND_INPUT to AxCpuSets.CPUSET_RESTRICTED_BG,
+                KEY_FOREGROUND_INPUT to AxCpuSets.CPUSET_INPUT_FOREGROUND,
+                KEY_DEX_INPUT to AxCpuSets.CPUSET_INPUT_FOREGROUND,
+                KEY_BACKGROUND_INPUT to AxCpuSets.CPUSET_INPUT_BACKGROUND,
                 KEY_DURATION_INPUT to DEFAULT_DURATION_INPUT.toString(),
                 KEY_DEX_RESTORE_THREADS to AxCpuSets.dexRestoreThreads(),
                 KEY_DEX_THREADS to AxCpuSets.dexLimitThreads(),

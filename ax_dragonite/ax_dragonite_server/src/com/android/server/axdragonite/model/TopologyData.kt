@@ -18,7 +18,7 @@ package com.android.server.axdragonite.model
 
 data class TopologyData(
     val numCores: Int,
-    val type: ClusterTopologyType,
+    val profile: AxCpuProfile,
     val clusters: List<ClusterInfo>,
     val all: Cpuset,
     val foreground: Cpuset,
@@ -27,7 +27,12 @@ data class TopologyData(
     val restrictedDex2oat: Cpuset,
     val littleMin: Cpuset,
     val boost: Cpuset,
+    val background: Cpuset,
+    val inputForeground: Cpuset,
+    val inputBackground: Cpuset,
     val restrictedForeground: Cpuset? = null,
+    val dexRestoreThreads: Int? = null,
+    val dexLimitThreads: Int? = null,
 ) {
     val numClusters: Int get() = clusters.size
 }

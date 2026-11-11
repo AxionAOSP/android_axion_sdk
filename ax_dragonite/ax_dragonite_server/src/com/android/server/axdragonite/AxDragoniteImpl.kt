@@ -811,7 +811,7 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         writeCpusetCpus(
             CPUSET_BACKGROUND_CPUS,
             AxPlatformConfig.KEY_BACKGROUND,
-            AxCpuSets.CPUSET_UI,
+            AxCpuSets.CPUSET_BACKGROUND,
         )
         SystemProperties.set(
             PROP_DEX2OAT_THREADS,
@@ -826,17 +826,17 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         writeCpusetCpus(
             CPUSET_AX_FOREGROUND_CPUS,
             AxPlatformConfig.KEY_FOREGROUND_INPUT,
-            AxCpuSets.CPUSET_UI,
+            AxCpuSets.CPUSET_INPUT_FOREGROUND,
         )
         writeCpusetCpus(
             CPUSET_DEX2OAT_CPUS,
             AxPlatformConfig.KEY_DEX_INPUT,
-            AxCpuSets.CPUSET_UI,
+            AxCpuSets.CPUSET_INPUT_FOREGROUND,
         )
         writeCpusetCpus(
             CPUSET_BACKGROUND_CPUS,
             AxPlatformConfig.KEY_BACKGROUND_INPUT,
-            AxCpuSets.CPUSET_RESTRICTED_BG,
+            AxCpuSets.CPUSET_INPUT_BACKGROUND,
         )
         SystemProperties.set(
             PROP_DEX2OAT_THREADS,

@@ -19,7 +19,7 @@ package com.android.server.axdragonite
 import android.os.PowerManagerInternal as PM
 import android.util.Slog
 import com.android.internal.dragonite.AxDragoniteConstants
-import com.android.server.axdragonite.model.ClusterTopologyType
+import com.android.server.axdragonite.model.AxCpuProfile
 import java.util.Collections
 import java.util.HashMap
 import java.util.concurrent.atomic.AtomicReference
@@ -34,6 +34,8 @@ object AxSceneTable {
     private const val DURATION_TA_DELAY_MS = 50L
     private const val UCLAMP_MIN_APP_START_6_2 = "80"
     private const val UCLAMP_MIN_OVERLOAD_6_2 = "100"
+    private const val DURATION_QS_PLATFORM_HOLD_6_2_MS = 1500L
+    private const val PROCESS_CAMERA_HAL_6_2 = "camerahalserver"
 
     private const val SCENE_NAME_APP_START_EXIT = "APP_START_EXIT_ANIMATION"
     private const val SCENE_NAME_LAUNCHER_NORMAL = "LAUNCHER_NORMAL_ANIMATION"
@@ -130,6 +132,10 @@ object AxSceneTable {
             commandList.add(this)
         }
 
+    private fun Scenario.cameraHalToCameraDaemon() {
+        command(AxCmdTable.NAME_CMD_CPUSET_CAMERA_DAEMON_PROCS, process = PROCESS_CAMERA_HAL_6_2)
+    }
+
     private val scenarioMap = HashMap<String, Scenario>()
 
     init {
@@ -151,7 +157,7 @@ object AxSceneTable {
         val topo = AxCpuClusterManager.topology
         registerScenario(
             Scenario(AxDragoniteConstants.SCENE_APP_START, SCENE_NAME_APP_START_EXIT).apply {
-                if (topo.type == ClusterTopologyType.PRESET_DUAL_6_2) {
+                if (topo.profile == AxCpuProfile.PROFILE_6_2) {
                     command(
                         AxCmdTable.NAME_CMD_CPUSET_FG_CPUS,
                         params1 = AxCpuSets.CPUSET_RESTRICTED_FG,
@@ -162,7 +168,7 @@ object AxSceneTable {
                     AxCmdTable.NAME_CMD_CPUSET_BG_CPUS,
                     params1 = AxCpuSets.CPUSET_RESTRICTED_BG,
                 )
-                if (topo.type == ClusterTopologyType.PRESET_DUAL_6_2) {
+                if (topo.profile == AxCpuProfile.PROFILE_6_2) {
                     command(AxCmdTable.NAME_CMD_CPUCTL_RESTRICTED_PROCS)
                     command(
                         AxCmdTable.NAME_CMD_CPUCTL_RESTRICTED_UCLAMP_MIN,
@@ -177,6 +183,7 @@ object AxSceneTable {
                 command(AxCmdTable.NAME_CMD_ANIMATION_BOOST)
                 command(AxCmdTable.NAME_CMD_PROCESS_AFFINITY, params1 = AxCpuSets.CPUSET_BOOST)
                 command(AxCmdTable.NAME_CMD_PLATFORM_CONTROL, params1 = NAME_APP_START)
+                if (topo.profile == AxCpuProfile.PROFILE_6_2) cameraHalToCameraDaemon()
                 command(
                     AxCmdTable.NAME_CMD_CPUSET_CAMERA_DAEMON_CPUS,
                     params1 = AxCpuSets.CPUSET_LITTLE_MIN,
@@ -214,7 +221,7 @@ object AxSceneTable {
                         AxCmdTable.NAME_CMD_CPUCTL_RESTRICTED_PROCS,
                         restore = AxPlatformConfig.GROUP_ROOT,
                     )
-                    if (topo.type == ClusterTopologyType.PRESET_DUAL_6_2) {
+                    if (topo.profile == AxCpuProfile.PROFILE_6_2) {
                         command(
                             AxCmdTable.NAME_CMD_CPUCTL_RESTRICTED_UCLAMP_MIN,
                             params1 = UCLAMP_MIN_OVERLOAD_6_2,
@@ -243,7 +250,9 @@ object AxSceneTable {
 
     private fun initSystemUiScenarios() {
         val topo = AxCpuClusterManager.topology
-        val qsHoldTime = if (topo.type == ClusterTopologyType.PRESET_DUAL_6_2) -1L else DURATION_TA_HOLD_MS
+        val isDual62 = topo.profile == AxCpuProfile.PROFILE_6_2
+        val qsHoldTime = if (isDual62) -1L else DURATION_TA_HOLD_MS
+        val qsPlatformHoldTime = if (isDual62) DURATION_QS_PLATFORM_HOLD_6_2_MS else -1L
         registerScenario(
             Scenario(AxDragoniteConstants.SCENE_QS_PULL_DOWN, SCENE_NAME_QS_PULL_DOWN).apply {
                 command(
@@ -263,14 +272,18 @@ object AxSceneTable {
                     AxCmdTable.NAME_CMD_CPUSET_CAMERA_DAEMON_CPUS,
                     params1 = AxCpuSets.CPUSET_LITTLE_MIN,
                 )
-                command(AxCmdTable.NAME_CMD_PLATFORM_CONTROL, params1 = NAME_SYSTEMUI)
+                if (isDual62) cameraHalToCameraDaemon()
+                command(
+                    AxCmdTable.NAME_CMD_PLATFORM_CONTROL,
+                    params1 = NAME_SYSTEMUI,
+                    holdTime = qsPlatformHoldTime,
+                )
             }
         )
 
         val unlockAffinity =
-            if (topo.type == ClusterTopologyType.PRESET_DUAL_6_2) AxCpuSets.CPUSET_RESTRICTED_FG
-            else AxCpuSets.CPUSET_BOOST
-        val unlockHoldTime = if (topo.type == ClusterTopologyType.PRESET_DUAL_6_2) -1L else DURATION_TA_HOLD_MS
+            if (isDual62) AxCpuSets.CPUSET_RESTRICTED_FG else AxCpuSets.CPUSET_BOOST
+        val unlockHoldTime = if (isDual62) -1L else DURATION_TA_HOLD_MS
         registerScenario(
             Scenario(AxDragoniteConstants.SCENE_UNLOCK, SCENE_NAME_UNLOCK).apply {
                 command(AxCmdTable.NAME_CMD_PROCESS_AFFINITY, params1 = unlockAffinity)
@@ -286,6 +299,7 @@ object AxSceneTable {
                     params1 = AxCpuSets.CPUSET_UI,
                     holdTime = unlockHoldTime,
                 )
+                if (isDual62) cameraHalToCameraDaemon()
             }
         )
 

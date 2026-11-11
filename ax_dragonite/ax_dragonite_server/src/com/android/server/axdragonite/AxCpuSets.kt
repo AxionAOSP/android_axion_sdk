@@ -28,6 +28,9 @@ object AxCpuSets {
     const val CPUSET_LITTLE_MIN = "little_min"
     const val CPUSET_BOOST = "boost"
     const val CPUSET_BOOST_MASK_DEC = "boost_mask_dec"
+    const val CPUSET_BACKGROUND = "background"
+    const val CPUSET_INPUT_FOREGROUND = "input_foreground"
+    const val CPUSET_INPUT_BACKGROUND = "input_background"
 
     const val DEFAULT_SF_BOOST_AFFINITY = 156
     const val DEFAULT_SF_RESTORE_AFFINITY = 255
@@ -52,6 +55,9 @@ object AxCpuSets {
             CPUSET_LITTLE_MIN -> topo.littleMin.toString()
             CPUSET_BOOST -> topo.boost.toString()
             CPUSET_BOOST_MASK_DEC -> topo.boost.mask.toString()
+            CPUSET_BACKGROUND -> topo.background.toString()
+            CPUSET_INPUT_FOREGROUND -> topo.inputForeground.toString()
+            CPUSET_INPUT_BACKGROUND -> topo.inputBackground.toString()
             else -> cpuset
         }
     }
@@ -94,21 +100,23 @@ object AxCpuSets {
 
     @JvmStatic
     fun dexRestoreThreads(): String =
-        clampThreads(
-            AxCpuClusterManager.topology.numCores,
-            CORES_DIVISOR_RESTORE,
-            DEX_RESTORE_MIN_THREADS,
-            DEX_RESTORE_MAX_THREADS,
-        )
+        AxCpuClusterManager.topology.dexRestoreThreads?.toString()
+            ?: clampThreads(
+                AxCpuClusterManager.topology.numCores,
+                CORES_DIVISOR_RESTORE,
+                DEX_RESTORE_MIN_THREADS,
+                DEX_RESTORE_MAX_THREADS,
+            )
 
     @JvmStatic
     fun dexLimitThreads(): String =
-        clampThreads(
-            AxCpuClusterManager.topology.numCores,
-            CORES_DIVISOR_LIMIT,
-            DEX_LIMIT_MIN_THREADS,
-            DEX_LIMIT_MAX_THREADS,
-        )
+        AxCpuClusterManager.topology.dexLimitThreads?.toString()
+            ?: clampThreads(
+                AxCpuClusterManager.topology.numCores,
+                CORES_DIVISOR_LIMIT,
+                DEX_LIMIT_MIN_THREADS,
+                DEX_LIMIT_MAX_THREADS,
+            )
 
     private fun maskToAffinity(mask: Long, fallback: Int): Int =
         if (mask == 0L) fallback else (mask and MASK_32_BIT).toInt()
