@@ -18,6 +18,8 @@ package com.android.server.axdragonite
 
 import android.os.Process
 import android.util.Slog
+import com.android.server.axdragonite.AxCmdTable.Command
+import com.android.server.axdragonite.AxCmdTable.Type
 import java.io.File
 
 class AxPlatformConfig {
@@ -64,35 +66,10 @@ class AxPlatformConfig {
                 GROUP_DEX to AxCmdTable.GROUP_DEX2OAT,
             )
 
-        private val cpusharesCmds =
-            setOf(
-                AxCmdTable.CMD_CPUCTL_SYS_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_SBG_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_TA_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_DEX_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_FG_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_RT_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_BG_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_RESTRICTED_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_AXFG_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_FW_CPU_SHARES,
-            )
-
-        private val paramCmds =
-            setOf(
-                AxCmdTable.CMD_THREAD_BOOST,
-                AxCmdTable.CMD_THREAD_AFFINITY,
-                AxCmdTable.CMD_CPUCTL_SYS_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_SBG_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_TA_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_DEX_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_FG_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_RT_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_BG_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_RESTRICTED_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_AXFG_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_FW_CPU_SHARES,
-            )
+        private fun takesUserParams(cmd: Command): Boolean =
+            cmd == Command.CMD_THREAD_BOOST ||
+                cmd == Command.CMD_THREAD_AFFINITY ||
+                cmd.type == Type.CPUCTL_SHARES
 
         private fun cgroupFile(baseDir: String, group: String?, fileName: String): File? {
             if (group == GROUP_ROOT) return File("$baseDir${AxCmdTable.PATH_SEP}$fileName")
@@ -126,13 +103,13 @@ class AxPlatformConfig {
         fun getProcessComm(pid: Int): String = readProcField(pid, FILE_COMM, PROC_COMM_FORMAT)
 
         @JvmStatic
-        fun paramsFromUser(params: String?, cmdId: Int): String? {
+        fun paramsFromUser(params: String?, cmd: Command): String? {
             if (params.isNullOrEmpty()) return null
-            if (cmdId !in paramCmds) {
+            if (!takesUserParams(cmd)) {
                 Slog.d(TAG, "no need params, return!")
                 return null
             }
-            val prefix = "$cmdId:"
+            val prefix = "${cmd.id}:"
             return params
                 .split(AxCommandExec.SEMICOLON)
                 .firstOrNull { it.startsWith(prefix) && it.length > prefix.length }
@@ -140,16 +117,8 @@ class AxPlatformConfig {
         }
 
         @JvmStatic
-        fun getDefaultUclampRestoreValue(cmdId: Int): String {
-            if (
-                cmdId in
-                    AxCmdTable.CMD_CPUCTL_SYS_UCLAMP_MIN..AxCmdTable
-                            .CMD_CPUCTL_RESTRICTED_UCLAMP_MAX
-            ) {
-                return if (cmdId % 2 == 0) UCLAMP_RESTORE_MIN else UCLAMP_RESTORE_MAX
-            }
-            return UCLAMP_RESTORE_MIN
-        }
+        fun getDefaultUclampRestoreValue(cmd: Command): String =
+            if (cmd.type == Type.CPUCTL_UCLAMP_MAX) UCLAMP_RESTORE_MAX else UCLAMP_RESTORE_MIN
     }
 
     private val configMap =
@@ -172,17 +141,17 @@ class AxPlatformConfig {
 
     fun get(name: String): String = configMap.getValue(name)
 
-    fun getCpushares(cmd: Int): String =
-        (if (cmd in cpusharesCmds) BOOSTED_CPU_SHARES else DEFAULT_CPU_SHARES).toString()
+    fun getCpushares(cmd: Command): String =
+        (if (cmd.type == Type.CPUCTL_SHARES) BOOSTED_CPU_SHARES else DEFAULT_CPU_SHARES).toString()
 
-    fun getRestoreCpusetCpus(cmdId: Int): String {
+    fun getRestoreCpusetCpus(cmd: Command): String {
         val key =
-            when (cmdId) {
-                AxCmdTable.CMD_CPUSET_TA_CPUS -> KEY_TOP_APP
-                AxCmdTable.CMD_CPUSET_FG_CPUS -> KEY_FOREGROUND
-                AxCmdTable.CMD_CPUSET_BG_CPUS -> KEY_BACKGROUND
-                AxCmdTable.CMD_CPUSET_SBG_CPUS -> KEY_SYSTEM_BACKGROUND
-                AxCmdTable.CMD_CPUSET_RESTRICTED_CPUS -> KEY_RESTRICTED
+            when (cmd) {
+                Command.CMD_CPUSET_TA_CPUS -> KEY_TOP_APP
+                Command.CMD_CPUSET_FG_CPUS -> KEY_FOREGROUND
+                Command.CMD_CPUSET_BG_CPUS -> KEY_BACKGROUND
+                Command.CMD_CPUSET_SBG_CPUS -> KEY_SYSTEM_BACKGROUND
+                Command.CMD_CPUSET_RESTRICTED_CPUS -> KEY_RESTRICTED
                 else -> return ""
             }
         return AxCpuSets.resolve(get(key))

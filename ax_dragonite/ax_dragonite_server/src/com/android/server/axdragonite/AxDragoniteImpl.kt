@@ -33,6 +33,8 @@ import android.os.Trace
 import android.util.Slog
 import com.android.internal.dragonite.AxDragoniteConstants
 import com.android.internal.os.BackgroundThread
+import com.android.server.axdragonite.AxCmdTable.Command
+import com.android.server.axdragonite.AxCmdTable.Type
 import com.android.server.am.ProcessList
 import java.io.File
 import java.io.FileDescriptor
@@ -141,7 +143,7 @@ class AxDragoniteImpl : IAxDragonite {
 
     private var sfBinder: IBinder? = null
 
-    private val mCommandsMap = HashMap<Int, AxCommandExec>()
+    private val mCommandsMap = HashMap<Command, AxCommandExec>()
     private var mGameModeEnabled = false
     private var mGameModeHandle = AxDragoniteConstants.INVALID_HANDLE
 
@@ -197,81 +199,30 @@ class AxDragoniteImpl : IAxDragonite {
         }
     }
 
-    private fun registerCommands(ids: List<Int>, handler: SceneHandler) {
-        for (id in ids) {
-            mCommandsMap[id] = AxCommandExec(handler)
+    private fun registerCommands(commands: List<Command>, handler: SceneHandler) {
+        for (command in commands) {
+            mCommandsMap[command] = AxCommandExec(handler)
         }
     }
 
     private fun loadCommands() {
-        val cpusetGroups =
-            listOf(
-                AxCmdTable.CMD_CPUSET_TA_PROCS to AxCmdTable.CMD_CPUSET_TA_CPUS,
-                AxCmdTable.CMD_CPUSET_FG_PROCS to AxCmdTable.CMD_CPUSET_FG_CPUS,
-                AxCmdTable.CMD_CPUSET_BG_PROCS to AxCmdTable.CMD_CPUSET_BG_CPUS,
-                AxCmdTable.CMD_CPUSET_SBG_PROCS to AxCmdTable.CMD_CPUSET_SBG_CPUS,
-                AxCmdTable.CMD_CPUSET_RESTRICTED_PROCS to AxCmdTable.CMD_CPUSET_RESTRICTED_CPUS,
-                AxCmdTable.CMD_CPUSET_DEX2OAT_PROCS to AxCmdTable.CMD_CPUSET_DEX2OAT_CPUS,
-                AxCmdTable.CMD_CPUSET_CAMERA_DAEMON_PROCS to AxCmdTable.CMD_CPUSET_CAMERA_DAEMON_CPUS,
-            )
-        registerCommands(cpusetGroups.map { it.first }, ::adjustCpusetProcs)
-        registerCommands(cpusetGroups.map { it.second }, ::adjustCpusetCpus)
-        registerCommands(
-            listOf(
-                AxCmdTable.CMD_CPUSET_TA_TASKS,
-                AxCmdTable.CMD_CPUSET_FG_TASKS,
-                AxCmdTable.CMD_CPUSET_BG_TASKS,
-                AxCmdTable.CMD_CPUSET_SBG_TASKS,
-                AxCmdTable.CMD_CPUSET_RESTRICTED_TASKS,
-                AxCmdTable.CMD_CPUSET_DEX2OAT_TASKS,
-                AxCmdTable.CMD_CPUSET_CAMERA_DAEMON_TASKS,
-            ),
-            ::adjustCpusetTasks,
-        )
-        registerCommands(
-            listOf(
-                AxCmdTable.CMD_CPUCTL_ROOT_PROCS,
-                AxCmdTable.CMD_CPUCTL_SYS_PROCS,
-                AxCmdTable.CMD_CPUCTL_SBG_PROCS,
-                AxCmdTable.CMD_CPUCTL_TA_PROCS,
-                AxCmdTable.CMD_CPUCTL_DEX_PROCS,
-                AxCmdTable.CMD_CPUCTL_FG_PROCS,
-                AxCmdTable.CMD_CPUCTL_RT_PROCS,
-                AxCmdTable.CMD_CPUCTL_BG_PROCS,
-                AxCmdTable.CMD_CPUCTL_RESTRICTED_PROCS,
-            ),
-            ::adjustCpuctlProcs,
-        )
-        registerCommands(
-            listOf(
-                AxCmdTable.CMD_CPUCTL_SYS_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_SBG_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_TA_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_DEX_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_FG_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_RT_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_BG_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_RESTRICTED_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_AXFG_CPU_SHARES,
-                AxCmdTable.CMD_CPUCTL_FW_CPU_SHARES,
-            ),
-            ::adjustCpuctlShares,
-        )
-        registerCommands(
-            (AxCmdTable.CMD_CPUCTL_SYS_UCLAMP_MIN..AxCmdTable.CMD_CPUCTL_RESTRICTED_UCLAMP_MAX)
-                .toList(),
-            ::adjustCpuctlUclamp,
-        )
-        registerCommands(listOf(AxCmdTable.CMD_THREAD_AFFINITY), ::threadAffinity)
-        registerCommands(listOf(AxCmdTable.CMD_PROCESS_AFFINITY), ::processAffinity)
-        registerCommands(listOf(AxCmdTable.CMD_AX_NAMED_THREAD_AFFINITY), ::setAxNameThreadAffinity)
-        registerCommands(listOf(AxCmdTable.CMD_SF_CONTROL_AFFINITY), ::sfBindCoreControl)
-        registerCommands(listOf(AxCmdTable.CMD_BACKGROUND_FREEZE), ::backgroundProcessFreeze)
-        registerCommands(listOf(AxCmdTable.CMD_KSWAPD_CONTROLL_AFFINITY), ::kswapdBindCoreControl)
-        registerCommands(listOf(AxCmdTable.CMD_ANIMATION_BOOST), ::animationBoost)
-        registerCommands(listOf(AxCmdTable.CMD_BACKGROUND_LOAD_LIMIT), ::backgroundLoadLimit)
-        registerCommands(listOf(AxCmdTable.CMD_PLATFORM_CONTROL), ::platformResourceControl)
-        registerCommands(listOf(AxCmdTable.CMD_THREAD_BOOST), ::threadBoost)
+        registerCommands(AxCmdTable.cmdOf(Type.CPUSET_PROCS), ::adjustCpusetProcs)
+        registerCommands(AxCmdTable.cmdOf(Type.CPUSET_CPUS), ::adjustCpusetCpus)
+        registerCommands(AxCmdTable.cmdOf(Type.CPUSET_TASKS), ::adjustCpusetTasks)
+        registerCommands(AxCmdTable.cmdOf(Type.CPUCTL_PROCS), ::adjustCpuctlProcs)
+        registerCommands(AxCmdTable.cmdOf(Type.CPUCTL_SHARES), ::adjustCpuctlShares)
+        registerCommands(AxCmdTable.cmdOf(Type.CPUCTL_UCLAMP_MIN), ::adjustCpuctlUclamp)
+        registerCommands(AxCmdTable.cmdOf(Type.CPUCTL_UCLAMP_MAX), ::adjustCpuctlUclamp)
+        registerCommands(listOf(Command.CMD_THREAD_AFFINITY), ::threadAffinity)
+        registerCommands(listOf(Command.CMD_PROCESS_AFFINITY), ::processAffinity)
+        registerCommands(listOf(Command.CMD_AX_NAMED_THREAD_AFFINITY), ::setAxNameThreadAffinity)
+        registerCommands(listOf(Command.CMD_SF_CONTROL_AFFINITY), ::sfBindCoreControl)
+        registerCommands(listOf(Command.CMD_BACKGROUND_FREEZE), ::backgroundProcessFreeze)
+        registerCommands(listOf(Command.CMD_KSWAPD_CONTROLL_AFFINITY), ::kswapdBindCoreControl)
+        registerCommands(listOf(Command.CMD_ANIMATION_BOOST), ::animationBoost)
+        registerCommands(listOf(Command.CMD_BACKGROUND_LOAD_LIMIT), ::backgroundLoadLimit)
+        registerCommands(listOf(Command.CMD_PLATFORM_CONTROL), ::platformResourceControl)
+        registerCommands(listOf(Command.CMD_THREAD_BOOST), ::threadBoost)
     }
 
     fun logDebug(tag: String, msg: String) {
@@ -307,8 +258,7 @@ class AxDragoniteImpl : IAxDragonite {
             bundle?.getInt(AxDragoniteConstants.KEY_HANDLE) ?: AxDragoniteConstants.INVALID_HANDLE
         for (scenarioCmd in scenario.commandList) {
             try {
-                val command = scenarioCmd.command ?: continue
-                mCommandsMap[command.id]?.execute(handle, pid, pkg, scenarioCmd, params)
+                mCommandsMap[scenarioCmd.command]?.execute(handle, pid, pkg, scenarioCmd, params)
             } catch (e: Exception) {
                 Slog.e(TAG, "dispatchSceneCommands failed for scene=$sceneId", e)
             }
@@ -561,8 +511,7 @@ class AxDragoniteImpl : IAxDragonite {
     private fun getKswapdPids(): IntArray = collectPidsByComm(KSWAPD_COMM)
 
     private fun userParamOrReturn(params: String?, cmd: AxSceneTable.ScenarioCommand): String? {
-        val id = cmd.command?.id ?: return null
-        return AxPlatformConfig.paramsFromUser(params, id)
+        return AxPlatformConfig.paramsFromUser(params, cmd.command)
             ?: run {
                 logDebug(TAG, "need params, return!")
                 null
@@ -622,27 +571,24 @@ class AxDragoniteImpl : IAxDragonite {
         }
     }
 
-    private fun nodeCommandPath(cmd: AxSceneTable.ScenarioCommand): File? =
-        (cmd.command as? AxCmdTable.NodeCommand)?.pathFile
-
     private fun writeNodeValue(
         handle: Int,
         cmd: AxSceneTable.ScenarioCommand,
         sessionType: Int,
-        defaultRestore: (Int) -> String,
+        defaultRestore: (Command) -> String,
         resolve: (String) -> String = { it },
     ) {
-        val node = cmd.command as? AxCmdTable.NodeCommand ?: return
+        val path = cmd.command.pathFile ?: return
         val value = cmd.params1 ?: return
-        logDebug(TAG, "path = ${node.pathFile}, value = $value")
-        val restore = cmd.restoreTag.ifEmpty { defaultRestore(node.id) }
+        logDebug(TAG, "path = $path, value = $value")
+        val restore = cmd.restoreTag.ifEmpty { defaultRestore(cmd.command) }
         AxSceneBoostSession(
                 this,
                 sessionType,
                 handle,
                 cmd,
-                FileWrite(this, node.pathFile, resolve(value)),
-                FileWrite(this, node.pathFile, resolve(restore)),
+                FileWrite(this, path, resolve(value)),
+                FileWrite(this, path, resolve(restore)),
             )
             .execute()
     }
@@ -654,7 +600,7 @@ class AxDragoniteImpl : IAxDragonite {
         pid: Int,
         restoreFile: File,
     ) {
-        val path = nodeCommandPath(cmd) ?: return
+        val path = cmd.command.pathFile ?: return
         logDebug(TAG, "path = $path, pid = $pid")
         if (pid <= 0) return
         AxSceneBoostSession(
@@ -878,12 +824,11 @@ class AxDragoniteImpl : IAxDragonite {
         cmd: AxSceneTable.ScenarioCommand,
         params: String?,
     ) {
-        val cmdId = cmd.command?.id ?: return
         writePidNode(
             handle,
             cmd,
             AxSceneBoostSession.TYPE_CPUSET_TASK,
-            AxPlatformConfig.paramsFromUser(params, cmdId)?.toIntOrNull() ?: adjustTid,
+            AxPlatformConfig.paramsFromUser(params, cmd.command)?.toIntOrNull() ?: adjustTid,
             AxPlatformConfig.getCpusetTasks(cmd.restoreTag) ?: File(CPUSET_TASKS_PATH),
         )
     }
@@ -1389,7 +1334,7 @@ class AxDragoniteImpl : IAxDragonite {
             pw.println("    Attached Tasks (${tasks.size}):")
             for (task in tasks) {
                 val cmd = task.cmd
-                pw.println("      - [Type ${task.sessionType}] cmd: ${cmd.command?.name} (id: ${cmd.command?.id}), hold: ${cmd.holdTime}ms, delay: ${cmd.delayTime}ms")
+                pw.println("      - [Type ${task.sessionType}] cmd: ${cmd.command.name} (id: ${cmd.command.id}), hold: ${cmd.holdTime}ms, delay: ${cmd.delayTime}ms")
             }
         }
 
@@ -1411,7 +1356,7 @@ class AxDragoniteImpl : IAxDragonite {
             pw.println("Scene ID: ${scenario.scenarioId} -> \"${scenario.scenarioName}\" (${scenario.commandList.size} commands)")
             for (cmd in scenario.commandList) {
                 val command = cmd.command
-                pw.println("  Command: ${command?.name} (id=${command?.id}), holdTime=${cmd.holdTime}ms, delayTime=${cmd.delayTime}ms, process=${cmd.targetProcess ?: "any"}")
+                pw.println("  Command: ${command.name} (id=${command.id}), holdTime=${cmd.holdTime}ms, delayTime=${cmd.delayTime}ms, process=${cmd.targetProcess ?: "any"}")
             }
         }
     }

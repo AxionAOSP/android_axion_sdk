@@ -52,7 +52,7 @@ open class AxSceneBoostSession(
     var endTime: Long = 0L
 
     protected fun hasRecord(action: String): Boolean {
-        mHost.logDebug(AxDragoniteImpl.TAG, "$action ${cmd.command?.name}")
+        mHost.logDebug(AxDragoniteImpl.TAG, "$action ${cmd.command.name}")
         if (mHost.hasBoostRecord(handle)) return true
         mHost.logDebug(AxDragoniteImpl.TAG, "can't get $handle ActiveSession, return!")
         return false
@@ -79,14 +79,14 @@ open class AxSceneBoostSession(
     }
 
     fun restore() {
-        mHost.logDebug(AxDragoniteImpl.TAG, "restore ${cmd.command?.name}")
+        mHost.logDebug(AxDragoniteImpl.TAG, "restore ${cmd.command.name}")
         boostAction?.let { mHost.mDragoniteHandler.removeCallbacks(it) }
         val restore = restoreAction ?: return
         mHost.mDragoniteHandler.removeCallbacks(restore)
         mHost.mDragoniteHandler.post(restore)
     }
 
-    override fun toString(): String = "cmd id: ${cmd.command?.id}, cmd name: ${cmd.command?.name}"
+    override fun toString(): String = "cmd id: ${cmd.command.id}, cmd name: ${cmd.command.name}"
 }
 
 internal class BackgroundFreezeBoostSession(
