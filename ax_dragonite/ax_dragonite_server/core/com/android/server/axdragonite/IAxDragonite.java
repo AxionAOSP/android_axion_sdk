@@ -17,6 +17,7 @@
 package com.android.server.axdragonite;
 
 import android.os.Bundle;
+import com.android.server.am.ProcessList;
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
 
@@ -29,5 +30,6 @@ public interface IAxDragonite {
     void onSystemFling(int duration);
     void updateGameModeBoost(boolean enabled);
     void adjustCpusetCpus(String group, String cpus, long durationMs);
+    void setProcessList(ProcessList processList);
     void dump(FileDescriptor fd, PrintWriter pw, String[] args);
 }

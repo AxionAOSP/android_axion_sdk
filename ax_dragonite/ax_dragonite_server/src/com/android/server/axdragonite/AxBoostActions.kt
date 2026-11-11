@@ -34,7 +34,6 @@ internal class AnimationBoost(
 
 internal class AxNameThreadAffinity(
     private val mPid: Int,
-    private val mPackageName: String,
     private val mEnabled: Boolean,
 ) : Runnable {
     override fun run() {

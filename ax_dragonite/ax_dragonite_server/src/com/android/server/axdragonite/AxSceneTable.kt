@@ -17,7 +17,6 @@
 package com.android.server.axdragonite
 
 import android.os.PowerManagerInternal as PM
-import android.util.Slog
 import com.android.internal.dragonite.AxDragoniteConstants
 import com.android.server.axdragonite.model.AxCpuProfile
 import java.util.Collections
@@ -28,7 +27,6 @@ object AxSceneTable {
     private const val TAG = "AxSceneTable"
     const val KEY_PARAMS1 = "params1"
     private const val PARAM_VALUE_DISABLED = "0"
-    const val UNKNOWN_PACKAGE = "unknown"
     private const val DURATION_BG_FREEZE_MS = 500L
     private const val DURATION_TA_HOLD_MS = 1000L
     private const val DURATION_TA_DELAY_MS = 50L
@@ -52,9 +50,6 @@ object AxSceneTable {
     private const val SCENE_NAME_FLING_LEVEL_1 = "fling_level_1"
     private const val SCENE_NAME_DISABLE_INPUT_BOOST = "DISABLE_INPUT_BOOST"
     private const val SCENE_NAME_TEST = "test"
-
-    const val RESUMED_PID_INDEX = 0
-    const val RESUMED_PACKAGE_INDEX = 1
 
     const val NAME_APP_START = "app_start"
     const val NAME_ANIMATION = "animation"
@@ -372,39 +367,6 @@ object AxSceneTable {
                 )
             }
         )
-    }
-
-    private fun parseResumedField(params: String?, cmd: ScenarioCommand?, index: Int): String? {
-        if (params.isNullOrEmpty() || cmd == null) return null
-        val userParams =
-            AxPlatformConfig.paramsFromUser(params, cmd.command?.id ?: return null) ?: return null
-        val segments = userParams.split(AxCommandExec.COMMA)
-        if (segments.size != 2) return null
-        return segments[index].split(AxCommandExec.SEMICOLON)[0]
-    }
-
-    @JvmStatic
-    fun getResumedPackageName(params: String?, cmd: ScenarioCommand?): String {
-        parseResumedField(params, cmd, RESUMED_PACKAGE_INDEX)
-            ?.takeIf { it.isNotEmpty() }
-            ?.let {
-                return it
-            }
-        Slog.d(TAG, "failed to parse resumed app package name")
-        return UNKNOWN_PACKAGE
-    }
-
-    @JvmStatic
-    fun getResumedAppPid(params: String?, cmd: ScenarioCommand?): Int {
-        val pid = parseResumedField(params, cmd, RESUMED_PID_INDEX)
-        if (pid != null) {
-            pid.toIntOrNull()?.let {
-                return it
-            }
-            Slog.d(TAG, "failed to parse resumed app pid")
-        }
-        Slog.d(TAG, "get unknown resumed app pid = $pid")
-        return -1
     }
 
     @JvmStatic fun getScenario(id: Int): Scenario? = scenarioMap[id.toString()]

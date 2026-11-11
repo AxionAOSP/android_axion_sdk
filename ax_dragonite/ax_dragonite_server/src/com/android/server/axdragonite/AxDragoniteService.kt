@@ -20,17 +20,16 @@ import android.content.Context
 import com.android.server.LocalServices
 import com.android.server.SystemService
 
-class AxDragoniteService(private val context: Context) : SystemService(context) {
-    private val dragonite = AxDragoniteImpl(context)
+class AxDragoniteService(context: Context) : SystemService(context) {
+    private val dragonite = AxDragoniteImpl()
 
     override fun onStart() {
         LocalServices.addService(IAxDragonite::class.java, dragonite)
-        dragonite.onSystemReady(context, null)
     }
 
     override fun onBootPhase(phase: Int) {
         when (phase) {
-            PHASE_SYSTEM_SERVICES_READY -> dragonite.onSystemReady(context, null)
+            PHASE_SYSTEM_SERVICES_READY -> dragonite.onSystemReady()
             PHASE_BOOT_COMPLETED -> dragonite.onBootCompleted()
         }
     }

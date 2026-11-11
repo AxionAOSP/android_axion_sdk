@@ -16,7 +16,6 @@
 
 package com.android.server.axdragonite
 
-import android.content.Context
 import android.os.Bundle
 import android.os.FileUtils
 import android.os.Handler
@@ -54,7 +53,7 @@ private typealias SceneHandler =
         params: String?,
     ) -> Unit
 
-class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
+class AxDragoniteImpl : IAxDragonite {
     companion object {
         const val TAG = "AxDragonite"
 
@@ -77,9 +76,6 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         private const val RESTORE_SCHED_POLICY = 0
         private const val RESTORE_SCHED_PRIORITY = 0
         private const val RESTORE_THREAD_PRIORITY = -10
-        private const val FREEZE_ADJ_MIN = 250
-        private const val FREEZE_ADJ_EXCLUDED = ProcessList.CACHED_APP_MIN_ADJ
-        private const val FREEZE_ADJ_MAX = ProcessList.UNKNOWN_ADJ
         private const val INVALID_TID = -1
         private const val THREAD_RENDER = "RenderThread"
         private const val THREAD_HWUI_PREFIX = "hwui"
@@ -132,7 +128,7 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
     private lateinit var mManagerThread: HandlerThread
     lateinit var mManagerHandler: Handler
     lateinit var mDragoniteHandler: DragoniteHandler
-    private var mProcessList: ProcessList? = null
+    @Volatile private var mProcessList: ProcessList? = null
 
     var mKswapdPids: IntArray? = null
     private var mKswapdAffinityBoost: IntArray? = null
@@ -160,8 +156,7 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         initHandlerThreads()
     }
 
-    fun onSystemReady(context: Context? = null, processList: ProcessList? = null) {
-        if (processList != null) mProcessList = processList
+    fun onSystemReady() {
         Process.setThreadScheduler(
             mDragoniteThread.threadId,
             AxDragoniteConstants.BOOST_SCHED_POLICY,
@@ -476,21 +471,14 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         cmd: AxSceneTable.ScenarioCommand,
         params: String?,
     ) {
-        var resumedPid = AxSceneTable.getResumedAppPid(params, cmd)
-        var resumedPkg = AxSceneTable.getResumedPackageName(params, cmd)
-        if (resumedPid <= 0) {
-            resumedPid = if (adjustPid > 0) adjustPid else (mProcessList?.axGetTopAppPid() ?: -1)
-        }
-        if (resumedPkg == AxSceneTable.UNKNOWN_PACKAGE) {
-            resumedPkg = packageName ?: (mProcessList?.axGetTopAppPackageName() ?: AxSceneTable.UNKNOWN_PACKAGE)
-        }
-        logDebug(TAG, "setAxNameThreadAffinity: pid = $resumedPid, pkg = $resumedPkg")
+        val pid = if (adjustPid > 0) adjustPid else (mProcessList?.axGetTopAppPid() ?: -1)
+        logDebug(TAG, "setAxNameThreadAffinity: pid = $pid")
         AxNameThreadAffinitySession(
                 this,
                 handle,
                 cmd,
-                AxNameThreadAffinity(resumedPid, resumedPkg, true),
-                AxNameThreadAffinity(resumedPid, resumedPkg, false),
+                AxNameThreadAffinity(pid, true),
+                AxNameThreadAffinity(pid, false),
             )
             .execute()
     }
@@ -565,10 +553,10 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
                         return null
                     }
             return pl.axGetFrozenProcesses(
-                FREEZE_ADJ_MIN,
-                FREEZE_ADJ_EXCLUDED,
-                FREEZE_ADJ_MAX,
-                AxCmdTable.CMD_BACKGROUND_FREEZE,
+                ProcessList.PERCEPTIBLE_LOW_APP_ADJ,
+                ProcessList.HOME_APP_ADJ,
+                ProcessList.CACHED_APP_MIN_ADJ,
+                ProcessList.PREVIOUS_APP_ADJ,
             )
         }
 
@@ -1318,6 +1306,10 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
                 mGameModeHandle = AxDragoniteConstants.INVALID_HANDLE
             }
         }
+    }
+
+    override fun setProcessList(processList: ProcessList) {
+        mProcessList = processList
     }
 
     override fun adjustCpusetCpus(group: String, cpus: String?, durationMs: Long) {
