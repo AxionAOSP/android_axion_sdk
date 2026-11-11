@@ -44,7 +44,6 @@ import java.util.HashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import kotlin.math.max
 
 private typealias SceneHandler =
     (
@@ -1291,9 +1290,11 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
     }
 
     override fun onSystemFling(duration: Int) {
-        val bundle = Bundle()
-        bundle.putInt(AxDragoniteConstants.KEY_DURATION, max(duration, 0))
-        sceneBoostAcquire(AxDragoniteConstants.SCENE_FLING_LEVEL_1, bundle)
+        val holdMs = if (duration > 0) duration else AxDragoniteConstants.DURATION_FLING_MS
+        val resource = PlatformResource(this, AxSceneTable.NAME_FLING)
+        mDragoniteHandler.post(resource)
+        mDragoniteHandler.postDelayed(PlatformHandler(this, resource), holdMs.toLong())
+        mManagerHandler.post(BackgroundLoadLimitRunnable(this, BACKGROUND_LIMIT_ENABLED))
     }
 
     override fun updateGameModeBoost(enabled: Boolean) {
