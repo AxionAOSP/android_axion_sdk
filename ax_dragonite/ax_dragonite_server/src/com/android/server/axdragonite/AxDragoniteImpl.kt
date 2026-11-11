@@ -111,6 +111,8 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         private val CPUSET_DEX2OAT_CPUS = cpusetPath(AxCmdTable.GROUP_DEX2OAT, AxCmdTable.FILE_CPUS)
         private val CPUSET_BACKGROUND_CPUS =
             cpusetPath(AxCmdTable.GROUP_BACKGROUND, AxCmdTable.FILE_CPUS)
+        private val CPUSET_RESTRICTED_CPUS =
+            cpusetPath(AxCmdTable.GROUP_RESTRICTED, AxCmdTable.FILE_CPUS)
         private const val PROP_DEX2OAT_THREADS = "dalvik.vm.dex2oat-threads"
 
         private const val SF_AFFINITY_BINDER_CODE = 2007
@@ -171,6 +173,11 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
             AxDragoniteConstants.BOOST_SCHED_PRIORITY,
         )
         mDragoniteExt.init()
+        writeCpusetCpus(
+            CPUSET_RESTRICTED_CPUS,
+            AxPlatformConfig.KEY_RESTRICTED,
+            AxCpuSets.CPUSET_ALL,
+        )
         BackgroundThread.getHandler().removeCallbacks(mSceneReleaseRunnable)
         BackgroundThread.getHandler().post(mSceneReleaseRunnable)
         initKswapdPids()
