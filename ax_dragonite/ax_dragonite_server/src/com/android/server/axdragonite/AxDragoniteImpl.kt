@@ -134,7 +134,7 @@ class AxDragoniteImpl : IAxDragonite {
     private var mKswapdAffinityBoost: IntArray? = null
     private var mDefaultKswapdAffinity: IntArray? = null
 
-    val mDragoniteExt: AxDragoniteExt = AxDragoniteExt()
+    val mDragoniteExt: AxDragoniteExt = AxDragoniteExt(this)
     val mPlatformConfig: AxPlatformConfig = AxPlatformConfig()
     private val mSessionRecords: SessionRecords = SessionRecords(this)
     private val mSceneReleaseRunnable: SceneReleaseRunnable = SceneReleaseRunnable(this)

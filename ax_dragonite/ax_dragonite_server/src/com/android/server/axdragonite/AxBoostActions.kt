@@ -98,7 +98,7 @@ internal class ProcessAffinity(
             AxDragoniteImpl.TAG,
             "set $mPid/$mRenderTid to ${mAffinity?.contentToString()}",
         )
-        mHost.traceBegin("ProcessAffinity_pid:${mPid}_affinity:$mAffinity")
+        mHost.traceBegin("ProcessAffinity_pid:${mPid}_affinity:${mAffinity?.contentToString()}")
         val cores =
             mAffinity ?: AxCpuSets.resolveCores(AxCpuSets.CPUSET_ALL) ?: return mHost.traceEnd()
         try {
@@ -173,9 +173,9 @@ internal class ThreadAffinity(
     private val mCpus: IntArray?,
 ) : Runnable {
     override fun run() {
-        val cores = mCpus ?: AxCpuSets.resolveCores(AxCpuSets.CPUSET_ALL) ?: return mHost.traceEnd()
+        val cores = mCpus ?: AxCpuSets.resolveCores(AxCpuSets.CPUSET_ALL) ?: return
         mHost.logDebug(AxDragoniteImpl.TAG, "set $mTid to ${cores.contentToString()}")
-        mHost.traceBegin("ThreadAffinity_tid${mTid}_affinity:$cores")
+        mHost.traceBegin("ThreadAffinity_tid${mTid}_affinity:${cores.contentToString()}")
         try {
             Process.setThreadAffinity(mTid, cores)
         } catch (e: Exception) {

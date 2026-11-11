@@ -17,20 +17,15 @@
 package com.android.server.axdragonite
 
 import android.os.PowerManagerInternal
-import android.os.SystemProperties
-import android.util.Slog
 import com.android.server.LocalServices
 import java.util.concurrent.atomic.AtomicInteger
 
-class AxDragoniteExt {
+class AxDragoniteExt(private val host: AxDragoniteImpl) {
     companion object {
-        private const val TAG = "AxDragonite"
         private const val INVALID_HANDLE = 0
         private const val DURATION_INTERACTION_MS = 500
-        private const val PROP_DEBUG = "persist.dragonite.debug"
     }
 
-    private val debugEnabled = SystemProperties.getBoolean(PROP_DEBUG, false)
     private var powerManagerInternal: PowerManagerInternal? = null
     private val lock = Any()
     private val nextHandle = AtomicInteger(1)
@@ -42,9 +37,7 @@ class AxDragoniteExt {
         powerManagerInternal = LocalServices.getService(PowerManagerInternal::class.java)
     }
 
-    private fun logDebug(msg: String) {
-        if (debugEnabled) Slog.d(TAG, msg)
-    }
+    private fun logDebug(msg: String) = host.logDebug(AxDragoniteImpl.TAG, msg)
 
     private fun newHandle(): Int =
         nextHandle.getAndUpdate { if (it == Int.MAX_VALUE) 1 else it + 1 }
