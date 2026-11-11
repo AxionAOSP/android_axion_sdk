@@ -19,7 +19,6 @@ package com.android.server.axdragonite
 import android.os.PowerManagerInternal as PM
 import com.android.internal.dragonite.AxDragoniteConstants
 import com.android.server.axdragonite.model.AxCpuProfile
-import java.util.Collections
 import java.util.HashMap
 import java.util.concurrent.atomic.AtomicReference
 
@@ -62,11 +61,7 @@ object AxSceneTable {
         val scenarioId: Int,
         val scenarioName: String,
         val commandList: MutableList<ScenarioCommand> = ArrayList(),
-    ) {
-        fun addCommand(command: ScenarioCommand) {
-            commandList.add(command)
-        }
-    }
+    )
 
     internal data class CommandConfig(
         val holdTime: Long = -1L,
@@ -96,10 +91,6 @@ object AxSceneTable {
             config.updateAndGet { it.copy(holdTime = time) }
         }
 
-        fun setDelayTime(time: Long) {
-            config.updateAndGet { it.copy(delayTime = time) }
-        }
-
         fun getProcess(): String? = config.get().targetProcess
 
         fun putParameter(key: String, value: String) {
@@ -107,8 +98,6 @@ object AxSceneTable {
         }
 
         fun getParameter(key: String): String? = parameterMap[key]
-
-        fun getParameterMap(): Map<String, String> = Collections.unmodifiableMap(parameterMap)
     }
 
     private fun Scenario.command(

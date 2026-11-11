@@ -166,33 +166,13 @@ class AxBoosterController @Inject constructor(@Main private val mainHandler: Han
     fun releaseAnimationBoost() =
         setBoosting(BOOST_SCENE_ID_ANIMATION, false, "releaseAnimationBoost")
 
-    fun acquireNotificationStackBoost() = acquireAnimationBoost()
-
-    fun releaseNotificationStackBoost() = releaseAnimationBoost()
-
-    fun acquireNPVFlingBoost() = acquireAnimationBoost()
-
-    fun releaseNPVFlingBoost() = releaseAnimationBoost()
-
     fun acquireNPVTrackingBoost() = acquireAnimationBoost()
 
     fun releaseNPVTrackingBoost() = releaseAnimationBoost()
 
-    fun acquireSwipeDownNotificationBoost() = acquireAnimationBoost()
-
-    fun releaseSwipeDownNotificationBoost() = releaseAnimationBoost()
-
-    fun acquireSpeedUpNPVExpanded() = acquireAnimationBoost()
-
-    fun releaseSpeedUpNPVExpanded() = releaseAnimationBoost()
-
     fun acquireNPVExpandingBoost() = acquireNotificationExpandBoost()
 
     fun releaseNPVExpandingBoost() = releaseNotificationExpandBoost()
-
-    fun acquireExpansionAnimationBoost() = acquireAnimationBoost()
-
-    fun releaseExpansionAnimationBoost() = releaseAnimationBoost()
 
     fun acquireUnlockAnimationBoost() = acquireUnlockBoost()
 
@@ -208,15 +188,7 @@ class AxBoosterController @Inject constructor(@Main private val mainHandler: Han
 
     fun releaseDozeAnimationBoost() = releaseAnimationBoost()
 
-    fun acquireBouncerDisappearBoost() = acquireAnimationBoost()
-
-    fun releaseBouncerDisappearBoost() = releaseAnimationBoost()
-
     fun acquireVolumeDialogShowBoost() = acquireAnimationBoost()
 
     fun releaseVolumeDialogShowBoost() = releaseAnimationBoost()
-
-    fun acquireBPDialogShowBoost() = acquireAnimationBoost()
-
-    fun releaseBPDialogShowBoost() = releaseAnimationBoost()
 }

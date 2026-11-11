@@ -17,15 +17,9 @@
 package com.android.server.axdragonite
 
 import java.io.File
-import java.util.Collections
 import java.util.HashMap
 
 object AxCmdTable {
-    const val TYPE_NODE = 0
-    const val TYPE_FUNCTION = 1
-    const val PARAM_COUNT_NONE = 0
-    const val PARAM_COUNT_SINGLE = 1
-    const val PARAM_COUNT_PAIR = 2
     const val CPUSET_DIR = "/dev/cpuset"
     const val CPUCTL_DIR = "/dev/cpuctl"
     const val FILE_CGROUP_PROCS = "cgroup.procs"
@@ -46,16 +40,6 @@ object AxCmdTable {
     const val GROUP_RT = "rt"
     const val GROUP_AX_FOREGROUND = "ax_foreground"
     const val GROUP_FOREGROUND_WINDOW = "foreground_window"
-    const val FUNC_ANIMATIONBOOST = "animationBoost"
-    const val FUNC_BACKGROUNDLOADLIMIT = "backgroundLoadLimit"
-    const val FUNC_BACKGROUNDPROCESSFREEZE = "backgroundProcessFreeze"
-    const val FUNC_KSWAPDBINDCORECONTROLL = "kswapdBindCoreControll"
-    const val FUNC_PLATFORMRESOURCECONTROL = "platformResourceControl"
-    const val FUNC_PROCESSAFFINITY = "processAffinity"
-    const val FUNC_SETAXNAMETHREADAFFINITY = "setAxNameThreadAffinity"
-    const val FUNC_SFBINDCORECONTROLL = "sfBindCoreControll"
-    const val FUNC_THREADAFFINITY = "threadAffinity"
-    const val FUNC_THREADBOOST = "threadBoost"
     const val NAME_CMD_ANIMATION_BOOST = "CMD_ANIMATION_BOOST"
     const val NAME_CMD_AX_NAMED_THREAD_AFFINITY = "CMD_AX_NAMED_THREAD_AFFINITY"
     const val NAME_CMD_BACKGROUND_FREEZE = "CMD_BACKGROUND_FREEZE"
@@ -189,23 +173,16 @@ object AxCmdTable {
     const val CMD_PLATFORM_CONTROL = 900
     const val CMD_SF_CONTROL_AFFINITY = 1000
 
-    sealed class Command(val commandType: Int, val name: String, val id: Int)
+    sealed class Command(val name: String, val id: Int)
 
-    class NodeCommand(commandName: String, commandId: Int, val nodePath: String) :
-        Command(TYPE_NODE, commandName, commandId) {
+    class NodeCommand(commandName: String, commandId: Int, nodePath: String) :
+        Command(commandName, commandId) {
         val pathFile: File = File(nodePath)
     }
 
-    class FunctionCommand(
-        commandName: String,
-        commandId: Int,
-        val functionName: String,
-        val parameterCount: Int,
-    ) : Command(TYPE_FUNCTION, commandName, commandId)
+    class FunctionCommand(commandName: String, commandId: Int) : Command(commandName, commandId)
 
     private data class NodeDef(val name: String, val id: Int, val path: String)
-
-    private data class FuncDef(val name: String, val id: Int, val func: String, val params: Int)
 
     private val commandMap = HashMap<String, Command>()
 
@@ -381,75 +358,28 @@ object AxCmdTable {
         }
     }
 
-    private fun funcs(): List<FuncDef> =
-        listOf(
-            FuncDef(
-                NAME_CMD_THREAD_AFFINITY,
-                CMD_THREAD_AFFINITY,
-                FUNC_THREADAFFINITY,
-                PARAM_COUNT_PAIR,
-            ),
-            FuncDef(
-                NAME_CMD_PROCESS_AFFINITY,
-                CMD_PROCESS_AFFINITY,
-                FUNC_PROCESSAFFINITY,
-                PARAM_COUNT_PAIR,
-            ),
-            FuncDef(
-                NAME_CMD_AX_NAMED_THREAD_AFFINITY,
-                CMD_AX_NAMED_THREAD_AFFINITY,
-                FUNC_SETAXNAMETHREADAFFINITY,
-                PARAM_COUNT_NONE,
-            ),
-            FuncDef(
-                NAME_CMD_KSWAPD_CONTROLL_AFFINITY,
-                CMD_KSWAPD_CONTROLL_AFFINITY,
-                FUNC_KSWAPDBINDCORECONTROLL,
-                PARAM_COUNT_PAIR,
-            ),
-            FuncDef(
-                NAME_CMD_SF_CONTROL_AFFINITY,
-                CMD_SF_CONTROL_AFFINITY,
-                FUNC_SFBINDCORECONTROLL,
-                PARAM_COUNT_NONE,
-            ),
-            FuncDef(
-                NAME_CMD_ANIMATION_BOOST,
-                CMD_ANIMATION_BOOST,
-                FUNC_ANIMATIONBOOST,
-                PARAM_COUNT_PAIR,
-            ),
-            FuncDef(NAME_CMD_THREAD_BOOST, CMD_THREAD_BOOST, FUNC_THREADBOOST, PARAM_COUNT_PAIR),
-            FuncDef(
-                NAME_CMD_BACKGROUND_FREEZE,
-                CMD_BACKGROUND_FREEZE,
-                FUNC_BACKGROUNDPROCESSFREEZE,
-                PARAM_COUNT_NONE,
-            ),
-            FuncDef(
-                NAME_CMD_BACKGROUND_LOAD_LIMIT,
-                CMD_BACKGROUND_LOAD_LIMIT,
-                FUNC_BACKGROUNDLOADLIMIT,
-                PARAM_COUNT_SINGLE,
-            ),
-            FuncDef(
-                NAME_CMD_PLATFORM_CONTROL,
-                CMD_PLATFORM_CONTROL,
-                FUNC_PLATFORMRESOURCECONTROL,
-                PARAM_COUNT_SINGLE,
-            ),
+    private fun funcs(): Map<String, Int> =
+        mapOf(
+            NAME_CMD_THREAD_AFFINITY to CMD_THREAD_AFFINITY,
+            NAME_CMD_PROCESS_AFFINITY to CMD_PROCESS_AFFINITY,
+            NAME_CMD_AX_NAMED_THREAD_AFFINITY to CMD_AX_NAMED_THREAD_AFFINITY,
+            NAME_CMD_KSWAPD_CONTROLL_AFFINITY to CMD_KSWAPD_CONTROLL_AFFINITY,
+            NAME_CMD_SF_CONTROL_AFFINITY to CMD_SF_CONTROL_AFFINITY,
+            NAME_CMD_ANIMATION_BOOST to CMD_ANIMATION_BOOST,
+            NAME_CMD_THREAD_BOOST to CMD_THREAD_BOOST,
+            NAME_CMD_BACKGROUND_FREEZE to CMD_BACKGROUND_FREEZE,
+            NAME_CMD_BACKGROUND_LOAD_LIMIT to CMD_BACKGROUND_LOAD_LIMIT,
+            NAME_CMD_PLATFORM_CONTROL to CMD_PLATFORM_CONTROL,
         )
 
     private fun registerAll(nodeDefs: List<NodeDef>) {
         for (def in nodeDefs) {
             commandMap[def.name] = NodeCommand(def.name, def.id, def.path)
         }
-        for (def in funcs()) {
-            commandMap[def.name] = FunctionCommand(def.name, def.id, def.func, def.params)
+        for ((name, id) in funcs()) {
+            commandMap[name] = FunctionCommand(name, id)
         }
     }
-
-    @JvmStatic fun getCommands(): Map<String, Command> = Collections.unmodifiableMap(commandMap)
 
     @JvmStatic fun getCommand(name: String): Command? = commandMap[name]
 }

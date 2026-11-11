@@ -33,6 +33,4 @@ data class TopologyData(
     val restrictedForeground: Cpuset? = null,
     val dexRestoreThreads: Int? = null,
     val dexLimitThreads: Int? = null,
-) {
-    val numClusters: Int get() = clusters.size
-}
+)

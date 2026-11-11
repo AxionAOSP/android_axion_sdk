@@ -76,7 +76,6 @@ class AxNamedThreadAffinityFeature {
     }
 
     private val isSupported: Boolean = hasKernelNodes()
-    private var lastPid: Int = -1
     private val modifiedTids = ArrayList<Int>()
 
     private fun hasKernelNodes(): Boolean =
@@ -143,7 +142,6 @@ class AxNamedThreadAffinityFeature {
 
         if (!hasEngineThreads && !isKnownGame) return
 
-        lastPid = pid
         modifiedTids.clear()
 
         val boostCores = AxCpuSets.resolveCores(AxCpuSets.CPUSET_BOOST)
@@ -200,6 +198,5 @@ class AxNamedThreadAffinityFeature {
             }
         }
         modifiedTids.clear()
-        lastPid = -1
     }
 }

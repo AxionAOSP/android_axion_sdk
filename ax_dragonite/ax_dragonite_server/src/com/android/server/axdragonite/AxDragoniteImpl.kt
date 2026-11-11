@@ -148,9 +148,8 @@ class AxDragoniteImpl : IAxDragonite {
 
     init {
         logDebug(TAG, "create AxDragonite")
-        logDebug(TAG, AxCmdTable.getCommands().toString())
         mKswapdAffinityBoost =
-            AxPlatformConfig.parseAffinityCores(mPlatformConfig.getSwapAffinityBoost())
+            AxCpuSets.resolveCores(mPlatformConfig.get(AxPlatformConfig.KEY_SWAP_AFFINITY_BOOST))
         mDefaultKswapdAffinity = AxCpuSets.resolveCores(AxCpuSets.CPUSET_ALL)
         loadCommands()
         initHandlerThreads()
@@ -176,11 +175,7 @@ class AxDragoniteImpl : IAxDragonite {
     fun onBootCompleted() {
         mManagerHandler.postDelayed(
             {
-                writeCpusetCpus(
-                    CPUSET_RESTRICTED_CPUS,
-                    AxPlatformConfig.KEY_RESTRICTED,
-                    AxCpuSets.CPUSET_ALL,
-                )
+                writeCpusetCpus(CPUSET_RESTRICTED_CPUS, AxPlatformConfig.KEY_RESTRICTED)
             },
             BOOT_RESTRICTED_CPUS_DELAY_MS,
         )
@@ -297,28 +292,24 @@ class AxDragoniteImpl : IAxDragonite {
             ?: bundle?.getString(AxDragoniteConstants.KEY_PACKAGE)
 
     fun dispatchSceneCommands(sceneId: Int, bundle: Bundle?) {
+        val pid = bundlePid(bundle)
+        val pkg = bundlePackage(bundle)
+        val params = bundle?.getString(AxDragoniteConstants.KEY_PARAMS)
         if (bundle != null) {
-            val pkgName =
-                bundle.getString(AxDragoniteConstants.KEY_PACKAGE_NAME)
-                    ?: bundle.getString(AxDragoniteConstants.KEY_PACKAGE)
             Slog.d(
                 TAG,
-                "sceneId = $sceneId, pid = ${bundle.getInt(AxDragoniteConstants.KEY_PID)}, " +
-                    "packageName = $pkgName, " +
+                "sceneId = $sceneId, pid = $pid, packageName = $pkg, " +
                     "duration = ${bundle.getInt(AxDragoniteConstants.KEY_DURATION)}, " +
-                    "params = ${bundle.getString(AxDragoniteConstants.KEY_PARAMS)}",
+                    "params = $params",
             )
         }
         val scenario = AxSceneTable.getScenario(sceneId) ?: return
         val handle =
             bundle?.getInt(AxDragoniteConstants.KEY_HANDLE) ?: AxDragoniteConstants.INVALID_HANDLE
-        val pid = bundlePid(bundle)
-        val pkg = bundlePackage(bundle)
-        val params = bundle?.getString(AxDragoniteConstants.KEY_PARAMS)
         for (scenarioCmd in scenario.commandList) {
             try {
                 val command = scenarioCmd.command ?: continue
-                mCommandsMap[command.id]?.execute(handle, pid, pkg, scenarioCmd, params) ?: continue
+                mCommandsMap[command.id]?.execute(handle, pid, pkg, scenarioCmd, params)
             } catch (e: Exception) {
                 Slog.e(TAG, "dispatchSceneCommands failed for scene=$sceneId", e)
             }
@@ -379,20 +370,6 @@ class AxDragoniteImpl : IAxDragonite {
         return cleanedCount
     }
 
-    fun isProcessDied(pkg: String?, pid: Int): Boolean {
-        if (pkg.isNullOrEmpty()) {
-            if (pid <= 0) return false
-            val cmdline = AxPlatformConfig.getProcessCmdLine(pid)
-            return cmdline.isEmpty()
-        }
-        if (pid > 0) {
-            val cmdline = AxPlatformConfig.getProcessCmdLine(pid)
-            return cmdline.isEmpty() || !cmdline.startsWith(pkg)
-        }
-        val currentPid = getPidByProcessName(pkg)
-        return currentPid <= 0
-    }
-
     private fun backgroundLoadLimit(
         handle: Int,
         adjustPid: Int,
@@ -411,7 +388,7 @@ class AxDragoniteImpl : IAxDragonite {
         cmd: AxSceneTable.ScenarioCommand,
         params: String?,
     ) {
-        if (debug) logDebug(TAG, "platformResourceControl")
+        logDebug(TAG, "platformResourceControl")
         val resource = PlatformResource(this, cmd.getParameter(PARAMS1_KEY))
         PlatformResourceBoostSession(this, handle, cmd, resource, PlatformHandler(this, resource))
             .execute()
@@ -774,10 +751,10 @@ class AxDragoniteImpl : IAxDragonite {
             .execute()
     }
 
-    private fun writeCpusetCpus(path: String, configKey: String, fallbackCpuset: String) {
+    private fun writeCpusetCpus(path: String, configKey: String) {
         val file = File(path)
         if (!file.exists()) return
-        val resolved = AxCpuSets.resolve(mPlatformConfig.getOrDefault(configKey, fallbackCpuset))
+        val resolved = AxCpuSets.resolve(mPlatformConfig.get(configKey))
         try {
             FileUtils.stringToFile(file, resolved)
         } catch (e: IOException) {
@@ -786,69 +763,35 @@ class AxDragoniteImpl : IAxDragonite {
     }
 
     private fun restoreBackgroundCpus() {
-        writeCpusetCpus(
-            CPUSET_AX_FOREGROUND_CPUS,
-            AxPlatformConfig.KEY_AXFG,
-            AxCpuSets.CPUSET_FOREGROUND,
-        )
-        writeCpusetCpus(
-            CPUSET_DEX2OAT_CPUS,
-            AxPlatformConfig.KEY_DEX,
-            AxCpuSets.CPUSET_FOREGROUND,
-        )
-        writeCpusetCpus(
-            CPUSET_BACKGROUND_CPUS,
-            AxPlatformConfig.KEY_BACKGROUND,
-            AxCpuSets.CPUSET_BACKGROUND,
-        )
+        writeCpusetCpus(CPUSET_AX_FOREGROUND_CPUS, AxPlatformConfig.KEY_AXFG)
+        writeCpusetCpus(CPUSET_DEX2OAT_CPUS, AxPlatformConfig.KEY_DEX)
+        writeCpusetCpus(CPUSET_BACKGROUND_CPUS, AxPlatformConfig.KEY_BACKGROUND)
         SystemProperties.set(
             PROP_DEX2OAT_THREADS,
-            mPlatformConfig.getOrDefault(
-                AxPlatformConfig.KEY_DEX_RESTORE_THREADS,
-                AxCpuSets.dexRestoreThreads(),
-            ),
+            mPlatformConfig.get(AxPlatformConfig.KEY_DEX_RESTORE_THREADS),
         )
     }
 
     private fun limitBackgroundCpus() {
-        writeCpusetCpus(
-            CPUSET_AX_FOREGROUND_CPUS,
-            AxPlatformConfig.KEY_FOREGROUND_INPUT,
-            AxCpuSets.CPUSET_INPUT_FOREGROUND,
-        )
-        writeCpusetCpus(
-            CPUSET_DEX2OAT_CPUS,
-            AxPlatformConfig.KEY_DEX_INPUT,
-            AxCpuSets.CPUSET_INPUT_FOREGROUND,
-        )
-        writeCpusetCpus(
-            CPUSET_BACKGROUND_CPUS,
-            AxPlatformConfig.KEY_BACKGROUND_INPUT,
-            AxCpuSets.CPUSET_INPUT_BACKGROUND,
-        )
+        writeCpusetCpus(CPUSET_AX_FOREGROUND_CPUS, AxPlatformConfig.KEY_FOREGROUND_INPUT)
+        writeCpusetCpus(CPUSET_DEX2OAT_CPUS, AxPlatformConfig.KEY_DEX_INPUT)
+        writeCpusetCpus(CPUSET_BACKGROUND_CPUS, AxPlatformConfig.KEY_BACKGROUND_INPUT)
         SystemProperties.set(
             PROP_DEX2OAT_THREADS,
-            mPlatformConfig.getOrDefault(
-                AxPlatformConfig.KEY_DEX_THREADS,
-                AxCpuSets.dexLimitThreads(),
-            ),
+            mPlatformConfig.get(AxPlatformConfig.KEY_DEX_THREADS),
         )
     }
 
     fun adjustBackgroundLimit(limit: Boolean) {
-        try {
-            if (!limit) {
-                restoreBackgroundCpus()
-                return
-            }
-            if (mBackgroundLoadLimit == BACKGROUND_LIMIT_DISABLED) {
-                Slog.d(TAG, "disable BackgroundLimit!")
-                return
-            }
-            limitBackgroundCpus()
-        } catch (e: IOException) {
-            logDebug(TAG, "adjust background limit failed! limit = $limit")
+        if (!limit) {
+            restoreBackgroundCpus()
+            return
         }
+        if (mBackgroundLoadLimit == BACKGROUND_LIMIT_DISABLED) {
+            Slog.d(TAG, "disable BackgroundLimit!")
+            return
+        }
+        limitBackgroundCpus()
     }
 
     private fun adjustCpuctlShares(
@@ -1140,7 +1083,7 @@ class AxDragoniteImpl : IAxDragonite {
                     restoreHandle(prevHandle)
                 }
                 currentActiveHandle = handle
-                record.clearTasks()
+                record.restoreAll()
                 dispatchSceneCommands(sceneId, sceneBundle)
             }
         }
@@ -1177,7 +1120,7 @@ class AxDragoniteImpl : IAxDragonite {
         }
         mDragoniteHandler.postDelayed(
             mInputBoostResetRunnable,
-            mPlatformConfig.getDurationInput().toLong(),
+            AxPlatformConfig.DURATION_INPUT_MS,
         )
     }
 

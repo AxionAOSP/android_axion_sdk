@@ -19,42 +19,25 @@ package com.android.server.axdragonite
 import android.os.Process
 import android.util.Slog
 import java.io.File
-import java.util.HashMap
 
 class AxPlatformConfig {
     companion object {
         const val KEY_TOP_APP = "ta"
         const val KEY_FOREGROUND = "fg"
         const val KEY_BACKGROUND = "bg"
-        const val KEY_UI = "ui"
         const val KEY_SYSTEM_BACKGROUND = "sbg"
         const val KEY_RESTRICTED = "rest"
         const val KEY_FOREGROUND_INPUT = "axfg_input"
         const val KEY_DEX_INPUT = "dex_input"
         const val KEY_BACKGROUND_INPUT = "bg_input"
-        const val KEY_DURATION_INPUT = "duration_input"
         const val KEY_DEX_RESTORE_THREADS = "dex_restore_threads"
         const val KEY_DEX_THREADS = "dex_threads"
-        const val KEY_INSPECT_DURATION = "inspect_duration"
         const val KEY_SURFACE_AFFINITY = "sf_affinity"
         const val KEY_SWAP_AFFINITY_BOOST = "kswapd_affinity_boost"
         const val KEY_AXFG = "axfg"
         const val KEY_DEX = "DEX"
 
-        const val KEY_CPUCTL_CPU_SHARES_SYS = "cpuctl_cpu_shares_sys"
-        const val KEY_CPUCTL_CPU_SHARES_SBG = "cpuctl_cpu_shares_sbg"
-        const val KEY_CPUCTL_CPU_SHARES_TA = "cpuctl_cpu_shares_ta"
-        const val KEY_CPUCTL_CPU_SHARES_DEX = "cpuctl_cpu_shares_dex"
-        const val KEY_CPUCTL_CPU_SHARES_FG = "cpuctl_cpu_shares_fg"
-        const val KEY_CPUCTL_CPU_SHARES_RT = "cpuctl_cpu_shares_rt"
-        const val KEY_CPUCTL_CPU_SHARES_BG = "cpuctl_cpu_shares_bg"
-        const val KEY_CPUCTL_CPU_SHARES_REST = "cpuctl_cpu_shares_rest"
-        const val KEY_CPUCTL_CPU_SHARES_AXFG = "cpuctl_cpu_shares_axfg"
-        const val KEY_CPUCTL_CPU_SHARES_FW = "cpuctl_cpu_shares_fw"
-
-        const val DEFAULT_DURATION_INPUT = 800
-        const val DEFAULT_INSPECT_DURATION = 900000
-        val DEFAULT_CPU_AFFINITY = AxCpuSets.CPUSET_ALL
+        const val DURATION_INPUT_MS = 800L
 
         const val GROUP_ROOT = "root"
         const val GROUP_DEX = "dex"
@@ -70,8 +53,6 @@ class AxPlatformConfig {
         private const val PROC_DIR = "/proc/"
         private const val FILE_CMDLINE = "cmdline"
         private const val FILE_COMM = "comm"
-        private val FALLBACK_BG_CPUS = AxCpuSets.CPUSET_BACKGROUND
-        private val FALLBACK_SBG_CPUS = AxCpuSets.CPUSET_BACKGROUND
 
         private val cpusetGroups =
             mapOf(
@@ -83,18 +64,18 @@ class AxPlatformConfig {
                 GROUP_DEX to AxCmdTable.GROUP_DEX2OAT,
             )
 
-        private val cpusharesKeys =
-            mapOf(
-                AxCmdTable.CMD_CPUCTL_SYS_CPU_SHARES to KEY_CPUCTL_CPU_SHARES_SYS,
-                AxCmdTable.CMD_CPUCTL_SBG_CPU_SHARES to KEY_CPUCTL_CPU_SHARES_SBG,
-                AxCmdTable.CMD_CPUCTL_TA_CPU_SHARES to KEY_CPUCTL_CPU_SHARES_TA,
-                AxCmdTable.CMD_CPUCTL_DEX_CPU_SHARES to KEY_CPUCTL_CPU_SHARES_DEX,
-                AxCmdTable.CMD_CPUCTL_FG_CPU_SHARES to KEY_CPUCTL_CPU_SHARES_FG,
-                AxCmdTable.CMD_CPUCTL_RT_CPU_SHARES to KEY_CPUCTL_CPU_SHARES_RT,
-                AxCmdTable.CMD_CPUCTL_BG_CPU_SHARES to KEY_CPUCTL_CPU_SHARES_BG,
-                AxCmdTable.CMD_CPUCTL_RESTRICTED_CPU_SHARES to KEY_CPUCTL_CPU_SHARES_REST,
-                AxCmdTable.CMD_CPUCTL_AXFG_CPU_SHARES to KEY_CPUCTL_CPU_SHARES_AXFG,
-                AxCmdTable.CMD_CPUCTL_FW_CPU_SHARES to KEY_CPUCTL_CPU_SHARES_FW,
+        private val cpusharesCmds =
+            setOf(
+                AxCmdTable.CMD_CPUCTL_SYS_CPU_SHARES,
+                AxCmdTable.CMD_CPUCTL_SBG_CPU_SHARES,
+                AxCmdTable.CMD_CPUCTL_TA_CPU_SHARES,
+                AxCmdTable.CMD_CPUCTL_DEX_CPU_SHARES,
+                AxCmdTable.CMD_CPUCTL_FG_CPU_SHARES,
+                AxCmdTable.CMD_CPUCTL_RT_CPU_SHARES,
+                AxCmdTable.CMD_CPUCTL_BG_CPU_SHARES,
+                AxCmdTable.CMD_CPUCTL_RESTRICTED_CPU_SHARES,
+                AxCmdTable.CMD_CPUCTL_AXFG_CPU_SHARES,
+                AxCmdTable.CMD_CPUCTL_FW_CPU_SHARES,
             )
 
         private val paramCmds =
@@ -130,9 +111,6 @@ class AxPlatformConfig {
         @JvmStatic
         fun getCpusetTasks(group: String?): File? =
             cgroupFile(AxCmdTable.CPUSET_DIR, group, AxCmdTable.FILE_TASKS)
-
-        @JvmStatic
-        fun parseAffinityCores(affinity: String?): IntArray? = AxCpuSets.resolveCores(affinity)
 
         private fun readProcField(pid: Int, field: String, format: IntArray): String {
             val out = arrayOfNulls<String>(1)
@@ -174,78 +152,28 @@ class AxPlatformConfig {
         }
     }
 
-    private val configMap = HashMap<String, String>()
-    private var durationInput = DEFAULT_DURATION_INPUT
-    private var inspectDuration = DEFAULT_INSPECT_DURATION
-
-    init {
-        initializeDefaults()
-    }
-
-    private fun initializeDefaults() {
-        configMap.putAll(
-            mapOf(
-                KEY_TOP_APP to AxCpuSets.CPUSET_ALL,
-                KEY_FOREGROUND to AxCpuSets.CPUSET_ALL,
-                KEY_BACKGROUND to AxCpuSets.CPUSET_BACKGROUND,
-                KEY_UI to AxCpuSets.CPUSET_UI,
-                KEY_SYSTEM_BACKGROUND to AxCpuSets.CPUSET_BACKGROUND,
-                KEY_RESTRICTED to AxCpuSets.CPUSET_ALL,
-                KEY_AXFG to AxCpuSets.CPUSET_FOREGROUND,
-                KEY_DEX to AxCpuSets.CPUSET_FOREGROUND,
-                KEY_FOREGROUND_INPUT to AxCpuSets.CPUSET_INPUT_FOREGROUND,
-                KEY_DEX_INPUT to AxCpuSets.CPUSET_INPUT_FOREGROUND,
-                KEY_BACKGROUND_INPUT to AxCpuSets.CPUSET_INPUT_BACKGROUND,
-                KEY_DURATION_INPUT to DEFAULT_DURATION_INPUT.toString(),
-                KEY_DEX_RESTORE_THREADS to AxCpuSets.dexRestoreThreads(),
-                KEY_DEX_THREADS to AxCpuSets.dexLimitThreads(),
-                KEY_INSPECT_DURATION to DEFAULT_INSPECT_DURATION.toString(),
-                KEY_SURFACE_AFFINITY to AxCpuSets.CPUSET_BOOST_MASK_DEC,
-                KEY_SWAP_AFFINITY_BOOST to AxCpuSets.CPUSET_ALL,
-            )
+    private val configMap =
+        mapOf(
+            KEY_TOP_APP to AxCpuSets.CPUSET_ALL,
+            KEY_FOREGROUND to AxCpuSets.CPUSET_ALL,
+            KEY_BACKGROUND to AxCpuSets.CPUSET_BACKGROUND,
+            KEY_SYSTEM_BACKGROUND to AxCpuSets.CPUSET_BACKGROUND,
+            KEY_RESTRICTED to AxCpuSets.CPUSET_ALL,
+            KEY_AXFG to AxCpuSets.CPUSET_FOREGROUND,
+            KEY_DEX to AxCpuSets.CPUSET_FOREGROUND,
+            KEY_FOREGROUND_INPUT to AxCpuSets.CPUSET_INPUT_FOREGROUND,
+            KEY_DEX_INPUT to AxCpuSets.CPUSET_INPUT_FOREGROUND,
+            KEY_BACKGROUND_INPUT to AxCpuSets.CPUSET_INPUT_BACKGROUND,
+            KEY_DEX_RESTORE_THREADS to AxCpuSets.dexRestoreThreads(),
+            KEY_DEX_THREADS to AxCpuSets.dexLimitThreads(),
+            KEY_SURFACE_AFFINITY to AxCpuSets.CPUSET_BOOST_MASK_DEC,
+            KEY_SWAP_AFFINITY_BOOST to AxCpuSets.CPUSET_ALL,
         )
-        updateParsedValues()
-    }
 
-    private fun updateParsedValues() {
-        durationInput = configMap[KEY_DURATION_INPUT]?.toIntOrNull() ?: DEFAULT_DURATION_INPUT
-        inspectDuration = configMap[KEY_INSPECT_DURATION]?.toIntOrNull() ?: DEFAULT_INSPECT_DURATION
-    }
+    fun get(name: String): String = configMap.getValue(name)
 
-    fun put(name: String, value: String) {
-        configMap[name] = value
-        if (name == KEY_DURATION_INPUT || name == KEY_INSPECT_DURATION) updateParsedValues()
-    }
-
-    fun get(name: String): String? = configMap[name]
-
-    fun getDurationInput(): Int = durationInput
-
-    fun getInspectDuration(): Int = inspectDuration
-
-    private fun resolveConfig(key: String, fallback: String): String {
-        val value = configMap[key]
-        if (value.isNullOrBlank()) {
-            return AxCpuSets.resolve(fallback.takeIf { it.isNotEmpty() } ?: DEFAULT_CPU_AFFINITY)
-        }
-        return AxCpuSets.resolve(value)
-    }
-
-    fun getSwapAffinityBoost(): String =
-        resolveConfig(KEY_SWAP_AFFINITY_BOOST, DEFAULT_CPU_AFFINITY)
-
-    fun getSurfaceAffinity(): String {
-        val value = configMap[KEY_SURFACE_AFFINITY]
-        if (value.isNullOrBlank()) return AxCpuSets.resolveMask(DEFAULT_CPU_AFFINITY)
-        return AxCpuSets.resolveMask(value)
-    }
-
-    fun getOrDefault(key: String, fallback: String): String = configMap[key] ?: fallback
-
-    fun getCpushares(cmd: Int): String {
-        val key = cpusharesKeys[cmd] ?: return DEFAULT_CPU_SHARES.toString()
-        return getOrDefault(key, BOOSTED_CPU_SHARES.toString())
-    }
+    fun getCpushares(cmd: Int): String =
+        (if (cmd in cpusharesCmds) BOOSTED_CPU_SHARES else DEFAULT_CPU_SHARES).toString()
 
     fun getRestoreCpusetCpus(cmdId: Int): String {
         val key =
@@ -257,14 +185,6 @@ class AxPlatformConfig {
                 AxCmdTable.CMD_CPUSET_RESTRICTED_CPUS -> KEY_RESTRICTED
                 else -> return ""
             }
-        val fallback =
-            if (cmdId == AxCmdTable.CMD_CPUSET_BG_CPUS) {
-                FALLBACK_BG_CPUS
-            } else if (cmdId == AxCmdTable.CMD_CPUSET_SBG_CPUS) {
-                FALLBACK_SBG_CPUS
-            } else {
-                DEFAULT_CPU_AFFINITY
-            }
-        return AxCpuSets.resolve(configMap[key] ?: fallback)
+        return AxCpuSets.resolve(get(key))
     }
 }
