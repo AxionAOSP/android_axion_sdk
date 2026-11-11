@@ -54,7 +54,7 @@ public final class AxOomAdjusterHelper {
     }
 
     public static int getRestrictedProcessGroup(ProcessRecordInternal app) {
-        if (isRestrictedNeedSelfControll(app)) {
+        if (isRestrictedNeedSelfControl(app)) {
             return THREAD_GROUP_AX_FOREGROUND;
         }
         return THREAD_GROUP_RESTRICTED;
@@ -69,13 +69,13 @@ public final class AxOomAdjusterHelper {
     }
 
     public static int getDefaultProcessGroup(int oldSchedGroup, ProcessRecordInternal app) {
-        if (isForegroundNeedSelfControll(oldSchedGroup, app)) {
+        if (isForegroundNeedSelfControl(oldSchedGroup, app)) {
             return THREAD_GROUP_AX_FOREGROUND;
         }
         return THREAD_GROUP_DEFAULT;
     }
 
-    public static boolean isRestrictedNeedSelfControll(ProcessRecordInternal app) {
+    public static boolean isRestrictedNeedSelfControl(ProcessRecordInternal app) {
         if (app == null) {
             return false;
         }
@@ -85,7 +85,7 @@ public final class AxOomAdjusterHelper {
         return !isHostingTopApp(app);
     }
 
-    public static boolean isForegroundNeedSelfControll(int oldScheduleGroup, ProcessRecordInternal app) {
+    public static boolean isForegroundNeedSelfControl(int oldScheduleGroup, ProcessRecordInternal app) {
         if (app == null) {
             return false;
         }

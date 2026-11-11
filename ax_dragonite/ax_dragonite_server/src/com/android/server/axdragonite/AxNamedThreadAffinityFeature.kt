@@ -23,57 +23,47 @@ import android.util.Slog
 import java.io.File
 import java.io.IOException
 
-class AxNamedThreadAffinityFeature {
-    companion object {
-        private const val TAG = "AxNamedThreadAffinityFeature"
-        private const val PROP_DEBUG = "persist.sys.ax_named_thread_affinity.debug.log"
-        private val DEBUG_LOG = SystemProperties.getBoolean(PROP_DEBUG, false)
+object AxNamedThreadAffinityFeature {
+    private const val TAG = "AxNamedThreadAffinityFeature"
+    private const val PROP_DEBUG = "persist.sys.ax_named_thread_affinity.debug.log"
+    private val DEBUG_LOG = SystemProperties.getBoolean(PROP_DEBUG, false)
 
-        private const val PROC_DIR = "/proc/ax_named_thread_affinity/"
-        private const val NODE_PID = "pid"
-        private const val NODE_AFFINITY = "named_thread_affinity"
-        private const val NODE_RESET = "reset"
-        private const val RESET_TRIGGER_VALUE = "1"
+    private const val PROC_DIR = "/proc/ax_named_thread_affinity/"
+    private const val NODE_PID = "pid"
+    private const val NODE_AFFINITY = "named_thread_affinity"
+    private const val NODE_RESET = "reset"
+    private const val RESET_TRIGGER_VALUE = "1"
 
-        private val KNOWN_GAME_PACKAGES =
-            setOf(
-                "com.tencent.ig",
-                "com.pubg.imobile",
-                "com.pubg.krmobile",
-                "com.vng.pubgmobile",
-                "com.tencent.tmgp.pubgmhd",
-                "com.miHoYo.GenshinImpact",
-                "com.miHoYo.Yuanshen",
-                "com.HoYoverse.hkrpgoversea",
-                "com.miHoYo.hkrpg",
-                "com.HoYoverse.Nap",
-                "com.miHoYo.Nap",
-                "com.activision.callofduty.shooter",
-                "com.garena.game.codm",
-                "com.activision.callofduty.warzone",
-                "com.dts.freefireth",
-                "com.dts.freefiremax",
-                "com.mobile.legends",
-                "com.riotgames.league.wildrift",
-                "com.riotgames.league.wildrifttw",
-                "com.levelinfinite.sgameGlobal",
-                "com.tencent.tmgp.sgame",
-                "com.roblox.client",
-                "com.mojang.minecraftpe",
-                "com.blizzard.diablo.immortal",
-                "com.ea.gp.apexmobile",
-                "com.gameloft.android.ANMP.GloftA9HM",
-                "com.epicgames.fortnite",
-            )
-
-        @Volatile private var sInstance: AxNamedThreadAffinityFeature? = null
-
-        @JvmStatic
-        @Synchronized
-        fun getInstance(): AxNamedThreadAffinityFeature {
-            return sInstance ?: AxNamedThreadAffinityFeature().also { sInstance = it }
-        }
-    }
+    private val KNOWN_GAME_PACKAGES =
+        setOf(
+            "com.tencent.ig",
+            "com.pubg.imobile",
+            "com.pubg.krmobile",
+            "com.vng.pubgmobile",
+            "com.tencent.tmgp.pubgmhd",
+            "com.miHoYo.GenshinImpact",
+            "com.miHoYo.Yuanshen",
+            "com.HoYoverse.hkrpgoversea",
+            "com.miHoYo.hkrpg",
+            "com.HoYoverse.Nap",
+            "com.miHoYo.Nap",
+            "com.activision.callofduty.shooter",
+            "com.garena.game.codm",
+            "com.activision.callofduty.warzone",
+            "com.dts.freefireth",
+            "com.dts.freefiremax",
+            "com.mobile.legends",
+            "com.riotgames.league.wildrift",
+            "com.riotgames.league.wildrifttw",
+            "com.levelinfinite.sgameGlobal",
+            "com.tencent.tmgp.sgame",
+            "com.roblox.client",
+            "com.mojang.minecraftpe",
+            "com.blizzard.diablo.immortal",
+            "com.ea.gp.apexmobile",
+            "com.gameloft.android.ANMP.GloftA9HM",
+            "com.epicgames.fortnite",
+        )
 
     private val isSupported: Boolean = hasKernelNodes()
     private val modifiedTids = ArrayList<Int>()
@@ -125,22 +115,14 @@ class AxNamedThreadAffinityFeature {
         val packageName = rawCmdLine.substringBefore(':')
         val isKnownGame = KNOWN_GAME_PACKAGES.contains(packageName)
 
-        val assignments = ArrayList<Pair<Int, String>>()
-        var hasEngineThreads = false
-
-        for (taskFile in taskFiles) {
-            val tid = taskFile.name.toIntOrNull() ?: continue
-            val comm = AxPlatformConfig.getProcessComm(tid)
-            if (isRenderThread(comm)) {
-                hasEngineThreads = true
-                assignments.add(tid to comm)
-            } else if (isWorkerThread(comm)) {
-                hasEngineThreads = true
-                assignments.add(tid to comm)
+        val assignments =
+            taskFiles.mapNotNull { taskFile ->
+                val tid = taskFile.name.toIntOrNull() ?: return@mapNotNull null
+                val comm = AxPlatformConfig.getProcessComm(tid)
+                (tid to comm).takeIf { isRenderThread(comm) || isWorkerThread(comm) }
             }
-        }
 
-        if (!hasEngineThreads && !isKnownGame) return
+        if (assignments.isEmpty() && !isKnownGame) return
 
         modifiedTids.clear()
 

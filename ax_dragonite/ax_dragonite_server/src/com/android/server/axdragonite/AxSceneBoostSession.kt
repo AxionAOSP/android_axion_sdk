@@ -27,27 +27,39 @@ import kotlin.math.max
 
 open class AxSceneBoostSession(
     protected val mHost: AxDragoniteImpl,
-    var sessionType: Int = 0,
-    var handle: Int = 0,
-    var cmd: AxSceneTable.ScenarioCommand? = null,
+    val sessionType: Int,
+    val handle: Int,
+    val cmd: AxSceneTable.ScenarioCommand,
     var boostAction: Runnable? = null,
     var restoreAction: Runnable? = null,
 ) {
+    companion object {
+        const val TYPE_PLATFORM = 1
+        const val TYPE_THREAD_AFFINITY = 2
+        const val TYPE_PROCESS_AFFINITY = 3
+        const val TYPE_ANIMATION = 4
+        const val TYPE_THREAD_BOOST = 5
+        const val TYPE_BACKGROUND_FREEZE = 6
+        const val TYPE_CPUSET = 7
+        const val TYPE_CPUCTL = 8
+        const val TYPE_CPUSET_TASK = 9
+        const val TYPE_KSWAPD = 10
+        const val TYPE_SF = 11
+        const val TYPE_NAMED_THREAD_AFFINITY = 12
+    }
+
     var startTime: Long = 0L
     var endTime: Long = 0L
 
-    protected fun readyCommand(action: String): AxSceneTable.ScenarioCommand? {
-        val command = cmd ?: return null
-        mHost.logDebug(AxDragoniteImpl.TAG, "$action ${command.command?.name}")
-        if (!mHost.hasBoostRecord(handle)) {
-            mHost.logDebug(AxDragoniteImpl.TAG, "can't get $handle ActiveSession, return!")
-            return null
-        }
-        return command
+    protected fun hasRecord(action: String): Boolean {
+        mHost.logDebug(AxDragoniteImpl.TAG, "$action ${cmd.command?.name}")
+        if (mHost.hasBoostRecord(handle)) return true
+        mHost.logDebug(AxDragoniteImpl.TAG, "can't get $handle ActiveSession, return!")
+        return false
     }
 
-    protected fun scheduleActions(command: AxSceneTable.ScenarioCommand) {
-        val delay = max(0L, command.delayTime)
+    protected fun scheduleActions(holdTime: Long = cmd.holdTime) {
+        val delay = max(0L, cmd.delayTime)
         val boost = boostAction
         if (boost != null) {
             if (delay > 0) mHost.mDragoniteHandler.postDelayed(boost, delay)
@@ -55,50 +67,33 @@ open class AxSceneBoostSession(
         }
         startTime = SystemClock.elapsedRealtime() + delay
         val restore = restoreAction
-        if (restore != null && command.holdTime > 0) {
-            mHost.mDragoniteHandler.postDelayed(restore, command.holdTime + delay)
-            endTime = startTime + command.holdTime
+        if (restore != null && holdTime > 0) {
+            mHost.mDragoniteHandler.postDelayed(restore, holdTime + delay)
+            endTime = startTime + holdTime
         }
         mHost.attachSession(handle, this)
     }
 
     open fun execute() {
-        scheduleActions(readyCommand("execute") ?: return)
+        if (hasRecord("execute")) scheduleActions()
     }
 
-    open fun restore() {
-        val command = cmd ?: return
-        mHost.logDebug(AxDragoniteImpl.TAG, "restore ${command.command?.name}")
+    fun restore() {
+        mHost.logDebug(AxDragoniteImpl.TAG, "restore ${cmd.command?.name}")
         boostAction?.let { mHost.mDragoniteHandler.removeCallbacks(it) }
         val restore = restoreAction ?: return
         mHost.mDragoniteHandler.removeCallbacks(restore)
         mHost.mDragoniteHandler.post(restore)
     }
 
-    override fun toString(): String = "cmd id: ${cmd?.command?.id}, cmd name: ${cmd?.command?.name}"
+    override fun toString(): String = "cmd id: ${cmd.command?.id}, cmd name: ${cmd.command?.name}"
 }
-
-internal class AxNameThreadAffinitySession(
-    host: AxDragoniteImpl,
-    handle: Int,
-    cmd: AxSceneTable.ScenarioCommand,
-    runnable: Runnable,
-    runnable2: Runnable,
-) : AxSceneBoostSession(host, 12, handle, cmd, runnable, runnable2)
-
-internal class AnimationBoostSession(
-    host: AxDragoniteImpl,
-    handle: Int,
-    cmd: AxSceneTable.ScenarioCommand,
-    runnable: Runnable,
-    runnable2: Runnable,
-) : AxSceneBoostSession(host, 4, handle, cmd, runnable, runnable2)
 
 internal class BackgroundFreezeBoostSession(
     host: AxDragoniteImpl,
     handle: Int,
     cmd: AxSceneTable.ScenarioCommand,
-) : AxSceneBoostSession(host) {
+) : AxSceneBoostSession(host, AxSceneBoostSession.TYPE_BACKGROUND_FREEZE, handle, cmd) {
     private var frozenApps: ArrayList<AxProcessInfo>? = null
 
     companion object {
@@ -106,17 +101,8 @@ internal class BackgroundFreezeBoostSession(
         private const val MAX_BG_FREEZE_HOLD_TIME = 1000L
     }
 
-    init {
-        this.handle = handle
-        this.cmd = cmd
-        if (cmd.holdTime < 0 || cmd.holdTime > MAX_BG_FREEZE_HOLD_TIME) {
-            cmd.setHoldTime(DEFAULT_BG_FREEZE_HOLD_TIME)
-        }
-        sessionType = 6
-    }
-
     override fun execute() {
-        val command = readyCommand("execute") ?: return
+        if (!hasRecord("execute")) return
         boostAction = Runnable {
             frozenApps = mHost.frozenAppList
             mHost.setFrozenForAll(frozenApps, true)
@@ -125,94 +111,11 @@ internal class BackgroundFreezeBoostSession(
             mHost.setFrozenForAll(frozenApps, false)
             frozenApps = null
         }
-        scheduleActions(command)
+        scheduleActions(
+            cmd.holdTime.takeIf { it in 0..MAX_BG_FREEZE_HOLD_TIME } ?: DEFAULT_BG_FREEZE_HOLD_TIME
+        )
     }
 }
-
-internal class PlatformResourceBoostSession(
-    host: AxDragoniteImpl,
-    handle: Int,
-    cmd: AxSceneTable.ScenarioCommand,
-    resource: PlatformResource,
-    handler: PlatformHandler,
-) : AxSceneBoostSession(host, 1, handle, cmd, resource, handler)
-
-internal class ProcessAffinityBoostSession(
-    host: AxDragoniteImpl,
-    handle: Int,
-    cmd: AxSceneTable.ScenarioCommand,
-    runnable: Runnable,
-    runnable2: Runnable,
-) : AxSceneBoostSession(host, 3, handle, cmd, runnable, runnable2)
-
-internal class SfBoostSession(
-    host: AxDragoniteImpl,
-    handle: Int,
-    cmd: AxSceneTable.ScenarioCommand,
-    runnable: Runnable,
-    runnable2: Runnable,
-) : AxSceneBoostSession(host, 11, handle, cmd, runnable, runnable2)
-
-internal class CpuctlBoostSession(
-    host: AxDragoniteImpl,
-    handle: Int,
-    cmd: AxSceneTable.ScenarioCommand,
-    runnable: Runnable,
-    runnable2: Runnable,
-) : AxSceneBoostSession(host, 8, handle, cmd, runnable, runnable2)
-
-internal class CpusetBoostSession(
-    host: AxDragoniteImpl,
-    handle: Int,
-    cmd: AxSceneTable.ScenarioCommand,
-    runnable: Runnable,
-    runnable2: Runnable,
-) : AxSceneBoostSession(host, 7, handle, cmd, runnable, runnable2)
-
-internal class ThreadAffinityBoostSession(
-    host: AxDragoniteImpl,
-    handle: Int,
-    cmd: AxSceneTable.ScenarioCommand,
-    runnable: Runnable,
-    runnable2: Runnable,
-) : AxSceneBoostSession(host, 2, handle, cmd, runnable, runnable2)
-
-internal class CpusetTaskBoostSession(
-    host: AxDragoniteImpl,
-    handle: Int,
-    cmd: AxSceneTable.ScenarioCommand,
-    runnable: Runnable,
-    runnable2: Runnable,
-) : AxSceneBoostSession(host, 9, handle, cmd, runnable, runnable2)
-
-internal class ThreadBoostSession(
-    host: AxDragoniteImpl,
-    handle: Int,
-    cmd: AxSceneTable.ScenarioCommand,
-    runnable: Runnable,
-    runnable2: Runnable?,
-) : AxSceneBoostSession(host, 5, handle, cmd, runnable, runnable2) {
-    override fun restore() {
-        val command = cmd ?: return
-        mHost.logDebug(AxDragoniteImpl.TAG, "restore ${command.command?.name}")
-        boostAction?.let { mHost.mDragoniteHandler.removeCallbacks(it) }
-        val restore = restoreAction
-        if (restore != null) {
-            mHost.mDragoniteHandler.removeCallbacks(restore)
-            mHost.mDragoniteHandler.post(restore)
-            return
-        }
-        mHost.logDebug(AxDragoniteImpl.TAG, "restore skipped, restore tag disabled")
-    }
-}
-
-internal class KswapdBoostSession(
-    host: AxDragoniteImpl,
-    handle: Int,
-    cmd: AxSceneTable.ScenarioCommand,
-    runnable: Runnable,
-    runnable2: Runnable,
-) : AxSceneBoostSession(host, 10, handle, cmd, runnable, runnable2)
 
 internal class SceneReleaseRunnable(private val mHost: AxDragoniteImpl) : Runnable {
     companion object {
@@ -231,7 +134,7 @@ internal class SceneReleaseRunnable(private val mHost: AxDragoniteImpl) : Runnab
 
 internal class InputBoostResetRunnable(private val mHost: AxDragoniteImpl) : Runnable {
     override fun run() {
-        mHost.sfBindControllInternal(false)
+        mHost.sfBindControlInternal(false)
         mHost.adjustBackgroundLimit(false)
         mHost.adjustKswapdAffinity(false)
         mHost.mLimitBoostDisabled = true
@@ -299,7 +202,6 @@ internal class SessionRecords(private val mHost: AxDragoniteImpl) {
         private const val INVALID_HANDLE = -1
     }
 
-    private val mAllocatedHandles = ArrayList<Int>()
     private val mAvailableHandles = ArrayList<Int>()
     private val mActiveRecords = CopyOnWriteArrayList<ActiveSession>()
 
@@ -314,9 +216,7 @@ internal class SessionRecords(private val mHost: AxDragoniteImpl) {
             mHost.logDebug(AxDragoniteImpl.TAG, "warning: handle leak!")
             return INVALID_HANDLE
         }
-        val handle = mAvailableHandles.removeAt(0)
-        mAllocatedHandles.add(handle)
-        return handle
+        return mAvailableHandles.removeAt(0)
     }
 
     private fun findRecord(handle: Int): ActiveSession? =
@@ -329,18 +229,12 @@ internal class SessionRecords(private val mHost: AxDragoniteImpl) {
     val lastActiveRecord: ActiveSession?
         @Synchronized get() = mActiveRecords.lastOrNull()
 
-    @Synchronized fun isHandleAllocated(handle: Int): Boolean = mAllocatedHandles.contains(handle)
-
-    @Synchronized
-    fun getAllocatedHandles(): List<Int> = ArrayList(mAllocatedHandles)
-
     @Synchronized
     fun getAvailableHandlesCount(): Int = mAvailableHandles.size
 
     @Synchronized
     fun resetAll() {
         mActiveRecords.clear()
-        mAllocatedHandles.clear()
         mAvailableHandles.clear()
         for (i in 0 until MAX_HANDLES) {
             mAvailableHandles.add(i)
@@ -365,14 +259,13 @@ internal class SessionRecords(private val mHost: AxDragoniteImpl) {
             mHost.logDebug(AxDragoniteImpl.TAG, "invalid handle: $handle, ignore!")
             return
         }
-        val index = mAllocatedHandles.indexOf(handle)
-        if (index < 0) {
+        val record = findRecord(handle)
+        if (record == null) {
             mHost.logDebug(AxDragoniteImpl.TAG, "handle $handle has been removed!")
             return
         }
-        mAllocatedHandles.removeAt(index)
+        mActiveRecords.remove(record)
         mAvailableHandles.add(handle)
-        findRecord(handle)?.let(mActiveRecords::remove)
     }
 
     @Synchronized fun getRecord(handle: Int): ActiveSession? = findRecord(handle)

@@ -20,11 +20,9 @@ import android.os.PowerManagerInternal as PM
 import com.android.internal.dragonite.AxDragoniteConstants
 import com.android.server.axdragonite.model.AxCpuProfile
 import java.util.HashMap
-import java.util.concurrent.atomic.AtomicReference
 
 object AxSceneTable {
     private const val TAG = "AxSceneTable"
-    const val KEY_PARAMS1 = "params1"
     private const val PARAM_VALUE_DISABLED = "0"
     private const val DURATION_BG_FREEZE_MS = 500L
     private const val DURATION_TA_HOLD_MS = 1000L
@@ -63,42 +61,15 @@ object AxSceneTable {
         val commandList: MutableList<ScenarioCommand> = ArrayList(),
     )
 
-    internal data class CommandConfig(
-        val holdTime: Long = -1L,
-        val delayTime: Long = -1L,
-        val targetProcess: String? = null,
-        val restoreTag: String = "",
-    )
-
     class ScenarioCommand
     internal constructor(
         val command: AxCmdTable.Command?,
-        initialConfig: CommandConfig = CommandConfig(),
-    ) {
-        private val config = AtomicReference(initialConfig)
-        private val parameterMap = HashMap<String, String>()
-
-        val holdTime: Long
-            get() = config.get().holdTime
-
-        val delayTime: Long
-            get() = config.get().delayTime
-
-        val restoreTag: String
-            get() = config.get().restoreTag
-
-        fun setHoldTime(time: Long) {
-            config.updateAndGet { it.copy(holdTime = time) }
-        }
-
-        fun getProcess(): String? = config.get().targetProcess
-
-        fun putParameter(key: String, value: String) {
-            parameterMap[key] = value
-        }
-
-        fun getParameter(key: String): String? = parameterMap[key]
-    }
+        val params1: String?,
+        val holdTime: Long,
+        val delayTime: Long,
+        val targetProcess: String?,
+        val restoreTag: String,
+    )
 
     private fun Scenario.command(
         commandName: String,
@@ -109,12 +80,14 @@ object AxSceneTable {
         process: String? = null,
     ): ScenarioCommand =
         ScenarioCommand(
-            command = AxCmdTable.getCommand(commandName),
-            initialConfig = CommandConfig(holdTime, delayTime, process, restore),
-        ).apply {
-            if (params1 != null) putParameter(KEY_PARAMS1, params1)
-            commandList.add(this)
-        }
+                AxCmdTable.getCommand(commandName),
+                params1,
+                holdTime,
+                delayTime,
+                process,
+                restore,
+            )
+            .also { commandList.add(it) }
 
     private fun Scenario.cameraHalToCameraDaemon() {
         command(AxCmdTable.NAME_CMD_CPUSET_CAMERA_DAEMON_PROCS, process = PROCESS_CAMERA_HAL_6_2)

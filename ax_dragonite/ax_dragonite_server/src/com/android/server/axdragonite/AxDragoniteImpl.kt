@@ -59,7 +59,6 @@ class AxDragoniteImpl : IAxDragonite {
 
         private const val SF_SERVICE = "SurfaceFlinger"
         private const val ISURFACE_COMPOSER = "android.ui.ISurfaceComposer"
-        private const val PARAMS1_KEY = AxSceneTable.KEY_PARAMS1
         private const val PROC_DIR = "/proc"
         private const val MAX_PID_QUERY = 1024
         private const val HANDLE_MESSAGE_OFFSET = 100
@@ -121,7 +120,7 @@ class AxDragoniteImpl : IAxDragonite {
     private val debug get() = SystemProperties.getBoolean(DEBUG_PROP, false)
     private val processPidCache = ConcurrentHashMap<String, Int>()
     @Volatile private var currentActiveHandle = AxDragoniteConstants.INVALID_HANDLE
-    @Volatile var mBackgroundLoadLimit = BACKGROUND_LIMIT_ENABLED
+    @Volatile private var mBackgroundLoadLimit = BACKGROUND_LIMIT_ENABLED
     @Volatile var mLimitBoostDisabled = true
 
     private lateinit var mDragoniteThread: HandlerThread
@@ -130,7 +129,7 @@ class AxDragoniteImpl : IAxDragonite {
     lateinit var mDragoniteHandler: DragoniteHandler
     @Volatile private var mProcessList: ProcessList? = null
 
-    var mKswapdPids: IntArray? = null
+    private var mKswapdPids: IntArray? = null
     private var mKswapdAffinityBoost: IntArray? = null
     private var mDefaultKswapdAffinity: IntArray? = null
 
@@ -266,9 +265,9 @@ class AxDragoniteImpl : IAxDragonite {
         registerCommands(listOf(AxCmdTable.CMD_THREAD_AFFINITY), ::threadAffinity)
         registerCommands(listOf(AxCmdTable.CMD_PROCESS_AFFINITY), ::processAffinity)
         registerCommands(listOf(AxCmdTable.CMD_AX_NAMED_THREAD_AFFINITY), ::setAxNameThreadAffinity)
-        registerCommands(listOf(AxCmdTable.CMD_SF_CONTROL_AFFINITY), ::sfBindCoreControll)
+        registerCommands(listOf(AxCmdTable.CMD_SF_CONTROL_AFFINITY), ::sfBindCoreControl)
         registerCommands(listOf(AxCmdTable.CMD_BACKGROUND_FREEZE), ::backgroundProcessFreeze)
-        registerCommands(listOf(AxCmdTable.CMD_KSWAPD_CONTROLL_AFFINITY), ::kswapdBindCoreControll)
+        registerCommands(listOf(AxCmdTable.CMD_KSWAPD_CONTROLL_AFFINITY), ::kswapdBindCoreControl)
         registerCommands(listOf(AxCmdTable.CMD_ANIMATION_BOOST), ::animationBoost)
         registerCommands(listOf(AxCmdTable.CMD_BACKGROUND_LOAD_LIMIT), ::backgroundLoadLimit)
         registerCommands(listOf(AxCmdTable.CMD_PLATFORM_CONTROL), ::platformResourceControl)
@@ -378,7 +377,7 @@ class AxDragoniteImpl : IAxDragonite {
         params: String?,
     ) {
         logDebug(TAG, "backgroundLoadLimit")
-        mBackgroundLoadLimit = cmd.getParameter(PARAMS1_KEY)?.toIntOrNull() ?: 1
+        mBackgroundLoadLimit = cmd.params1?.toIntOrNull() ?: 1
     }
 
     private fun platformResourceControl(
@@ -389,8 +388,15 @@ class AxDragoniteImpl : IAxDragonite {
         params: String?,
     ) {
         logDebug(TAG, "platformResourceControl")
-        val resource = PlatformResource(this, cmd.getParameter(PARAMS1_KEY))
-        PlatformResourceBoostSession(this, handle, cmd, resource, PlatformHandler(this, resource))
+        val resource = PlatformResource(this, cmd.params1)
+        AxSceneBoostSession(
+                this,
+                AxSceneBoostSession.TYPE_PLATFORM,
+                handle,
+                cmd,
+                resource,
+                resource.release,
+            )
             .execute()
     }
 
@@ -401,11 +407,9 @@ class AxDragoniteImpl : IAxDragonite {
         }
         val action = if (frozen) TRACE_STATE_FROZEN else TRACE_STATE_THAWED
         logDebug(TAG, "$action processes start")
-        traceBegin("$action$TRACE_PROCESSES_SUFFIX")
-        for (info in processes) {
-            setProcessFrozen(info.pid, info.uid, frozen)
+        trace("$action$TRACE_PROCESSES_SUFFIX") {
+            for (info in processes) setProcessFrozen(info.pid, info.uid, frozen)
         }
-        traceEnd()
         logDebug(TAG, "$action processes end")
     }
 
@@ -420,25 +424,23 @@ class AxDragoniteImpl : IAxDragonite {
             TAG,
             "processAffinity: pid=$adjustPid pkg=$packageName params=$params",
         )
-        traceBegin("processAffinity")
-        val pid = targetPid(cmd, adjustPid, packageName)
-        if (pid <= 0) {
-            traceEnd()
-            return
+        trace("processAffinity") {
+            val pid = targetPid(cmd, adjustPid, packageName)
+            if (pid <= 0) return
+            val renderTid = getRenderThreadTidByPid(pid)
+            val bindcores = AxCpuSets.resolveCores(cmd.params1)
+            val cores = bindcores?.contentToString()
+            logDebug(TAG, "processAffinity: pid = $pid, renderTid = $renderTid, cores = $cores")
+            AxSceneBoostSession(
+                    this,
+                    AxSceneBoostSession.TYPE_PROCESS_AFFINITY,
+                    handle,
+                    cmd,
+                    ProcessAffinity(this, pid, renderTid, bindcores),
+                    ProcessAffinity(this, pid, renderTid, null),
+                )
+                .execute()
         }
-        val renderTid = getRenderThreadTidByPid(pid)
-        val bindcores = AxCpuSets.resolveCores(cmd.getParameter(PARAMS1_KEY))
-        val cores = bindcores?.contentToString()
-        logDebug(TAG, "processAffinity: pid = $pid, renderTid = $renderTid, cores = $cores")
-        ProcessAffinityBoostSession(
-                this,
-                handle,
-                cmd,
-                ProcessAffinity(this, pid, renderTid, bindcores),
-                ProcessAffinity(this, pid, renderTid, null),
-            )
-            .execute()
-        traceEnd()
     }
 
     private fun setAxNameThreadAffinity(
@@ -450,12 +452,13 @@ class AxDragoniteImpl : IAxDragonite {
     ) {
         val pid = if (adjustPid > 0) adjustPid else (mProcessList?.axGetTopAppPid() ?: -1)
         logDebug(TAG, "setAxNameThreadAffinity: pid = $pid")
-        AxNameThreadAffinitySession(
+        AxSceneBoostSession(
                 this,
+                AxSceneBoostSession.TYPE_NAMED_THREAD_AFFINITY,
                 handle,
                 cmd,
-                AxNameThreadAffinity(pid, true),
-                AxNameThreadAffinity(pid, false),
+                Runnable { AxNamedThreadAffinityFeature.applyNamedAffinityForPid(pid) },
+                Runnable { AxNamedThreadAffinityFeature.resetAffinity() },
             )
             .execute()
     }
@@ -483,7 +486,7 @@ class AxDragoniteImpl : IAxDragonite {
         return binder
     }
 
-    fun sfBindControllInternal(enabled: Boolean) {
+    fun sfBindControlInternal(enabled: Boolean) {
         val binder = getSfBinder() ?: return
         val configuredAffinity = mPlatformConfig.get(AxPlatformConfig.KEY_SURFACE_AFFINITY)
         val bindEnable = if (enabled) BIND_ENABLED else BIND_DISABLED
@@ -508,15 +511,22 @@ class AxDragoniteImpl : IAxDragonite {
         }
     }
 
-    private fun sfBindCoreControll(
+    private fun sfBindCoreControl(
         handle: Int,
         callerPid: Int,
         packageName: String?,
         cmd: AxSceneTable.ScenarioCommand,
         params: String?,
     ) {
-        logDebug(TAG, "sfBindCoreControll")
-        SfBoostSession(this, handle, cmd, SfBindControl(this, true), SfBindControl(this, false))
+        logDebug(TAG, "sfBindCoreControl")
+        AxSceneBoostSession(
+                this,
+                AxSceneBoostSession.TYPE_SF,
+                handle,
+                cmd,
+                Runnable { sfBindControlInternal(true) },
+                Runnable { sfBindControlInternal(false) },
+            )
             .execute()
     }
 
@@ -537,18 +547,16 @@ class AxDragoniteImpl : IAxDragonite {
             )
         }
 
-    private fun collectPidsByComm(comm: String): IntArray {
-        val pids: IntArray? = Process.getPids(PROC_DIR, IntArray(MAX_PID_QUERY))
-        if (pids == null) return IntArray(0)
-        val list = ArrayList<Int>()
-        for (pidValue in pids) {
-            if (pidValue <= 0) break
-            if (AxPlatformConfig.getProcessComm(pidValue).startsWith(comm)) {
-                list.add(pidValue)
-            }
-        }
-        return list.toIntArray()
-    }
+    private fun listPids(dir: String, max: Int): List<Int> =
+        Process.getPids(dir, IntArray(max))?.takeWhile { it > 0 } ?: emptyList()
+
+    private fun processPids(): List<Int> = listPids(PROC_DIR, MAX_PID_QUERY)
+
+    private fun threadTids(pid: Int): List<Int> =
+        listPids("$PROC_DIR${AxCmdTable.PATH_SEP}$pid$TASK_DIR_SUFFIX", MAX_TASK_QUERY)
+
+    private fun collectPidsByComm(comm: String): IntArray =
+        processPids().filter { AxPlatformConfig.getProcessComm(it).startsWith(comm) }.toIntArray()
 
     private fun getKswapdPids(): IntArray = collectPidsByComm(KSWAPD_COMM)
 
@@ -568,30 +576,21 @@ class AxDragoniteImpl : IAxDragonite {
         cmd: AxSceneTable.ScenarioCommand,
         params: String?,
     ) {
-        traceBegin("threadAffinity")
-        val paramsFromUser =
-            userParamOrReturn(params, cmd)
-                ?: run {
-                    traceEnd()
-                    return
-                }
-        val tid =
-            paramsFromUser.split(AxCommandExec.COMMA)[0].toIntOrNull()
-                ?: run {
-                    traceEnd()
-                    return
-                }
-        val array = AxCpuSets.resolveCores(cmd.getParameter(PARAMS1_KEY))
-        logDebug(TAG, "threadAffinity: tid = $tid, bindcores = ${array?.contentToString()}")
-        ThreadAffinityBoostSession(
-                this,
-                handle,
-                cmd,
-                ThreadAffinity(this, tid, array),
-                ThreadAffinity(this, tid, null),
-            )
-            .execute()
-        traceEnd()
+        trace("threadAffinity") {
+            val paramsFromUser = userParamOrReturn(params, cmd) ?: return
+            val tid = paramsFromUser.split(AxCommandExec.COMMA)[0].toIntOrNull() ?: return
+            val array = AxCpuSets.resolveCores(cmd.params1)
+            logDebug(TAG, "threadAffinity: tid = $tid, bindcores = ${array?.contentToString()}")
+            AxSceneBoostSession(
+                    this,
+                    AxSceneBoostSession.TYPE_THREAD_AFFINITY,
+                    handle,
+                    cmd,
+                    ThreadAffinity(this, tid, array),
+                    ThreadAffinity(this, tid, null),
+                )
+                .execute()
+        }
     }
 
     private fun threadBoost(
@@ -601,25 +600,73 @@ class AxDragoniteImpl : IAxDragonite {
         cmd: AxSceneTable.ScenarioCommand,
         params: String?,
     ) {
-        traceBegin("threadBoost")
-        val paramsFromUser =
-            userParamOrReturn(params, cmd)
-                ?: run {
-                    traceEnd()
-                    return
-                }
-        val tids =
-            paramsFromUser.split(AxCommandExec.COMMA).mapNotNull { it.toIntOrNull() }.toIntArray()
-        val isRestoreDisabled = RESTORE_DISABLED_FLAG.equals(cmd.restoreTag, ignoreCase = true)
-        val restoreAction =
-            if (!isRestoreDisabled) ThreadBoost(this, tids, BOOST_MODE_OFF) else null
-        ThreadBoostSession(this, handle, cmd, ThreadBoost(this, tids, BOOST_MODE_ON), restoreAction)
-            .execute()
-        traceEnd()
+        trace("threadBoost") {
+            val paramsFromUser = userParamOrReturn(params, cmd) ?: return
+            val tids =
+                paramsFromUser
+                    .split(AxCommandExec.COMMA)
+                    .mapNotNull { it.toIntOrNull() }
+                    .toIntArray()
+            val isRestoreDisabled = RESTORE_DISABLED_FLAG.equals(cmd.restoreTag, ignoreCase = true)
+            val restoreAction =
+                if (!isRestoreDisabled) Runnable { threadBoostAll(tids, BOOST_MODE_OFF) } else null
+            AxSceneBoostSession(
+                    this,
+                    AxSceneBoostSession.TYPE_THREAD_BOOST,
+                    handle,
+                    cmd,
+                    Runnable { threadBoostAll(tids, BOOST_MODE_ON) },
+                    restoreAction,
+                )
+                .execute()
+        }
     }
 
     private fun nodeCommandPath(cmd: AxSceneTable.ScenarioCommand): File? =
         (cmd.command as? AxCmdTable.NodeCommand)?.pathFile
+
+    private fun writeNodeValue(
+        handle: Int,
+        cmd: AxSceneTable.ScenarioCommand,
+        sessionType: Int,
+        defaultRestore: (Int) -> String,
+        resolve: (String) -> String = { it },
+    ) {
+        val node = cmd.command as? AxCmdTable.NodeCommand ?: return
+        val value = cmd.params1 ?: return
+        logDebug(TAG, "path = ${node.pathFile}, value = $value")
+        val restore = cmd.restoreTag.ifEmpty { defaultRestore(node.id) }
+        AxSceneBoostSession(
+                this,
+                sessionType,
+                handle,
+                cmd,
+                FileWrite(this, node.pathFile, resolve(value)),
+                FileWrite(this, node.pathFile, resolve(restore)),
+            )
+            .execute()
+    }
+
+    private fun writePidNode(
+        handle: Int,
+        cmd: AxSceneTable.ScenarioCommand,
+        sessionType: Int,
+        pid: Int,
+        restoreFile: File,
+    ) {
+        val path = nodeCommandPath(cmd) ?: return
+        logDebug(TAG, "path = $path, pid = $pid")
+        if (pid <= 0) return
+        AxSceneBoostSession(
+                this,
+                sessionType,
+                handle,
+                cmd,
+                FileWrite(this, path, pid.toString()),
+                FileWrite(this, restoreFile, pid.toString()),
+            )
+            .execute()
+    }
 
     private fun adjustCpuctlUclamp(
         handle: Int,
@@ -628,21 +675,9 @@ class AxDragoniteImpl : IAxDragonite {
         cmd: AxSceneTable.ScenarioCommand,
         params: String?,
     ) {
-        val path = nodeCommandPath(cmd) ?: return
-        val uclamp = cmd.getParameter(PARAMS1_KEY) ?: return
-        logDebug(TAG, "path = $path, uclamp = $uclamp")
-        val restore =
-            cmd.restoreTag.ifEmpty {
-                AxPlatformConfig.getDefaultUclampRestoreValue(cmd.command?.id ?: return)
-            }
-        CpuctlBoostSession(
-                this,
-                handle,
-                cmd,
-                CpuctlUclamp(this, path, uclamp),
-                CpuctlUclamp(this, path, restore),
-            )
-            .execute()
+        writeNodeValue(handle, cmd, AxSceneBoostSession.TYPE_CPUCTL, {
+            AxPlatformConfig.getDefaultUclampRestoreValue(it)
+        })
     }
 
     private fun boostThreadScheduler(tid: Int) {
@@ -658,20 +693,33 @@ class AxDragoniteImpl : IAxDragonite {
         Process.setThreadPriority(tid, priority)
     }
 
-    fun threadBoostInternal(tid: Int, boost: Boolean) {
+    private fun threadBoostAll(tids: IntArray, boost: Boolean) {
+        for (tid in tids) threadBoostInternal(tid, boost)
+    }
+
+    private fun threadBoostInternal(tid: Int, boost: Boolean) {
         logDebug(TAG, "threadboostinternal: tid = $tid, boost = $boost")
-        traceBegin("thread_boost:${boost}_tid:$tid")
-        try {
-            val threadPriority = Process.getThreadPriority(tid)
-            if (boost) {
-                boostThreadScheduler(tid)
-            } else {
-                restoreThreadScheduler(tid, threadPriority)
+        trace("thread_boost:${boost}_tid:$tid") {
+            try {
+                val threadPriority = Process.getThreadPriority(tid)
+                if (boost) {
+                    boostThreadScheduler(tid)
+                } else {
+                    restoreThreadScheduler(tid, threadPriority)
+                }
+            } catch (e: Exception) {
+                logDebug(TAG, "thread boost pid: $tid, boost: $boost failed!")
             }
-        } catch (e: Exception) {
-            logDebug(TAG, "thread boost pid: $tid, boost: $boost failed!")
         }
-        traceEnd()
+    }
+
+    internal inline fun <T> trace(name: String, block: () -> T): T {
+        traceBegin(name)
+        try {
+            return block()
+        } finally {
+            traceEnd()
+        }
     }
 
     fun traceBegin(traceName: String) {
@@ -679,15 +727,10 @@ class AxDragoniteImpl : IAxDragonite {
     }
 
     private fun getProcessPids(): HashMap<String, Int> {
-        val pids: IntArray? = Process.getPids(PROC_DIR, IntArray(MAX_PID_QUERY))
-        if (pids == null) return HashMap()
         val map = HashMap<String, Int>()
-        for (pid in pids) {
-            if (pid <= 0) break
+        for (pid in processPids()) {
             val cmdLine = AxPlatformConfig.getProcessCmdLine(pid)
-            if (cmdLine.isEmpty()) continue
-            val cmdParts = cmdLine.split(AxCommandExec.SLASH)
-            map[cmdParts[cmdParts.size - 1]] = pid
+            if (cmdLine.isNotEmpty()) map[cmdLine.substringAfterLast(AxCommandExec.SLASH)] = pid
         }
         return map
     }
@@ -698,33 +741,18 @@ class AxDragoniteImpl : IAxDragonite {
 
     private fun findThreadTid(pid: Int, match: (String) -> Boolean): Int {
         if (pid <= 0) return INVALID_TID
-        val tids =
-            Process.getPids(
-                "$PROC_DIR${AxCmdTable.PATH_SEP}$pid$TASK_DIR_SUFFIX",
-                IntArray(MAX_TASK_QUERY),
-            ) ?: return INVALID_TID
-        for (tid in tids) {
-            if (tid <= 0) break
-            if (match(AxPlatformConfig.getProcessComm(tid))) return tid
-        }
-        return INVALID_TID
+        return threadTids(pid).firstOrNull { match(AxPlatformConfig.getProcessComm(it)) }
+            ?: INVALID_TID
     }
 
     private fun getRenderThreadTidByPid(pid: Int): Int = findThreadTid(pid) { it == THREAD_RENDER }
 
     private fun getHwuiTaskTidsByPid(pid: Int): IntArray? {
         if (pid <= 0) return null
-        val tids =
-            Process.getPids(
-                "$PROC_DIR${AxCmdTable.PATH_SEP}$pid$TASK_DIR_SUFFIX",
-                IntArray(MAX_TASK_QUERY),
-            ) ?: return null
-        val hwuiTids = ArrayList<Int>()
-        for (tid in tids) {
-            if (tid <= 0) break
-            if (AxPlatformConfig.getProcessComm(tid).contains(THREAD_HWUI_PREFIX)) hwuiTids.add(tid)
-        }
-        return hwuiTids.takeIf { it.isNotEmpty() }?.toIntArray()
+        return threadTids(pid)
+            .filter { AxPlatformConfig.getProcessComm(it).contains(THREAD_HWUI_PREFIX) }
+            .takeIf { it.isNotEmpty() }
+            ?.toIntArray()
     }
 
     private fun adjustCpusetCpus(
@@ -734,21 +762,13 @@ class AxDragoniteImpl : IAxDragonite {
         cmd: AxSceneTable.ScenarioCommand,
         params: String?,
     ) {
-        val path = nodeCommandPath(cmd) ?: return
-        val cpus = cmd.getParameter(PARAMS1_KEY) ?: return
-        logDebug(TAG, "path = $path, cpus = $cpus")
-        val restoreCpus =
-            cmd.restoreTag.ifEmpty {
-                mPlatformConfig.getRestoreCpusetCpus(cmd.command?.id ?: return)
-            }
-        CpusetBoostSession(
-                this,
-                handle,
-                cmd,
-                CpusetCpus(this, path, cpus),
-                CpusetCpus(this, path, restoreCpus),
-            )
-            .execute()
+        writeNodeValue(
+            handle,
+            cmd,
+            AxSceneBoostSession.TYPE_CPUSET,
+            { mPlatformConfig.getRestoreCpusetCpus(it) },
+            { AxCpuSets.resolve(it) },
+        )
     }
 
     private fun writeCpusetCpus(path: String, configKey: String) {
@@ -762,36 +782,38 @@ class AxDragoniteImpl : IAxDragonite {
         }
     }
 
-    private fun restoreBackgroundCpus() {
-        writeCpusetCpus(CPUSET_AX_FOREGROUND_CPUS, AxPlatformConfig.KEY_AXFG)
-        writeCpusetCpus(CPUSET_DEX2OAT_CPUS, AxPlatformConfig.KEY_DEX)
-        writeCpusetCpus(CPUSET_BACKGROUND_CPUS, AxPlatformConfig.KEY_BACKGROUND)
-        SystemProperties.set(
-            PROP_DEX2OAT_THREADS,
-            mPlatformConfig.get(AxPlatformConfig.KEY_DEX_RESTORE_THREADS),
-        )
-    }
-
-    private fun limitBackgroundCpus() {
-        writeCpusetCpus(CPUSET_AX_FOREGROUND_CPUS, AxPlatformConfig.KEY_FOREGROUND_INPUT)
-        writeCpusetCpus(CPUSET_DEX2OAT_CPUS, AxPlatformConfig.KEY_DEX_INPUT)
-        writeCpusetCpus(CPUSET_BACKGROUND_CPUS, AxPlatformConfig.KEY_BACKGROUND_INPUT)
-        SystemProperties.set(
-            PROP_DEX2OAT_THREADS,
-            mPlatformConfig.get(AxPlatformConfig.KEY_DEX_THREADS),
-        )
+    private fun writeBackgroundCpus(
+        foregroundKey: String,
+        dexKey: String,
+        backgroundKey: String,
+        threadsKey: String,
+    ) {
+        writeCpusetCpus(CPUSET_AX_FOREGROUND_CPUS, foregroundKey)
+        writeCpusetCpus(CPUSET_DEX2OAT_CPUS, dexKey)
+        writeCpusetCpus(CPUSET_BACKGROUND_CPUS, backgroundKey)
+        SystemProperties.set(PROP_DEX2OAT_THREADS, mPlatformConfig.get(threadsKey))
     }
 
     fun adjustBackgroundLimit(limit: Boolean) {
         if (!limit) {
-            restoreBackgroundCpus()
+            writeBackgroundCpus(
+                AxPlatformConfig.KEY_AXFG,
+                AxPlatformConfig.KEY_DEX,
+                AxPlatformConfig.KEY_BACKGROUND,
+                AxPlatformConfig.KEY_DEX_RESTORE_THREADS,
+            )
             return
         }
         if (mBackgroundLoadLimit == BACKGROUND_LIMIT_DISABLED) {
             Slog.d(TAG, "disable BackgroundLimit!")
             return
         }
-        limitBackgroundCpus()
+        writeBackgroundCpus(
+            AxPlatformConfig.KEY_FOREGROUND_INPUT,
+            AxPlatformConfig.KEY_DEX_INPUT,
+            AxPlatformConfig.KEY_BACKGROUND_INPUT,
+            AxPlatformConfig.KEY_DEX_THREADS,
+        )
     }
 
     private fun adjustCpuctlShares(
@@ -801,19 +823,9 @@ class AxDragoniteImpl : IAxDragonite {
         cmd: AxSceneTable.ScenarioCommand,
         params: String?,
     ) {
-        val path = nodeCommandPath(cmd) ?: return
-        val cpuShares = cmd.getParameter(PARAMS1_KEY) ?: return
-        logDebug(TAG, "path = $path, cpuShares = $cpuShares")
-        val restore =
-            cmd.restoreTag.ifEmpty { mPlatformConfig.getCpushares(cmd.command?.id ?: return) }
-        CpuctlBoostSession(
-                this,
-                handle,
-                cmd,
-                CpuctlCpuShares(this, path, cpuShares),
-                CpuctlCpuShares(this, path, restore),
-            )
-            .execute()
+        writeNodeValue(handle, cmd, AxSceneBoostSession.TYPE_CPUCTL, {
+            mPlatformConfig.getCpushares(it)
+        })
     }
 
     private fun initKswapdPids() {
@@ -828,39 +840,33 @@ class AxDragoniteImpl : IAxDragonite {
         cmd: AxSceneTable.ScenarioCommand,
         params: String?,
     ) {
-        val path = nodeCommandPath(cmd) ?: return
-        val pid = targetPid(cmd, adjustPid, packageName)
-        logDebug(TAG, "path = $path, adjustPid = $pid")
-        if (pid <= 0) return
-        val procs =
-            AxPlatformConfig.getCpusetProcs(cmd.restoreTag) ?: File(CPUSET_CGROUP_PROCS_PATH)
-        CpusetBoostSession(
-                this,
-                handle,
-                cmd,
-                CpusetProc(this, path, pid),
-                CpusetProc(this, procs, pid),
-            )
-            .execute()
+        writePidNode(
+            handle,
+            cmd,
+            AxSceneBoostSession.TYPE_CPUSET,
+            targetPid(cmd, adjustPid, packageName),
+            AxPlatformConfig.getCpusetProcs(cmd.restoreTag) ?: File(CPUSET_CGROUP_PROCS_PATH),
+        )
     }
 
-    private fun kswapdBindCoreControll(
+    private fun kswapdBindCoreControl(
         handle: Int,
         adjustPid: Int,
         packageName: String?,
         cmd: AxSceneTable.ScenarioCommand,
         params: String?,
     ) {
-        val bindCoreStr = cmd.getParameter(PARAMS1_KEY)
+        val bindCoreStr = cmd.params1
         val bindcores = AxCpuSets.resolveCores(bindCoreStr) ?: mKswapdAffinityBoost
         val cores = bindcores?.contentToString()
         logDebug(TAG, "kswapdBind: $bindCoreStr -> $cores")
-        KswapdBoostSession(
+        AxSceneBoostSession(
                 this,
+                AxSceneBoostSession.TYPE_KSWAPD,
                 handle,
                 cmd,
-                KswapdAffinityControlRunnable(this, bindcores),
-                KswapdAffinityControlRunnable(this, mDefaultKswapdAffinity),
+                Runnable { adjustKswapdAffinityInternal(bindcores) },
+                Runnable { adjustKswapdAffinityInternal(mDefaultKswapdAffinity) },
             )
             .execute()
     }
@@ -872,21 +878,14 @@ class AxDragoniteImpl : IAxDragonite {
         cmd: AxSceneTable.ScenarioCommand,
         params: String?,
     ) {
-        val path = nodeCommandPath(cmd) ?: return
-        val tidParam = AxPlatformConfig.paramsFromUser(params, cmd.command?.id ?: return)
-        val targetTid = tidParam?.toIntOrNull() ?: adjustTid
-        logDebug(TAG, "path = $path, adjustTid = $targetTid")
-        if (targetTid <= 0) return
-        val cpusetTaskPath =
-            AxPlatformConfig.getCpusetTasks(cmd.restoreTag) ?: File(CPUSET_TASKS_PATH)
-        CpusetTaskBoostSession(
-                this,
-                handle,
-                cmd,
-                CpusetProc(this, path, targetTid),
-                CpusetProc(this, cpusetTaskPath, targetTid),
-            )
-            .execute()
+        val cmdId = cmd.command?.id ?: return
+        writePidNode(
+            handle,
+            cmd,
+            AxSceneBoostSession.TYPE_CPUSET_TASK,
+            AxPlatformConfig.paramsFromUser(params, cmdId)?.toIntOrNull() ?: adjustTid,
+            AxPlatformConfig.getCpusetTasks(cmd.restoreTag) ?: File(CPUSET_TASKS_PATH),
+        )
     }
 
     private fun adjustCpuctlProcs(
@@ -896,27 +895,20 @@ class AxDragoniteImpl : IAxDragonite {
         cmd: AxSceneTable.ScenarioCommand,
         params: String?,
     ) {
-        val path = nodeCommandPath(cmd) ?: return
-        val pid = targetPid(cmd, adjustPid, packageName)
-        logDebug(TAG, "path = $path, adjustPid = $pid")
-        if (pid <= 0) return
-        val fileV2 =
-            AxPlatformConfig.getCpuctlProcs(cmd.restoreTag) ?: File(CPUCTL_CGROUP_PROCS_PATH)
-        CpuctlBoostSession(
-                this,
-                handle,
-                cmd,
-                CpuctlProcs(this, path, pid),
-                CpuctlProcs(this, fileV2, pid),
-            )
-            .execute()
+        writePidNode(
+            handle,
+            cmd,
+            AxSceneBoostSession.TYPE_CPUCTL,
+            targetPid(cmd, adjustPid, packageName),
+            AxPlatformConfig.getCpuctlProcs(cmd.restoreTag) ?: File(CPUCTL_CGROUP_PROCS_PATH),
+        )
     }
 
     fun adjustKswapdAffinity(boost: Boolean) {
         adjustKswapdAffinityInternal(if (boost) mKswapdAffinityBoost else mDefaultKswapdAffinity)
     }
 
-    fun adjustKswapdAffinityInternal(affinity: IntArray?) {
+    private fun adjustKswapdAffinityInternal(affinity: IntArray?) {
         val targetAffinity = affinity ?: mDefaultKswapdAffinity ?: return
         val kswapdPids = mKswapdPids
         if (targetAffinity.isEmpty() || kswapdPids == null || kswapdPids.isEmpty()) return
@@ -955,12 +947,13 @@ class AxDragoniteImpl : IAxDragonite {
         val pid = targetPid(cmd, adjustPid, packageName)
         if (pid <= 0) return
         val renderThread = getRenderThreadTidByPid(pid)
-        AnimationBoostSession(
+        AxSceneBoostSession(
                 this,
+                AxSceneBoostSession.TYPE_ANIMATION,
                 handle,
                 cmd,
-                AnimationBoost(this, pid, renderThread, BOOST_MODE_ON),
-                AnimationBoost(this, pid, renderThread, BOOST_MODE_OFF),
+                Runnable { animationBoostInternal(pid, renderThread, BOOST_MODE_ON) },
+                Runnable { animationBoostInternal(pid, renderThread, BOOST_MODE_OFF) },
             )
             .execute()
     }
@@ -974,31 +967,31 @@ class AxDragoniteImpl : IAxDragonite {
         restoreThreadScheduler(tid, priority)
     }
 
-    fun animationBoostInternal(pid: Int, renderTid: Int, boost: Boolean) {
+    private fun animationBoostInternal(pid: Int, renderTid: Int, boost: Boolean) {
         logDebug(TAG, "animationboost: pid = $pid, renderTid = $renderTid, boost = $boost")
-        traceBegin("animamtionBoost_boost:${boost}_pid:${pid}_renderTid:$renderTid")
-        try {
-            val hwuiTaskTidsByPid = getHwuiTaskTidsByPid(pid)
-            if (boost) {
-                boostAnimationThread(pid)
-                boostAnimationThread(renderTid)
-                hwuiTaskTidsByPid?.forEach(::boostAnimationThread)
-            } else {
-                if (pid > 0) {
-                    restoreThreadScheduler(pid, RESTORE_THREAD_PRIORITY)
+        trace("animationBoost_boost:${boost}_pid:${pid}_renderTid:$renderTid") {
+            try {
+                val hwuiTaskTidsByPid = getHwuiTaskTidsByPid(pid)
+                if (boost) {
+                    boostAnimationThread(pid)
+                    boostAnimationThread(renderTid)
+                    hwuiTaskTidsByPid?.forEach(::boostAnimationThread)
+                } else {
+                    if (pid > 0) {
+                        restoreThreadScheduler(pid, RESTORE_THREAD_PRIORITY)
+                    }
+                    restoreAnimationThread(renderTid, RESTORE_THREAD_PRIORITY)
+                    hwuiTaskTidsByPid?.forEach {
+                        restoreAnimationThread(it, RESTORE_HWUI_THREAD_PRIORITY)
+                    }
                 }
-                restoreAnimationThread(renderTid, RESTORE_THREAD_PRIORITY)
-                hwuiTaskTidsByPid?.forEach {
-                    restoreAnimationThread(it, RESTORE_HWUI_THREAD_PRIORITY)
-                }
+            } catch (unused: Exception) {
+                logDebug(
+                    TAG,
+                    "animation boost pid: $pid, renderTid: $renderTid, boost: $boost failed!",
+                )
             }
-        } catch (unused: Exception) {
-            logDebug(
-                TAG,
-                "animation boost pid: $pid, rendterTid: $renderTid, boost: $boost failed!",
-            )
         }
-        traceEnd()
     }
 
     private fun activateScene(handle: Int, sceneId: Int, bundle: Bundle?, duration: Int) {
@@ -1009,7 +1002,7 @@ class AxDragoniteImpl : IAxDragonite {
             scheduleTimeout(handle, duration)
         }
         mManagerHandler.post {
-            if (!mSessionRecords.isHandleAllocated(handle)) return@post
+            if (!hasBoostRecord(handle)) return@post
             val prevHandle = currentActiveHandle
             if (prevHandle != handle) {
                 restoreHandle(prevHandle)
@@ -1025,11 +1018,12 @@ class AxDragoniteImpl : IAxDragonite {
         mDragoniteHandler.sendEmptyMessageDelayed(messageId, duration.toLong())
     }
 
-    override fun sceneBoostAcquire(sceneId: Int, bundle: Bundle?): Int {
-        traceBegin("sceneBoostAquire")
+    override fun sceneBoostAcquire(sceneId: Int, bundle: Bundle?): Int =
+        trace("sceneBoostAcquire") { acquireScene(sceneId, bundle) }
+
+    private fun acquireScene(sceneId: Int, bundle: Bundle?): Int {
         if (AxSceneTable.getScenario(sceneId) == null) {
             Slog.d(TAG, "Scene id: $sceneId is not exist!")
-            traceEnd()
             return AxDragoniteConstants.INVALID_HANDLE
         }
         val actualBundle = bundle?.deepCopy() ?: Bundle()
@@ -1060,11 +1054,9 @@ class AxDragoniteImpl : IAxDragonite {
         if (existingRecord == null || existingRecord.sceneId != sceneId) {
             handle = mSessionRecords.acquireRecord(sceneId, actualBundle)
             if (handle == AxDragoniteConstants.INVALID_HANDLE) {
-                traceEnd()
                 return handle
             }
             activateScene(handle, sceneId, actualBundle, duration)
-            traceEnd()
             return handle
         }
         Slog.d(TAG, "update handle $handle")
@@ -1087,7 +1079,6 @@ class AxDragoniteImpl : IAxDragonite {
                 dispatchSceneCommands(sceneId, sceneBundle)
             }
         }
-        traceEnd()
         return handle
     }
 
@@ -1099,7 +1090,7 @@ class AxDragoniteImpl : IAxDragonite {
         Slog.d(TAG, "release $handle")
         if (
             handle <= AxDragoniteConstants.INVALID_HANDLE ||
-                !mSessionRecords.isHandleAllocated(handle)
+                !hasBoostRecord(handle)
         ) {
             Slog.d(TAG, "invalid handle, ignore!")
             return
@@ -1129,7 +1120,7 @@ class AxDragoniteImpl : IAxDragonite {
         adjustPid: Int,
         packageName: String?,
     ): Int {
-        val targetProc = cmd.getProcess()
+        val targetProc = cmd.targetProcess
         if (targetProc.isNullOrEmpty() || (adjustPid > 0 && targetProc == packageName)) {
             return adjustPid
         }
@@ -1150,10 +1141,7 @@ class AxDragoniteImpl : IAxDragonite {
                 }
                 processPidCache.remove(processName)
             }
-            traceBegin("getPidByProcessName")
-            val pidsMap = getProcessPids()
-            val rawPid = pidsMap[processName]
-            traceEnd()
+            val rawPid = trace("getPidByProcessName") { getProcessPids()[processName] }
             if (rawPid != null && rawPid > 0) {
                 processPidCache[processName] = rawPid
                 logDebug(TAG, "process pid is $rawPid")
@@ -1235,8 +1223,8 @@ class AxDragoniteImpl : IAxDragonite {
         val holdMs = if (duration > 0) duration else AxDragoniteConstants.DURATION_FLING_MS
         val resource = PlatformResource(this, AxSceneTable.NAME_FLING)
         mDragoniteHandler.post(resource)
-        mDragoniteHandler.postDelayed(PlatformHandler(this, resource), holdMs.toLong())
-        mManagerHandler.post(BackgroundLoadLimitRunnable(this, BACKGROUND_LIMIT_ENABLED))
+        mDragoniteHandler.postDelayed(resource.release, holdMs.toLong())
+        mManagerHandler.post { mBackgroundLoadLimit = BACKGROUND_LIMIT_ENABLED }
     }
 
     override fun updateGameModeBoost(enabled: Boolean) {
@@ -1281,7 +1269,7 @@ class AxDragoniteImpl : IAxDragonite {
         }
         mSessionRecords.resetAll()
         currentActiveHandle = AxDragoniteConstants.INVALID_HANDLE
-        sfBindControllInternal(false)
+        sfBindControlInternal(false)
         adjustBackgroundLimit(false)
         adjustKswapdAffinity(false)
         mLimitBoostDisabled = true
@@ -1345,9 +1333,9 @@ class AxDragoniteImpl : IAxDragonite {
     }
 
     private fun dumpHandles(pw: PrintWriter) {
-        val allocatedHandles = mSessionRecords.getAllocatedHandles()
         val availableCount = mSessionRecords.getAvailableHandlesCount()
         val activeRecords = mSessionRecords.getActiveRecords()
+        val allocatedHandles = activeRecords.map { it.handle }
         val now = SystemClock.elapsedRealtime()
 
         pw.println("-------------------------------------------------------------------------------")
@@ -1401,7 +1389,7 @@ class AxDragoniteImpl : IAxDragonite {
             pw.println("    Attached Tasks (${tasks.size}):")
             for (task in tasks) {
                 val cmd = task.cmd
-                pw.println("      - [Type ${task.sessionType}] cmd: ${cmd?.command?.name} (id: ${cmd?.command?.id}), hold: ${cmd?.holdTime}ms, delay: ${cmd?.delayTime}ms")
+                pw.println("      - [Type ${task.sessionType}] cmd: ${cmd.command?.name} (id: ${cmd.command?.id}), hold: ${cmd.holdTime}ms, delay: ${cmd.delayTime}ms")
             }
         }
 
@@ -1423,7 +1411,7 @@ class AxDragoniteImpl : IAxDragonite {
             pw.println("Scene ID: ${scenario.scenarioId} -> \"${scenario.scenarioName}\" (${scenario.commandList.size} commands)")
             for (cmd in scenario.commandList) {
                 val command = cmd.command
-                pw.println("  Command: ${command?.name} (id=${command?.id}), holdTime=${cmd.holdTime}ms, delayTime=${cmd.delayTime}ms, process=${cmd.getProcess() ?: "any"}")
+                pw.println("  Command: ${command?.name} (id=${command?.id}), holdTime=${cmd.holdTime}ms, delayTime=${cmd.delayTime}ms, process=${cmd.targetProcess ?: "any"}")
             }
         }
     }
@@ -1448,7 +1436,7 @@ class AxDragoniteImpl : IAxDragonite {
             pw.println("Error: invalid handle format '$handleStr'. Must be an integer.")
             return
         }
-        if (!mSessionRecords.isHandleAllocated(handle)) {
+        if (!hasBoostRecord(handle)) {
             pw.println("Error: handle $handle is not currently allocated.")
             return
         }
