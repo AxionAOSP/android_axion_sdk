@@ -29,7 +29,9 @@ class AxDragoniteService(private val context: Context) : SystemService(context) 
     }
 
     override fun onBootPhase(phase: Int) {
-        if (phase != PHASE_SYSTEM_SERVICES_READY) return
-        dragonite.onSystemReady(context, null)
+        when (phase) {
+            PHASE_SYSTEM_SERVICES_READY -> dragonite.onSystemReady(context, null)
+            PHASE_BOOT_COMPLETED -> dragonite.onBootCompleted()
+        }
     }
 }

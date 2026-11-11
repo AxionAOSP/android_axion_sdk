@@ -117,6 +117,7 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         private const val SF_AFFINITY_BINDER_CODE = 2007
         private const val DEBUG_PROP = "persist.dragonite.debug"
         private const val GRACE_PERIOD_MS = 5000L
+        private const val BOOT_RESTRICTED_CPUS_DELAY_MS = 5000L
         private const val COLD_START_TIMEOUT_MS = 10000L
         private const val BINDER_DUMP_TIMEOUT_SEC = 2L
     }
@@ -172,14 +173,22 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
             AxDragoniteConstants.BOOST_SCHED_PRIORITY,
         )
         mDragoniteExt.init()
-        writeCpusetCpus(
-            CPUSET_RESTRICTED_CPUS,
-            AxPlatformConfig.KEY_RESTRICTED,
-            AxCpuSets.CPUSET_ALL,
-        )
         BackgroundThread.getHandler().removeCallbacks(mSceneReleaseRunnable)
         BackgroundThread.getHandler().post(mSceneReleaseRunnable)
         initKswapdPids()
+    }
+
+    fun onBootCompleted() {
+        mManagerHandler.postDelayed(
+            {
+                writeCpusetCpus(
+                    CPUSET_RESTRICTED_CPUS,
+                    AxPlatformConfig.KEY_RESTRICTED,
+                    AxCpuSets.CPUSET_ALL,
+                )
+            },
+            BOOT_RESTRICTED_CPUS_DELAY_MS,
+        )
     }
 
     private fun initHandlerThreads() {
