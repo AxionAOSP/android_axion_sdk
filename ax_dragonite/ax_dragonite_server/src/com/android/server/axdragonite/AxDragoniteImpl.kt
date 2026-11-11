@@ -440,13 +440,7 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
             "processAffinity: pid=$adjustPid pkg=$packageName params=$params",
         )
         traceBegin("processAffinity")
-        val targetProc = cmd.getProcess()
-        val pid =
-            if (!targetProc.isNullOrEmpty() && (adjustPid <= 0 || targetProc != packageName)) {
-                getPidByProcessName(targetProc)
-            } else {
-                adjustPid
-            }
+        val pid = targetPid(cmd, adjustPid, packageName)
         if (pid <= 0) {
             traceEnd()
             return
@@ -895,16 +889,17 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         params: String?,
     ) {
         val path = nodeCommandPath(cmd) ?: return
-        logDebug(TAG, "path = $path, adjustPid = $adjustPid")
-        if (adjustPid <= 0) return
+        val pid = targetPid(cmd, adjustPid, packageName)
+        logDebug(TAG, "path = $path, adjustPid = $pid")
+        if (pid <= 0) return
         val procs =
             AxPlatformConfig.getCpusetProcs(cmd.restoreTag) ?: File(CPUSET_CGROUP_PROCS_PATH)
         CpusetBoostSession(
                 this,
                 handle,
                 cmd,
-                CpusetProc(this, path, adjustPid),
-                CpusetProc(this, procs, adjustPid),
+                CpusetProc(this, path, pid),
+                CpusetProc(this, procs, pid),
             )
             .execute()
     }
@@ -962,16 +957,17 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         params: String?,
     ) {
         val path = nodeCommandPath(cmd) ?: return
-        logDebug(TAG, "path = $path, adjustPid = $adjustPid")
-        if (adjustPid <= 0) return
+        val pid = targetPid(cmd, adjustPid, packageName)
+        logDebug(TAG, "path = $path, adjustPid = $pid")
+        if (pid <= 0) return
         val fileV2 =
             AxPlatformConfig.getCpuctlProcs(cmd.restoreTag) ?: File(CPUCTL_CGROUP_PROCS_PATH)
         CpuctlBoostSession(
                 this,
                 handle,
                 cmd,
-                CpuctlProcs(this, path, adjustPid),
-                CpuctlProcs(this, fileV2, adjustPid),
+                CpuctlProcs(this, path, pid),
+                CpuctlProcs(this, fileV2, pid),
             )
             .execute()
     }
@@ -1016,13 +1012,7 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
         params: String?,
     ) {
         logDebug(TAG, "animationBoost")
-        val targetProc = cmd.getProcess()
-        val pid =
-            if (!targetProc.isNullOrEmpty() && (adjustPid <= 0 || targetProc != packageName)) {
-                getPidByProcessName(targetProc)
-            } else {
-                adjustPid
-            }
+        val pid = targetPid(cmd, adjustPid, packageName)
         if (pid <= 0) return
         val renderThread = getRenderThreadTidByPid(pid)
         AnimationBoostSession(
@@ -1192,6 +1182,18 @@ class AxDragoniteImpl(context: Context? = null) : IAxDragonite {
             mInputBoostResetRunnable,
             mPlatformConfig.getDurationInput().toLong(),
         )
+    }
+
+    private fun targetPid(
+        cmd: AxSceneTable.ScenarioCommand,
+        adjustPid: Int,
+        packageName: String?,
+    ): Int {
+        val targetProc = cmd.getProcess()
+        if (targetProc.isNullOrEmpty() || (adjustPid > 0 && targetProc == packageName)) {
+            return adjustPid
+        }
+        return getPidByProcessName(targetProc)
     }
 
     fun getPidByProcessName(processName: String?): Int {
