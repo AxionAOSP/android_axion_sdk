@@ -16,6 +16,7 @@
 
 package com.android.systemui.qs.ax.ui.grid
 
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
@@ -39,6 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import com.android.compose.animation.scene.ContentScope
 import com.android.compose.modifiers.thenIf
@@ -175,7 +177,7 @@ fun ContentScope.AxGridItemContent(
                     canResize = { span -> editController.canResize(item, span) },
                     onResizeStarted = editController.listState::beginResize,
                     onResizeStopped = editController.listState::endResize,
-                    onResize = { span -> editController.resizeItem(item, span) },
+                    onResize = { span -> editController.previewResizeItem(item, span) },
                     onResizeFinished = { span ->
                         if (editController.canResize(item, span)) {
                             editController.resizeItem(item, span)
@@ -187,6 +189,11 @@ fun ContentScope.AxGridItemContent(
             }
 
         val hapticFeedback = LocalHapticFeedback.current
+        val view = LocalView.current
+        val stackTileCount =
+            (item.value as? AxQsGridValue.Stack)?.let {
+                maxOf(it.editTiles.size, it.tiles.size)
+            } ?: 0
         AxInteractiveTileContainer(
             tileState = tileState,
             resizeHandleModifier = resizeHandle,
@@ -195,13 +202,14 @@ fun ContentScope.AxGridItemContent(
             resizable = resizable,
             modifier = Modifier.fillMaxSize(),
             itemModifier = itemModifier,
-            showRemoveBadge = !isStack,
+            showRemoveBadge = !isStack || stackTileCount == 0,
             onRemoveClick = { editController.removeItem(item) },
             onResizeClick = {
                 if (resizable) {
                     editController.listState.item(item.id)?.let { current ->
                         val nextSpan = current.value.nextSpan(current.span, columns)
                         if (nextSpan != current.span && editController.canResize(current, nextSpan)) {
+                            view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)
                             editController.resizeItem(current, nextSpan)
                         }
                     }
@@ -270,7 +278,7 @@ fun ContentScope.AxGridItemContent(
                                 editController.selectedId.value = if (isSelected) null else item.id
                                 hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
                             },
-                            onRemoveStack = { editController.removeItem(item) },
+                            onRemoveTileAt = { pageIdx -> editController.removeStackPage(item, pageIdx) },
                             modifier = Modifier.fillMaxSize(),
                         )
                     }

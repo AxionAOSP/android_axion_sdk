@@ -17,6 +17,7 @@
 package com.android.systemui.qs.ax.ui.edit
 
 import android.content.ClipData
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -46,6 +47,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.LayoutDirection
 import com.android.systemui.qs.ax.domain.interactor.AxQsLayoutInteractor
 import com.android.systemui.qs.ax.shared.model.AxQsGridItem
@@ -53,8 +55,14 @@ import com.android.systemui.qs.ax.shared.model.AxQsGridPosition
 import com.android.systemui.qs.ax.shared.model.AxQsGridSection
 import com.android.systemui.qs.ax.shared.model.AxQsSpan
 import com.android.systemui.qs.ax.ui.grid.AxQsGridCell
-import com.android.systemui.qs.ax.ui.grid.canFitAxQsGridItems
+import com.android.systemui.qs.ax.ui.grid.packItems
 import kotlin.math.abs
+
+internal data class AxQsSolvedDragTarget(
+    val section: AxQsGridSection,
+    val position: AxQsGridPosition,
+    val isGapInsert: Boolean,
+)
 
 class AxQsEditListState<T>(
     initialItems: List<AxQsGridItem<T>>,
@@ -73,6 +81,11 @@ class AxQsEditListState<T>(
     private val gridOrigins = mutableMapOf<AxQsGridSection, Offset>()
     private val _items: SnapshotStateList<AxQsGridItem<T>> = initialItems.toMutableStateList()
     private var dragSnapshot: List<AxQsGridItem<T>>? = null
+    private var resizeSnapshot: List<AxQsGridItem<T>>? = null
+    private var dragSnapshotBounds: Map<String, Pair<AxQsGridSection, Rect>> = emptyMap()
+    private var lastSolvedTarget: AxQsSolvedDragTarget? = null
+    internal val currentSolvedTarget: AxQsSolvedDragTarget?
+        get() = lastSolvedTarget
     private var dragAnchor = Offset.Zero
 
     val items: List<AxQsGridItem<T>> = _items
@@ -123,11 +136,33 @@ class AxQsEditListState<T>(
     }
 
     fun beginResize() {
+        capturePositions()
+        resizeSnapshot = _items.toList()
         resizeInProgress = true
     }
 
     fun endResize() {
+        resizeSnapshot = null
         resizeInProgress = false
+    }
+
+    fun currentResizeBaseItems(): List<AxQsGridItem<T>> {
+        val snap = resizeSnapshot
+        if (snap != null) return snap
+        capturePositions()
+        return _items.toList()
+    }
+
+    fun applyPreviewItems(items: List<AxQsGridItem<T>>) {
+        if (_items.size != items.size) {
+            updateItems(items)
+        } else {
+            items.forEachIndexed { index, updated ->
+                if (_items[index] != updated) {
+                    _items[index] = updated
+                }
+            }
+        }
     }
 
     fun remove(id: String): Boolean {
@@ -154,8 +189,10 @@ class AxQsEditListState<T>(
     fun start(id: String, anchor: Offset) {
         check(!dragInProgress)
         check(indexOf(id) >= 0)
-        dragSnapshot = _items.toList()
         capturePositions()
+        dragSnapshot = _items.toList()
+        dragSnapshotBounds = itemBounds.toMap()
+        lastSolvedTarget = null
         val bounds = itemBounds[id]?.second
         dragAnchor =
             if (bounds != null) {
@@ -203,69 +240,329 @@ class AxQsEditListState<T>(
         return offset - gridOrigins.getOrDefault(section, Offset.Zero)
     }
 
+    fun restoreSnapshotPreview() {
+        val snapshot = dragSnapshot ?: return
+        lastSolvedTarget = null
+        snapshot.forEachIndexed { itemIndex, snapshotItem ->
+            if (itemIndex < _items.size && _items[itemIndex] != snapshotItem) {
+                _items[itemIndex] = snapshotItem
+            }
+        }
+    }
+
+    fun findStackTargetAt(
+        offset: Offset,
+        section: AxQsGridSection,
+        canStack: (AxQsGridItem<T>, AxQsGridItem<T>) -> Boolean,
+    ): String? {
+        val sourceId = draggedId ?: return null
+        val baseItems = dragSnapshot ?: _items
+        val draggedItem = baseItems.firstOrNull { it.id == sourceId } ?: return null
+        val localOffset = offsetInGrid(offset, section)
+        val boundsSource = dragSnapshotBounds.ifEmpty { itemBounds }
+        return boundsSource.entries
+            .asSequence()
+            .filter { (targetId, sectionAndBounds) ->
+                if (targetId == sourceId || sectionAndBounds.first != section) return@filter false
+                val bounds = sectionAndBounds.second
+                val insetX = bounds.width * STACK_TARGET_EDGE_INSET_FRACTION
+                val insetY = bounds.height * STACK_TARGET_EDGE_INSET_FRACTION
+                val innerBounds =
+                    Rect(
+                        left = bounds.left + insetX,
+                        top = bounds.top + insetY,
+                        right = (bounds.right - insetX).coerceAtLeast(bounds.left + insetX),
+                        bottom = (bounds.bottom - insetY).coerceAtLeast(bounds.top + insetY),
+                    )
+                if (!innerBounds.contains(localOffset)) return@filter false
+                val targetItem = baseItems.firstOrNull { it.id == targetId } ?: return@filter false
+                canStack(draggedItem, targetItem)
+            }
+            .minByOrNull { (_, sectionAndBounds) ->
+                (sectionAndBounds.second.center - localOffset).getDistanceSquared()
+            }
+            ?.key
+    }
+
     fun moveToCell(offset: Offset, section: AxQsGridSection): Boolean {
         val id = draggedId ?: return false
-        val index = indexOf(id)
-        if (index < 0) return false
-        val item = _items[index]
+        val baseItems = dragSnapshot ?: _items.toList()
+        val draggedBase = baseItems.firstOrNull { it.id == id } ?: return false
         val cells = gridCells[section] ?: return false
         val localOffset = offsetInGrid(offset, section)
         val itemTopLeft = localOffset - dragAnchor
         val columns = cells.maxOfOrNull { it.position.column }?.plus(1) ?: return false
         val rows = cells.maxOfOrNull { it.position.row }?.plus(1) ?: return false
-        val start =
-            cells
-                .asSequence()
-                .filter { cell ->
-                    cell.position.column + item.span.columns <= columns &&
-                        cell.position.row + item.span.rows <= rows &&
-                        (allowStraddle ||
-                            !AxQsLayoutInteractor.wouldStraddleQqs(
-                                item.span,
-                                cell.position.row,
-                                qqsMaxRows,
-                            ))
-                }
-                .minByOrNull { cell ->
-                    (cell.bounds.topLeft - itemTopLeft).getDistanceSquared()
-                } ?: return false
-        if (item.position == start.position) return true
-        val sectionIds =
-            itemBounds
-                .filterValues { (itemSection, _) -> itemSection == section }
-                .keys + id
-        fun overlapsTarget(current: AxQsGridItem<T>): Boolean {
-            val position = current.position ?: return false
-            return position.column < start.position.column + item.span.columns &&
-                start.position.column < position.column + current.span.columns &&
-                position.row < start.position.row + item.span.rows &&
-                start.position.row < position.row + current.span.rows
-        }
-        var movedItems =
-            _items.map { current ->
-                when {
-                    current.id == id -> current.copy(position = start.position)
-                    current.id in sectionIds && overlapsTarget(current) ->
-                        current.copy(position = null)
-                    else -> current
-                }
+        val origin = draggedBase.position
+        val boundsSource = dragSnapshotBounds.ifEmpty { itemBounds }
+        val validCells =
+            cells.filter { cell ->
+                cell.position.column + draggedBase.span.columns <= columns &&
+                    cell.position.row + draggedBase.span.rows <= rows &&
+                    (allowStraddle ||
+                        !AxQsLayoutInteractor.wouldStraddleQqs(
+                            draggedBase.span,
+                            cell.position.row,
+                            qqsMaxRows,
+                        ))
             }
-        if (!canFitAxQsGridItems(movedItems.filter { it.id in sectionIds }, columns, rows)) {
-            movedItems =
-                movedItems.map { current ->
-                    if (current.id in sectionIds && current.id != id) {
-                        current.copy(position = null)
-                    } else {
-                        current
+        if (validCells.isEmpty()) return false
+
+        val is1x1 = draggedBase.span == AxQsSpan(1, 1)
+        var isGapInsert = false
+        val start =
+            if (is1x1 && origin != null) {
+                val targetRow =
+                    validCells
+                        .minByOrNull { cell -> abs(cell.bounds.top - itemTopLeft.y) }
+                        ?.position
+                        ?.row ?: return false
+                val rowCells =
+                    validCells
+                        .filter { it.position.row == targetRow }
+                        .sortedBy { it.position.column }
+                val tileWidth =
+                    boundsSource[id]?.second?.width
+                        ?: rowCells.firstOrNull()?.bounds?.width
+                        ?: 0f
+                val draggedCenterX = itemTopLeft.x + tileWidth * 0.5f
+                var gapMatched: AxQsGridCell? = null
+
+                val firstCell = rowCells.firstOrNull()
+                if (
+                    firstCell != null &&
+                        firstCell.position.column == 0 &&
+                        origin != firstCell.position &&
+                        draggedCenterX < firstCell.bounds.left + firstCell.bounds.width * 0.18f
+                ) {
+                    gapMatched = firstCell
+                    isGapInsert = true
+                } else {
+                    for (idx in 1 until rowCells.size) {
+                        val leftCell = rowCells[idx - 1]
+                        val rightCell = rowCells[idx]
+                        if (rightCell.position.column != leftCell.position.column + 1) continue
+                        val gapLeft = leftCell.bounds.right - leftCell.bounds.width * 0.22f
+                        val gapRight = rightCell.bounds.left + rightCell.bounds.width * 0.22f
+                        if (draggedCenterX in gapLeft..gapRight) {
+                            val comingFromAfter =
+                                origin.row > targetRow ||
+                                    (origin.row == targetRow &&
+                                        origin.column > leftCell.position.column)
+                            gapMatched = if (comingFromAfter) rightCell else leftCell
+                            isGapInsert = true
+                            break
+                        }
                     }
                 }
-            if (!canFitAxQsGridItems(movedItems.filter { it.id in sectionIds }, columns, rows)) {
-                return false
+                gapMatched
+                    ?: rowCells.minByOrNull { cell ->
+                        abs(cell.bounds.center.x - draggedCenterX)
+                    }
+                    ?: return false
+            } else {
+                validCells.minByOrNull { cell ->
+                    (cell.bounds.topLeft - itemTopLeft).getDistanceSquared()
+                } ?: return false
             }
+
+        val targetKey = AxQsSolvedDragTarget(section, start.position, isGapInsert)
+        if (lastSolvedTarget == targetKey) return true
+        lastSolvedTarget = targetKey
+
+        if (origin == start.position) {
+            restoreSnapshotPreview()
+            lastSolvedTarget = targetKey
+            return true
         }
-        movedItems.forEachIndexed { itemIndex, movedItem ->
-            if (_items[itemIndex] != movedItem) {
-                _items[itemIndex] = movedItem
+        val sectionIds =
+            boundsSource
+                .filterValues { (itemSection, _) -> itemSection == section }
+                .keys + id
+
+        fun overlaps(
+            posA: AxQsGridPosition,
+            spanA: AxQsSpan,
+            posB: AxQsGridPosition,
+            spanB: AxQsSpan,
+        ): Boolean {
+            return posA.column < posB.column + spanB.columns &&
+                posB.column < posA.column + spanA.columns &&
+                posA.row < posB.row + spanB.rows &&
+                posB.row < posA.row + spanA.rows
+        }
+
+        fun compareReadingOrder(a: AxQsGridPosition, b: AxQsGridPosition): Int {
+            return if (a.row != b.row) a.row.compareTo(b.row) else a.column.compareTo(b.column)
+        }
+
+        val colliders =
+            baseItems.filter { current ->
+                current.id in sectionIds &&
+                    current.id != id &&
+                    current.position != null &&
+                    overlaps(current.position, current.span, start.position, draggedBase.span)
+            }
+
+        val solvedItems: List<AxQsGridItem<T>> =
+            if (colliders.isEmpty()) {
+                baseItems.map { current ->
+                    if (current.id == id) current.copy(position = start.position) else current
+                }
+            } else {
+                val swappedPositions =
+                    if (
+                        !isGapInsert &&
+                            origin != null &&
+                            !overlaps(origin, draggedBase.span, start.position, draggedBase.span)
+                    ) {
+                        val deltaCol = origin.column - start.position.column
+                        val deltaRow = origin.row - start.position.row
+                        val candidateMap = mutableMapOf<String, AxQsGridPosition>()
+                        val fitsOrigin =
+                            colliders.all { collider ->
+                                val pos = collider.position ?: return@all false
+                                val shifted =
+                                    AxQsGridPosition(
+                                        column = (pos.column + deltaCol).coerceAtLeast(0),
+                                        row = (pos.row + deltaRow).coerceAtLeast(0),
+                                    )
+                                val insideOrigin =
+                                    pos.column + deltaCol >= origin.column &&
+                                        shifted.column + collider.span.columns <=
+                                            origin.column + draggedBase.span.columns &&
+                                        pos.row + deltaRow >= origin.row &&
+                                        shifted.row + collider.span.rows <=
+                                            origin.row + draggedBase.span.rows
+                                val straddleOk =
+                                    allowStraddle ||
+                                        !AxQsLayoutInteractor.wouldStraddleQqs(
+                                            collider.span,
+                                            shifted.row,
+                                            qqsMaxRows,
+                                        )
+                                if (insideOrigin && straddleOk) {
+                                    candidateMap[collider.id] = shifted
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                        candidateMap.takeIf { fitsOrigin }
+                    } else {
+                        null
+                    }
+
+                if (swappedPositions != null) {
+                    baseItems.map { current ->
+                        when {
+                            current.id == id -> current.copy(position = start.position)
+                            current.id in swappedPositions ->
+                                current.copy(position = swappedPositions.getValue(current.id))
+                            else -> current
+                        }
+                    }
+                } else {
+                    val loPos =
+                        if (origin != null && compareReadingOrder(origin, start.position) < 0) {
+                            origin
+                        } else {
+                            start.position
+                        }
+                    val hiPos =
+                        if (origin != null && compareReadingOrder(origin, start.position) > 0) {
+                            origin
+                        } else {
+                            start.position
+                        }
+                    val minRippleRow =
+                        minOf(
+                            loPos.row,
+                            colliders.minOf { it.position?.row ?: loPos.row },
+                        )
+                    val visualSortedSection =
+                        baseItems
+                            .filter { it.id in sectionIds }
+                            .sortedWith(
+                                compareBy(
+                                    { if (it.id == id) 0 else 1 },
+                                    { it.position?.row ?: Int.MAX_VALUE },
+                                    { it.position?.column ?: Int.MAX_VALUE },
+                                )
+                            )
+
+                    fun solveSectionRipple(bounded: Boolean): List<AxQsGridItem<T>> {
+                        val unpinnedIds = mutableSetOf<String>()
+                        for (current in visualSortedSection) {
+                            if (current.id == id) continue
+                            val pos = current.position ?: continue
+                            val directlyHit =
+                                overlaps(pos, current.span, start.position, draggedBase.span)
+                            val isVerticalSlider =
+                                current.span.columns == 1 && current.span.rows > 1
+                            if (isVerticalSlider && !directlyHit) continue
+                            val inInterval =
+                                if (bounded && origin != null) {
+                                    compareReadingOrder(pos, loPos) >= 0 &&
+                                        compareReadingOrder(pos, hiPos) <= 0
+                                } else {
+                                    compareReadingOrder(pos, loPos) >= 0
+                                }
+                            if (inInterval || directlyHit) {
+                                unpinnedIds.add(current.id)
+                            }
+                        }
+                        val prepared =
+                            visualSortedSection.map { current ->
+                                when {
+                                    current.id == id -> current.copy(position = start.position)
+                                    current.id in unpinnedIds -> current.copy(position = null)
+                                    else -> current
+                                }
+                            }
+                        val packed =
+                            packItems(
+                                items = prepared,
+                                columns = columns,
+                                maxRows = null,
+                                allowStraddle = allowStraddle,
+                                qqsMaxRows = qqsMaxRows,
+                                minUnpositionedRows = unpinnedIds.associateWith { minRippleRow },
+                            )
+                        val newPositions =
+                            packed.associate { it.item.id to AxQsGridPosition(it.column, it.row) }
+                        return baseItems.map { current ->
+                            val newPos = newPositions[current.id]
+                            if (newPos != null) current.copy(position = newPos) else current
+                        }
+                    }
+
+                    val boundedResult = solveSectionRipple(bounded = origin != null)
+                    val spilledPastOrigin =
+                        origin != null &&
+                            baseItems.indices.any { idx ->
+                                val before = baseItems[idx]
+                                val after = boundedResult[idx]
+                                val origPos = before.position
+                                val newPos = after.position
+                                before.id != id &&
+                                    before.id in sectionIds &&
+                                    origPos != null &&
+                                    newPos != null &&
+                                    compareReadingOrder(origPos, hiPos) <= 0 &&
+                                    compareReadingOrder(newPos, hiPos) > 0
+                            }
+                    if (spilledPastOrigin) solveSectionRipple(bounded = false) else boundedResult
+                }
+            }
+
+        if (_items.size != solvedItems.size) {
+            updateItems(solvedItems)
+        } else {
+            solvedItems.forEachIndexed { itemIndex, movedItem ->
+                if (_items[itemIndex] != movedItem) {
+                    _items[itemIndex] = movedItem
+                }
             }
         }
         return true
@@ -304,6 +601,8 @@ class AxQsEditListState<T>(
     fun cancel() {
         dragSnapshot?.let(::updateItems)
         dragSnapshot = null
+        dragSnapshotBounds = emptyMap()
+        lastSolvedTarget = null
         dragAnchor = Offset.Zero
         draggedId = null
         draggedPosition = Offset.Unspecified
@@ -313,6 +612,8 @@ class AxQsEditListState<T>(
     fun finish(onDrop: () -> Unit) {
         if (draggedId == null) return
         dragSnapshot = null
+        dragSnapshotBounds = emptyMap()
+        lastSolvedTarget = null
         dragAnchor = Offset.Zero
         draggedId = null
         draggedPosition = Offset.Unspecified
@@ -387,36 +688,47 @@ fun <T> Modifier.axQsDropTarget(
 ): Modifier {
     val currentOnDrop by rememberUpdatedState(onDrop)
     val layoutDirection = LocalLayoutDirection.current
+    val view = LocalView.current
     val target =
-        remember(state, layoutDirection, section, canStack, onStack) {
+        remember(state, layoutDirection, section, canStack, onStack, view) {
             object : DragAndDropTarget {
                 override fun onMoved(event: DragAndDropEvent) {
                     val dragEvent = event.toAndroidDragEvent()
                     val offset = Offset(dragEvent.x, dragEvent.y)
                     state.onMoved(offset)
 
-                    val draggedId = state.draggedId
-                    val draggedItem = draggedId?.let { state.item(it) }
-                    val targetItemAtOffset = state.findItemAt(offset, section)
-                    val localOffset = state.offsetInGrid(offset, section)
+                    val stackTargetId =
+                        if (canStack != null && onStack != null) {
+                            state.findStackTargetAt(offset, section, canStack)
+                        } else {
+                            null
+                        }
 
-                    val targetItem = targetItemAtOffset?.let { state.item(it.first) }
-                    val isStackTarget =
-                        canStack != null &&
-                            onStack != null &&
-                            draggedItem != null &&
-                            targetItem != null &&
-                            targetItemAtOffset?.first != draggedId &&
-                            canStack(draggedItem, targetItem)
-
-                    if (isStackTarget && targetItemAtOffset?.second?.contains(localOffset) == true) {
-                        state.setHoveredStackTarget(targetItemAtOffset.first)
+                    if (stackTargetId != null) {
+                        if (state.hoveredStackTargetId != stackTargetId) {
+                            state.restoreSnapshotPreview()
+                            state.setHoveredStackTarget(stackTargetId)
+                            view.performHapticFeedback(
+                                HapticFeedbackConstants.GESTURE_THRESHOLD_ACTIVATE
+                            )
+                        }
                         return
                     }
 
                     state.setHoveredStackTarget(null)
-                    if (state.moveToCell(offset, section)) return
+                    val prevTarget = state.currentSolvedTarget
+                    if (state.moveToCell(offset, section)) {
+                        val nextTarget = state.currentSolvedTarget
+                        if (prevTarget != null && nextTarget != null && prevTarget != nextTarget) {
+                            view.performHapticFeedback(
+                                HapticFeedbackConstants.SEGMENT_FREQUENT_TICK
+                            )
+                        }
+                        return
+                    }
+                    val targetItemAtOffset = state.findItemAt(offset, section)
                     if (targetItemAtOffset != null) {
+                        val localOffset = state.offsetInGrid(offset, section)
                         state.onTargeting(
                             id = targetItemAtOffset.first,
                             insertAfter =
@@ -431,21 +743,23 @@ fun <T> Modifier.axQsDropTarget(
                 }
 
                 override fun onDrop(event: DragAndDropEvent): Boolean {
-                    val dragEvent = event.toAndroidDragEvent()
-                    val offset = Offset(dragEvent.x, dragEvent.y)
-                    val targetItemAtOffset = state.findItemAt(offset, section)
-
                     val draggedId = state.draggedId
-                    val hoverTarget = state.hoveredStackTargetId ?: targetItemAtOffset?.first
-
+                    val hoverTarget = state.hoveredStackTargetId
                     val draggedItem = draggedId?.let { state.item(it) }
                     val targetItem = hoverTarget?.let { state.item(it) }
 
-                    if (hoverTarget != null && draggedId != null && onStack != null &&
-                        draggedItem != null && targetItem != null &&
-                        canStack != null && canStack(draggedItem, targetItem)
+                    if (
+                        hoverTarget != null &&
+                            draggedId != null &&
+                            onStack != null &&
+                            draggedItem != null &&
+                            targetItem != null &&
+                            canStack != null &&
+                            canStack(draggedItem, targetItem)
                     ) {
-                        state.stackItems(draggedId, hoverTarget, onStack)
+                        if (state.stackItems(draggedId, hoverTarget, onStack)) {
+                            view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                        }
                     }
                     state.finish(currentOnDrop)
                     return true
@@ -523,3 +837,4 @@ private const val AX_QS_DRAG_LABEL = "ax_qs_item"
 private const val AX_QS_DRAG_MIME_TYPE = "axqs/item"
 private const val AX_QS_AUTO_SCROLL_DISTANCE = 100
 private const val AX_QS_AUTO_SCROLL_SPEED = 2
+private const val STACK_TARGET_EDGE_INSET_FRACTION = 0.2f

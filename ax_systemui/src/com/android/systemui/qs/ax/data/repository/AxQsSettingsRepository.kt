@@ -33,6 +33,8 @@ import com.android.systemui.qs.ax.shared.model.AxQsVerticalSliderStyle
 import com.android.systemui.user.data.repository.UserRepository
 import com.android.systemui.util.settings.SecureSettings
 import com.android.systemui.util.settings.SettingsProxyExt.observerFlow
+import com.android.systemui.qs.pipeline.shared.TileSpec
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -49,6 +51,8 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 @SysUISingleton
 class AxQsSettingsRepository
@@ -74,11 +78,22 @@ constructor(
     val defaultGridItems: List<String>
         get() = (DEFAULT_GRID_ITEMS + aospDefaultTiles).distinct()
 
+    private val qsDataLock = Any()
+    private val qsDataWriteMutex = Mutex()
+    private val pendingQsDataWrites = AtomicInteger(0)
     private val _layoutsDataOverride = MutableStateFlow<Map<AxQsLayout, AxQsLayoutData>?>(null)
     val layoutsData: StateFlow<Map<AxQsLayout, AxQsLayoutData>> =
         stringSetting(QS_DATA)
             .map { str -> AxQsLayoutData.parseList(str).associateBy { it.location } }
-            .onEach { _layoutsDataOverride.value = null }
+            .onEach {
+                if (pendingQsDataWrites.get() == 0) {
+                    synchronized(qsDataLock) {
+                        if (pendingQsDataWrites.get() == 0) {
+                            _layoutsDataOverride.value = null
+                        }
+                    }
+                }
+            }
             .combine(_layoutsDataOverride) { settingVal, overrideVal ->
                 if (overrideVal != null) {
                     settingVal + overrideVal
@@ -117,32 +132,94 @@ constructor(
             .stateIn(applicationScope, SharingStarted.Eagerly, layoutsData.value[layout])
 
     fun updateLayoutData(layout: AxQsLayout, update: (AxQsLayoutData) -> AxQsLayoutData) {
-        val currentMap = (_layoutsDataOverride.value ?: layoutsData.value).toMutableMap()
-        val current = currentMap[layout] ?: defaultLayoutData(layout)
-        val updated = update(current)
-        currentMap[layout] = updated
-        _layoutsDataOverride.value = currentMap
+        val updated: AxQsLayoutData
+        synchronized(qsDataLock) {
+            val baseMap = layoutsData.value + (_layoutsDataOverride.value ?: emptyMap())
+            val current = baseMap[layout] ?: defaultLayoutData(layout)
+            updated = update(current)
+            val nextOverride = (_layoutsDataOverride.value ?: emptyMap()).toMutableMap()
+            nextOverride[layout] = updated
+            _layoutsDataOverride.value = nextOverride
+            pendingQsDataWrites.incrementAndGet()
+        }
 
         val userId = userRepository.getSelectedUserInfo().id
         applicationScope.launch(backgroundDispatcher) {
-            val diskMap =
-                AxQsLayoutData.parseList(secureSettings.getStringForUser(QS_DATA, userId))
-                    .associateBy { it.location }
-                    .toMutableMap()
-            diskMap[layout] = updated
-            secureSettings.putStringForUser(
-                QS_DATA,
-                AxQsLayoutData.toJson(diskMap.values),
-                null,
-                false,
-                userId,
-                true,
-            )
+            try {
+                qsDataWriteMutex.withLock {
+                    val diskMap =
+                        AxQsLayoutData.parseList(secureSettings.getStringForUser(QS_DATA, userId))
+                            .associateBy { it.location }
+                            .toMutableMap()
+                    val latestForLayout =
+                        synchronized(qsDataLock) { _layoutsDataOverride.value?.get(layout) }
+                            ?: updated
+                    diskMap[layout] = latestForLayout
+                    secureSettings.putStringForUser(
+                        QS_DATA,
+                        AxQsLayoutData.toJson(diskMap.values),
+                        null,
+                        false,
+                        userId,
+                        true,
+                    )
+                }
+            } finally {
+                pendingQsDataWrites.decrementAndGet()
+            }
         }
     }
 
     fun setLayoutData(layoutData: AxQsLayoutData) {
         updateLayoutData(layoutData.location) { layoutData }
+    }
+
+    fun allReferencedTileSpecs(
+        updatedLayoutData: AxQsLayoutData,
+        currentLayoutTileSpecs: List<TileSpec>,
+    ): List<TileSpec> {
+        val mergedLayouts =
+            synchronized(qsDataLock) {
+                buildMap {
+                    putAll(layoutsData.value)
+                    _layoutsDataOverride.value?.let { putAll(it) }
+                    put(updatedLayoutData.location, updatedLayoutData)
+                }
+            }
+        val orderedSpecs = LinkedHashSet<TileSpec>()
+        currentLayoutTileSpecs.forEach { spec ->
+            if (spec != TileSpec.Invalid) {
+                orderedSpecs.add(spec)
+            }
+        }
+
+        val isSeparate = panelMode.value == AxQsPanelMode.SEPARATE
+        for (loc in AxQsLayout.entries) {
+            if (loc == updatedLayoutData.location) continue
+            val otherData = mergedLayouts[loc]
+            if (otherData != null) {
+                otherData.order.forEach { id ->
+                    if (!id.startsWith("control:") && id !in otherData.stacks) {
+                        val spec = TileSpec.create(id)
+                        if (spec != TileSpec.Invalid) orderedSpecs.add(spec)
+                    }
+                }
+                otherData.stacks.values.forEach { stackSpecs ->
+                    stackSpecs.forEach { raw ->
+                        val spec = TileSpec.create(raw)
+                        if (spec != TileSpec.Invalid) orderedSpecs.add(spec)
+                    }
+                }
+            } else if (loc != AxQsLayout.QQS || isSeparate) {
+                defaultGridItems.forEach { id ->
+                    if (!id.startsWith("control:")) {
+                        val spec = TileSpec.create(id)
+                        if (spec != TileSpec.Invalid) orderedSpecs.add(spec)
+                    }
+                }
+            }
+        }
+        return orderedSpecs.toList()
     }
 
     fun setOrder(order: List<String>, layout: AxQsLayout) {
@@ -199,6 +276,24 @@ constructor(
         )
 
     fun resetLayout(
+        layout: AxQsLayout,
+        defaultTiles: List<String> = aospDefaultTiles,
+    ) {
+        val defaultData = defaultLayoutData(layout, defaultTiles)
+        updateLayoutData(layout) { defaultData }
+        putInt(gridColumnsKey(AxQsGridLayout.from(layout)), 0)
+        listOf(AxQsControl.BRIGHTNESS, AxQsControl.VOLUME).forEach { control ->
+            putInt(
+                verticalSliderStyleKey(AxQsVerticalSliderKey(layout, control)),
+                AxQsVerticalSliderStyle.M3_EXPRESSIVE.settingValue,
+            )
+        }
+        if (layout == AxQsLayout.QS && panelMode.value != AxQsPanelMode.SEPARATE) {
+            setQqsMaxRows(DEFAULT_QQS_MAX_ROWS)
+        }
+    }
+
+    fun resetLayout(
         defaultItems: List<String> = DEFAULT_GRID_ITEMS,
         defaultTiles: List<String> = aospDefaultTiles,
     ) {
@@ -206,11 +301,29 @@ constructor(
         val allDefaults =
             AxQsLayout.entries.map { layout -> defaultLayoutData(layout, defaultTiles) }
         val defaultsMap = allDefaults.associateBy { it.location }
-        _layoutsDataOverride.value = defaultsMap
+        synchronized(qsDataLock) {
+            _layoutsDataOverride.value = defaultsMap
+            pendingQsDataWrites.incrementAndGet()
+        }
         val json = AxQsLayoutData.toJson(allDefaults)
         setQqsMaxRows(DEFAULT_QQS_MAX_ROWS)
+        AxQsGridLayout.entries.forEach { gridLayout ->
+            putInt(gridColumnsKey(gridLayout), 0)
+        }
+        VERTICAL_SLIDER_KEYS.forEach { sliderKey ->
+            putInt(
+                verticalSliderStyleKey(sliderKey),
+                AxQsVerticalSliderStyle.M3_EXPRESSIVE.settingValue,
+            )
+        }
         applicationScope.launch(backgroundDispatcher) {
-            secureSettings.putStringForUser(QS_DATA, json, userId)
+            try {
+                qsDataWriteMutex.withLock {
+                    secureSettings.putStringForUser(QS_DATA, json, userId)
+                }
+            } finally {
+                pendingQsDataWrites.decrementAndGet()
+            }
         }
     }
 

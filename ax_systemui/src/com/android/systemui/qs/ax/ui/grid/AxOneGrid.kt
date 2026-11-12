@@ -33,9 +33,11 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clipScrollableContainer
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -90,6 +92,7 @@ import com.android.compose.modifiers.thenIf
 import com.android.internal.R as InternalR
 import com.android.systemui.brightness.ui.viewmodel.BrightnessSliderViewModel
 import com.android.systemui.qs.ax.fragment.viewmodel.AxQsFragmentComposeViewModel
+import com.android.systemui.qs.ax.res.R as AxR
 import com.android.systemui.qs.ax.shared.model.AxMediaSurface
 import com.android.systemui.qs.ax.shared.model.AxQsControl
 import com.android.systemui.qs.ax.shared.model.AxQsGridItem
@@ -141,15 +144,17 @@ internal fun ContentScope.AxOneGrid(
 ) {
     val tiles = viewModel.containerViewModel.tileGridViewModel.tileViewModels
     val layout = LocalAxQsLayout.current
-    val splitShade = viewModel.isInSplitShade
+    val splitShade = viewModel.isInSplitShade || layout == AxQsLayout.SPLIT_SHADE
     val separateMode = axQsViewModel.panelMode == AxQsPanelMode.SEPARATE && !splitShade
+    val allowStraddle = separateMode || splitShade
     LaunchedEffect(splitShade) {
         if (splitShade) {
             scrollState.scrollTo(0)
         }
     }
     val gridLayout = AxQsGridLayout.from(layout)
-    val columns = axQsViewModel.columns(gridLayout)
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val columns = axQsViewModel.columns(gridLayout, screenWidthDp)
     val positions = axQsViewModel.positions(layout)
 
     val editModeViewModel = viewModel.containerViewModel.editModeViewModel
@@ -194,12 +199,12 @@ internal fun ContentScope.AxOneGrid(
 
     val spans = axQsViewModel.spans(layout)
     val gridItems: List<AxQsGridItem<AxQsGridValue>> =
-        remember(values, layout, columns, positions, spans, separateMode) {
+        remember(values, layout, columns, positions, spans, allowStraddle) {
             val orderedIds =
                 axQsViewModel.orderedIds(
                     layout = layout,
                     availableIds = values.keys.toList(),
-                    defaultIds = tiles.map { it.spec.spec },
+                    defaultIds = axQsViewModel.defaultTileSpecs,
                 )
             val items =
                 orderedIds.mapNotNull { id ->
@@ -242,17 +247,17 @@ internal fun ContentScope.AxOneGrid(
                         null -> null
                     }
                 }
-            if (!separateMode) {
+            if (!allowStraddle) {
                 axQsViewModel.sanitizePositionsForTogetherMode(items, columns)
             } else {
                 items
             }
         }
 
-    LaunchedEffect(separateMode, gridItems) {
-        if (!separateMode && !isEditing) {
+    LaunchedEffect(layout, allowStraddle, gridItems, isEditing) {
+        if (!allowStraddle && !isEditing) {
             val layoutData = axQsViewModel.layoutData(layout)
-            if (layoutData != null) {
+            if (layoutData != null && layoutData.order.all { id -> id in values }) {
                 val conflictingItems =
                     gridItems.filter { item ->
                         val savedPos = layoutData.positions[item.id]
@@ -283,7 +288,7 @@ internal fun ContentScope.AxOneGrid(
             resetEpoch = resetEpoch.intValue,
         )
 
-    DisposableEffect(isEditing) {
+    DisposableEffect(isEditing, layout) {
         if (!isEditing) {
             editController.selectedId.value = null
         }
@@ -293,28 +298,48 @@ internal fun ContentScope.AxOneGrid(
                 view.cancelDragAndDrop()
                 editController.listState.cancel()
             }
+            if (editController.listState.resizeInProgress) {
+                editController.listState.endResize()
+            }
         }
     }
 
     if (editController.showResetDialog.value) {
         AlertDialog(
             onDismissRequest = { editController.showResetDialog.value = false },
-            title = { Text(stringResource(InternalR.string.reset)) },
-            text = { Text("Reset all Quick Settings tiles to default layout?") },
+            title = { Text(stringResource(AxR.string.ax_qs_reset_title)) },
+            text = { Text(stringResource(AxR.string.ax_qs_reset_message)) },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        editModeViewModel.resetTiles()
-                        axQsViewModel.resetLayout()
-                        resetEpoch.intValue++
-                        editController.showResetDialog.value = false
-                    },
-                    colors =
-                        ButtonDefaults.textButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error,
-                        ),
-                ) {
-                    Text(stringResource(InternalR.string.reset))
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(
+                        onClick = {
+                            editModeViewModel.resetTiles()
+                            axQsViewModel.resetLayout()
+                            resetEpoch.intValue++
+                            editController.showResetDialog.value = false
+                        },
+                        colors =
+                            ButtonDefaults.textButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error,
+                            ),
+                    ) {
+                        Text(stringResource(AxR.string.ax_qs_reset_all_layouts))
+                    }
+                    TextButton(
+                        onClick = {
+                            val defaultData = axQsViewModel.defaultLayoutData(layout)
+                            axQsViewModel.resetLayout(layout)
+                            val unionSpecs =
+                                axQsViewModel.allReferencedTileSpecs(defaultData, emptyList())
+                            if (unionSpecs.isNotEmpty()) {
+                                editModeViewModel.setTiles(unionSpecs)
+                            }
+                            resetEpoch.intValue++
+                            editController.showResetDialog.value = false
+                        },
+                    ) {
+                        Text(stringResource(AxR.string.ax_qs_reset_current_layout))
+                    }
                 }
             },
             dismissButton = {
@@ -615,15 +640,49 @@ internal fun ContentScope.AxOneGrid(
                                 ) {
                                     val gridItemsToRender = if (isEditing) editController.listState.items else gridItems
                                     if (gridItemsToRender.isNotEmpty()) {
-                                         AxQsGrid(
-                                             items = gridItemsToRender,
-                                             columns = columns,
-                                             rowHeight = effectiveRowHeight,
-                                             spacing = spacing,
-                                             maxRows = null,
-                                             allowStraddle = separateMode,
-                                             staticItemId = if (isEditing) editController.listState.draggedId else null,
-                                             animateItemBounds = isEditing,
+                                        var frozenDragMinRows by remember { mutableIntStateOf(0) }
+                                        val occupiedRows =
+                                            remember(
+                                                gridItemsToRender,
+                                                columns,
+                                                allowStraddle,
+                                                qqsMaxRows,
+                                            ) {
+                                                axQsGridRowCount(
+                                                    items = gridItemsToRender,
+                                                    columns = columns,
+                                                    maxRows = null,
+                                                    allowStraddle = allowStraddle,
+                                                    qqsMaxRows = qqsMaxRows,
+                                                )
+                                            }
+                                        val editMinimumRows =
+                                            if (!isEditing) {
+                                                0
+                                            } else if (
+                                                editController.listState.dragInProgress &&
+                                                    frozenDragMinRows > 0
+                                            ) {
+                                                frozenDragMinRows
+                                            } else {
+                                                occupiedRows + 1
+                                            }
+                                        SideEffect {
+                                            frozenDragMinRows = editMinimumRows
+                                        }
+                                        AxQsGrid(
+                                            items = gridItemsToRender,
+                                            columns = columns,
+                                            rowHeight = effectiveRowHeight,
+                                            spacing = spacing,
+                                            maxRows = null,
+                                            minimumRows = editMinimumRows,
+                                            allowStraddle = allowStraddle,
+                                            qqsMaxRows = qqsMaxRows,
+                                            staticItemId =
+                                                if (isEditing) editController.listState.draggedId
+                                                else null,
+                                            animateItemBounds = isEditing,
                                             onItemBounds = { id, bounds ->
                                                 if (isEditing) {
                                                     editController.listState.updateItemBounds(id, AxQsGridSection.TILES, bounds)
@@ -700,7 +759,7 @@ internal fun ContentScope.AxOneGrid(
                                     ) {
                                         if (isEditing) {
                                             val pickerColumns = axQsViewModel.defaultColumns(gridLayout)
-                                            val currentIds = editController.listState.items.map { it.id }.toSet()
+                                            val currentIds = editController.activeItemAndTileIds()
                                             AxAvailableControls(
                                                 allTiles = allEditTiles ?: emptyList(),
                                                 currentIds = currentIds,

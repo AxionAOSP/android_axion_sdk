@@ -238,11 +238,12 @@ private fun GridColumnSlider(
     layout: AxQsGridLayout,
     viewModel: AxQsViewModel,
 ) {
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
     val label = stringResource(R.string.ax_qs_grid_columns)
     GridSizeSlider(
         label = label,
-        savedValue = viewModel.columns(layout),
-        range = viewModel.columnRange(layout),
+        savedValue = viewModel.columns(layout, screenWidthDp),
+        range = viewModel.columnRange(layout, screenWidthDp),
         valueLabel = R.string.ax_qs_column_count,
         onValueChangeFinished = { viewModel.setColumns(layout, it) },
     )

@@ -40,4 +40,8 @@
     <string name="ax_qs_drag_to_stack">Drag tiles here to stack</string>
     <string name="ax_qs_remove_stack">Remove stack</string>
     <string name="ax_qs_open_slot">Open slot</string>
+    <string name="ax_qs_reset_title">Reset quick settings?</string>
+    <string name="ax_qs_reset_message">Reset only this orientation layout, or reset all quick settings layouts and column counts to default?</string>
+    <string name="ax_qs_reset_current_layout">This layout</string>
+    <string name="ax_qs_reset_all_layouts">Reset all</string>
 </resources>

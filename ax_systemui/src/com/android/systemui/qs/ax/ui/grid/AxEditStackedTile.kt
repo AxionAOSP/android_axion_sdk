@@ -46,6 +46,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
@@ -154,7 +155,7 @@ fun AxEditStackedTilePreview(
     tiles: List<EditTileViewModel>,
     liveTiles: List<TileViewModel> = emptyList(),
     isSelected: Boolean,
-    onRemoveStack: () -> Unit,
+    onRemoveTileAt: (Int) -> Unit,
     onSelect: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -171,7 +172,12 @@ fun AxEditStackedTilePreview(
         }
     val effectiveCount = if (distinctTiles.isNotEmpty()) distinctTiles.size else distinctLiveTiles.size
     val pageCount = pages.size
-    val pagerState = key(pageCount) { rememberPagerState(pageCount = { pageCount }) }
+    val pagerState = rememberPagerState(pageCount = { pageCount })
+    LaunchedEffect(pageCount) {
+        if (pagerState.currentPage >= pageCount && pageCount > 0) {
+            pagerState.scrollToPage(pageCount - 1)
+        }
+    }
     val coroutineScope = rememberCoroutineScope()
 
     val selectGestureModifier =
@@ -261,7 +267,7 @@ fun AxEditStackedTilePreview(
                                         .height(32.dp)
                                         .clickable(
                                             enabled = isSelected,
-                                            onClick = onRemoveStack,
+                                            onClick = { onRemoveTileAt(pageIndex) },
                                         ),
                             ) {
                                 Box(

@@ -34,7 +34,7 @@ constructor() {
         columns: Int,
         maxRows: Int = QQS_MAX_ROWS,
     ): List<AxQsGridItem<T>> {
-        return fitAxQsGridItems(items, columns, maxRows)
+        return fitAxQsGridItems(items, columns, maxRows, qqsMaxRows = maxRows)
     }
 
     fun wouldStraddleQqs(
@@ -74,7 +74,8 @@ constructor() {
             }
         if (!hasStraddleConflict) return items
 
-        val placements = packItems(items, columns, maxRows = null, allowStraddle = false)
+        val placements =
+            packItems(items, columns, maxRows = null, allowStraddle = false, qqsMaxRows = maxRows)
         val placementMap = placements.associate { it.item.id to AxQsGridPosition(it.column, it.row) }
         return items.map { item ->
             val newPos = placementMap[item.id]

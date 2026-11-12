@@ -38,6 +38,7 @@ import com.android.systemui.qs.ax.shared.model.AxQsSpan
 import com.android.systemui.qs.ax.shared.model.AxQsVerticalSliderKey
 import com.android.systemui.qs.ax.shared.model.AxQsVerticalSliderStyle
 import com.android.systemui.qs.panels.data.repository.QSColumnsRepository
+import com.android.systemui.qs.pipeline.shared.TileSpec
 import com.android.systemui.res.R
 import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
@@ -85,13 +86,13 @@ constructor(
     private val layoutsData by
         hydrator.hydratedStateOf(
             traceName = "layoutsData",
-            initialValue = emptyMap(),
+            initialValue = repository.layoutsData.value,
             source = repository.layoutsData,
         )
     val panelMode by
         hydrator.hydratedStateOf(
             traceName = "panelMode",
-            initialValue = AxQsPanelMode.TOGETHER,
+            initialValue = repository.panelMode.value,
             source = repository.panelMode,
         )
     val isQsBypassingShade by
@@ -118,13 +119,13 @@ constructor(
     private val gridColumns by
         hydrator.hydratedStateOf(
             traceName = "gridColumns",
-            initialValue = emptyMap(),
+            initialValue = repository.gridColumns.value,
             source = repository.gridColumns,
         )
     val qqsMaxRows by
         hydrator.hydratedStateOf(
             traceName = "qqsMaxRows",
-            initialValue = 2,
+            initialValue = repository.qqsMaxRows.value,
             source = repository.qqsMaxRows,
         )
     val qqsMaxRowsFlow: StateFlow<Int> = repository.qqsMaxRows
@@ -134,18 +135,19 @@ constructor(
         repository.setQqsMaxRows(rows)
     }
 
-    fun columns(layout: AxQsGridLayout): Int {
+    fun columns(layout: AxQsGridLayout, widthDp: Int = screenWidthDp): Int {
         val default = defaultColumns(layout)
-        return (gridColumns[layout] ?: default).coerceIn(columnRange(layout))
+        return (gridColumns[layout] ?: default).coerceIn(columnRange(layout, widthDp))
     }
 
-    fun columns(layout: AxQsLayout): Int = columns(AxQsGridLayout.from(layout))
+    fun columns(layout: AxQsLayout, widthDp: Int = screenWidthDp): Int =
+        columns(AxQsGridLayout.from(layout), widthDp)
 
-    fun columnRange(layout: AxQsGridLayout): IntRange = layout.columnRange(screenWidthDp)
+    fun columnRange(layout: AxQsGridLayout, widthDp: Int = screenWidthDp): IntRange =
+        layout.columnRange(widthDp)
 
-    fun columnRange(layout: AxQsLayout): IntRange =
-        AxQsGridColumns.columnRange(screenWidthDp, layout == AxQsLayout.SPLIT_SHADE)
-
+    fun columnRange(layout: AxQsLayout, widthDp: Int = screenWidthDp): IntRange =
+        AxQsGridColumns.columnRange(widthDp, layout == AxQsLayout.SPLIT_SHADE)
     fun layoutData(layout: AxQsLayout): AxQsLayoutData? = layoutsData[layout]
 
     fun order(layout: AxQsLayout): List<String>? =
@@ -210,6 +212,11 @@ constructor(
         repository.setLayoutData(layoutData)
     }
 
+    fun allReferencedTileSpecs(
+        updatedLayoutData: AxQsLayoutData,
+        currentLayoutTileSpecs: List<TileSpec>,
+    ): List<TileSpec> = repository.allReferencedTileSpecs(updatedLayoutData, currentLayoutTileSpecs)
+
     fun setOrder(order: List<String>, layout: AxQsLayout) {
         repository.setOrder(order, layout)
     }
@@ -262,6 +269,10 @@ constructor(
 
     fun resetLayout() {
         repository.resetLayout()
+    }
+
+    fun resetLayout(layout: AxQsLayout) {
+        repository.resetLayout(layout)
     }
 
     override suspend fun onActivated(): Nothing = hydrator.activate()

@@ -499,7 +499,7 @@ constructor(
                 AxQsLayout.QS
             }
         val gridLayout = AxQsGridLayout.from(layout)
-        val columns = axQsViewModel.columns(gridLayout)
+        val columns = axQsViewModel.columns(gridLayout, LocalConfiguration.current.screenWidthDp)
         val tileScale = LocalTileScale.current
         val modularSidePadding =
             AxQuickSettingsLayoutDefaults.modularSidePadding(

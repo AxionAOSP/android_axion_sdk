@@ -48,16 +48,32 @@ class AxGridEditController(
     private val editTilesBySpec: Map<String, EditTileViewModel>,
     private val liveTilesBySpec: Map<String, TileViewModel>,
 ) {
+    val allowStraddle: Boolean
+        get() = isSeparateMode || layout == AxQsLayout.SPLIT_SHADE
+
     fun saveOrders() {
-        val placements = packItems(listState.items, columns, maxRows = null, allowStraddle = isSeparateMode)
-        val newPositions = placements.associate { it.item.id to AxQsGridPosition(it.column, it.row) }
-        placements.forEach { placement ->
-            listState.update(placement.item.id) {
-                it.copy(position = AxQsGridPosition(placement.column, placement.row))
+        saveOrders(emptyMap())
+    }
+
+    private fun saveOrders(minUnpositionedRows: Map<String, Int>) {
+        val placements =
+            packItems(
+                    items = listState.items,
+                    columns = columns,
+                    maxRows = null,
+                    allowStraddle = allowStraddle,
+                    qqsMaxRows = listState.qqsMaxRows,
+                    minUnpositionedRows = minUnpositionedRows,
+                )
+                .sortedWith(compareBy({ it.row }, { it.column }))
+        val orderedItems =
+            placements.map { placement ->
+                placement.item.copy(position = AxQsGridPosition(placement.column, placement.row))
             }
-        }
-        val order = listState.items.map { it.id }
-        val updatedSpans = listState.items.associate { it.id to it.span }
+        listState.updateItems(orderedItems)
+        val newPositions = orderedItems.mapNotNull { item -> item.position?.let { item.id to it } }.toMap()
+        val order = orderedItems.map { it.id }
+        val updatedSpans = orderedItems.associate { it.id to it.span }
         val stacks = buildMap {
             listState.items.forEach { item ->
                 val v = item.value
@@ -79,14 +95,14 @@ class AxGridEditController(
                 stacks = stacks,
             )
         axQsViewModel.setLayoutData(layoutData)
-        val tileSpecs =
-            listState.items.flatMap { item ->
+        val currentLayoutTileSpecs =
+            orderedItems.flatMap { item ->
                 when (val v = item.value) {
                     is AxQsGridValue.Tile -> {
                         listOfNotNull(
-                            v.editViewModel?.tileSpec ?:
-                            v.viewModel?.spec ?:
-                            TileSpec.create(item.id)
+                            v.editViewModel?.tileSpec
+                                ?: v.viewModel?.spec
+                                ?: TileSpec.create(item.id).takeIf { it != TileSpec.Invalid }
                         )
                     }
                     is AxQsGridValue.Stack -> {
@@ -96,8 +112,10 @@ class AxGridEditController(
                     else -> emptyList()
                 }
             }
-        if (tileSpecs.isNotEmpty()) {
-            editModeViewModel.setTiles(tileSpecs)
+        val unionTileSpecs =
+            axQsViewModel.allReferencedTileSpecs(layoutData, currentLayoutTileSpecs)
+        if (unionTileSpecs.isNotEmpty()) {
+            editModeViewModel.setTiles(unionTileSpecs)
         }
     }
 
@@ -108,43 +126,38 @@ class AxGridEditController(
         return item.value.isSpanAllowed(span, columns)
     }
 
+    fun previewResizeItem(item: AxQsGridItem<AxQsGridValue>, span: AxQsSpan) {
+        if (!canResize(item, span)) return
+        val solved =
+            solveResizeItems(
+                baseItems = listState.currentResizeBaseItems(),
+                itemId = item.id,
+                newSpan = span,
+                columns = columns,
+                allowStraddle = allowStraddle,
+                qqsMaxRows = listState.qqsMaxRows,
+                preservePinnedPredicate = { candidate ->
+                    (candidate.value as? AxQsGridValue.Control)?.control?.isSlider == true
+                },
+            )
+        listState.applyPreviewItems(solved)
+    }
+
     fun resizeItem(item: AxQsGridItem<AxQsGridValue>, span: AxQsSpan) {
         if (!canResize(item, span)) return
-        val current = listState.item(item.id) ?: item
-        val wouldStraddle =
-            if (isSeparateMode) {
-                false
-            } else {
-                current.position?.row?.let { row ->
-                    AxQsLayoutInteractor.wouldStraddleQqs(span, row, listState.qqsMaxRows)
-                } ?: false
-            }
-        val newPosition = if (wouldStraddle) null else current.position
-        listState.update(item.id) {
-            it.copy(span = span, position = newPosition)
-        }
-        if (newPosition != null) {
-            val targetCol = newPosition.column
-            val targetRow = newPosition.row
-            val targetCols = span.columns
-            val targetRows = span.rows
-            val collidingIds =
-                listState.items
-                    .filter { other ->
-                        if (other.id == item.id) return@filter false
-                        val pos = other.position ?: return@filter false
-                        pos.column < targetCol + targetCols &&
-                            targetCol < pos.column + other.span.columns &&
-                            pos.row < targetRow + targetRows &&
-                            targetRow < pos.row + other.span.rows
-                    }
-                    .mapTo(mutableSetOf()) { it.id }
-            if (collidingIds.isNotEmpty()) {
-                listState.repack(collidingIds)
-            }
-        } else {
-            listState.repack(setOf(item.id))
-        }
+        val solved =
+            solveResizeItems(
+                baseItems = listState.currentResizeBaseItems(),
+                itemId = item.id,
+                newSpan = span,
+                columns = columns,
+                allowStraddle = allowStraddle,
+                qqsMaxRows = listState.qqsMaxRows,
+                preservePinnedPredicate = { candidate ->
+                    (candidate.value as? AxQsGridValue.Control)?.control?.isSlider == true
+                },
+            )
+        listState.updateItems(solved)
         saveOrders()
     }
 
@@ -216,30 +229,69 @@ class AxGridEditController(
         }
     }
 
+    fun removeStackPage(item: AxQsGridItem<AxQsGridValue>, pageIndex: Int) {
+        val currentItem = listState.item(item.id) ?: item
+        val stack = currentItem.value as? AxQsGridValue.Stack ?: return
+        val distinctEdit = stack.editTiles.distinctBy { it.tileSpec.spec }
+        val distinctLive = stack.tiles.distinctBy { it.spec.spec }
+        val targetSpec =
+            distinctEdit.getOrNull(pageIndex)?.tileSpec?.spec
+                ?: distinctLive.getOrNull(pageIndex)?.spec?.spec
+        if (targetSpec == null) {
+            listState.remove(currentItem.id)
+            selectedId.value = null
+            saveOrders()
+            return
+        }
+
+        val remainingSpecs =
+            (distinctEdit.map { it.tileSpec.spec } + distinctLive.map { it.spec.spec })
+                .distinct()
+                .filter { it != targetSpec }
+        when {
+            remainingSpecs.size >= 2 -> {
+                val remainingEdit = remainingSpecs.mapNotNull { editTilesBySpec[it] ?: distinctEdit.firstOrNull { e -> e.tileSpec.spec == it } }
+                val remainingLive = remainingSpecs.mapNotNull { liveTilesBySpec[it] ?: distinctLive.firstOrNull { l -> l.spec.spec == it } }
+                listState.update(currentItem.id) {
+                    it.copy(
+                        value = AxQsGridValue.Stack(tiles = remainingLive, editTiles = remainingEdit)
+                    )
+                }
+            }
+            remainingSpecs.size == 1 -> {
+                val lastSpec = remainingSpecs.first()
+                val remainingEdit = editTilesBySpec[lastSpec] ?: distinctEdit.firstOrNull { it.tileSpec.spec == lastSpec }
+                val remainingLive = liveTilesBySpec[lastSpec] ?: distinctLive.firstOrNull { it.spec.spec == lastSpec }
+                listState.update(currentItem.id) {
+                    it.copy(
+                        id = lastSpec,
+                        minSpan = AxQsSpan.TileDefault,
+                        maxSpan = AxQsSpan(columns = minOf(2, columns), rows = 2),
+                        value = AxQsGridValue.Tile(viewModel = remainingLive, editViewModel = remainingEdit),
+                    )
+                }
+                selectedId.value = lastSpec
+            }
+            else -> {
+                listState.remove(currentItem.id)
+                selectedId.value = null
+            }
+        }
+        saveOrders()
+    }
+
     fun removeItem(item: AxQsGridItem<AxQsGridValue>) {
         when (val value = item.value) {
             is AxQsGridValue.Tile -> {
-                value.editViewModel?.tileSpec?.let { editModeViewModel.removeTile(it) }
                 listState.remove(item.id)
             }
             is AxQsGridValue.Stack -> {
-                if (value.editTiles.size > 2) {
-                    val remainingEdit = value.editTiles.dropLast(1)
-                    val remainingLive = value.tiles.dropLast(1)
-                    listState.update(item.id) {
-                        it.copy(value = AxQsGridValue.Stack(tiles = remainingLive, editTiles = remainingEdit))
-                    }
-                } else if (value.editTiles.size == 2) {
-                    val remainingEdit = value.editTiles.first()
-                    val remainingLive = value.tiles.firstOrNull()
-                    listState.update(item.id) {
-                        it.copy(
-                            id = remainingEdit.tileSpec.spec,
-                            value = AxQsGridValue.Tile(viewModel = remainingLive, editViewModel = remainingEdit),
-                        )
-                    }
-                } else {
+                val count = maxOf(value.editTiles.size, value.tiles.size)
+                if (count == 0) {
                     listState.remove(item.id)
+                } else {
+                    removeStackPage(item, count - 1)
+                    return
                 }
             }
             is AxQsGridValue.Control -> {
@@ -250,38 +302,68 @@ class AxGridEditController(
         saveOrders()
     }
 
+    fun activeItemAndTileIds(): Set<String> = buildSet {
+        listState.items.forEach { item ->
+            add(item.id)
+            val v = item.value
+            if (v is AxQsGridValue.Stack) {
+                v.editTiles.forEach { add(it.tileSpec.spec) }
+                v.tiles.forEach { add(it.spec.spec) }
+            }
+        }
+    }
+
+    private fun appendItemAtBottom(newItem: AxQsGridItem<AxQsGridValue>) {
+        val existingPlacements =
+            packItems(
+                items = listState.items,
+                columns = columns,
+                maxRows = null,
+                allowStraddle = allowStraddle,
+                qqsMaxRows = listState.qqsMaxRows,
+            )
+        val bottomStartRow =
+            (existingPlacements.maxOfOrNull { it.row + it.item.span.rows }?.minus(1) ?: 0)
+                .coerceAtLeast(0)
+        listState.add(newItem)
+        selectedId.value = newItem.id
+        saveOrders(mapOf(newItem.id to bottomStartRow))
+    }
+
     fun addTile(tile: EditTileViewModel) {
-        val currentIds = listState.items.map { it.id }.toSet()
-        if (tile.tileSpec.spec !in currentIds) {
+        val spec = tile.tileSpec.spec
+        if (spec !in activeItemAndTileIds()) {
+            val defaultSpan =
+                axQsViewModel.span(spec, layout, AxQsSpan.TileDefault).coerceTileSpan(columns)
             val newItem =
                 AxQsGridItem<AxQsGridValue>(
-                    id = tile.tileSpec.spec,
-                    span = AxQsSpan.TileDefault,
+                    id = spec,
+                    span = defaultSpan,
                     minSpan = AxQsSpan.TileMin,
                     maxSpan = AxQsSpan(columns = minOf(2, columns), rows = 2),
                     value =
                         AxQsGridValue.Tile(
-                            viewModel = null,
+                            viewModel = liveTilesBySpec[spec],
                             editViewModel = tile,
                         ),
                 )
-            listState.add(newItem)
-            saveOrders()
+            appendItemAtBottom(newItem)
         }
     }
 
     fun addControl(control: AxQsControl) {
-        val spans = control.spans(columns)
-        val newItem =
-            AxQsGridItem<AxQsGridValue>(
-                id = control.id,
-                span = spans.default,
-                minSpan = spans.min,
-                maxSpan = spans.max,
-                value = AxQsGridValue.Control(control),
-            )
-        listState.add(newItem)
-        saveOrders()
+        if (control.id !in activeItemAndTileIds()) {
+            val spans = control.spans(columns)
+            val newItem =
+                AxQsGridItem<AxQsGridValue>(
+                    id = control.id,
+                    span = spans.default,
+                    minSpan = spans.min,
+                    maxSpan = spans.max,
+                    value = AxQsGridValue.Control(control),
+                )
+            appendItemAtBottom(newItem)
+        }
     }
 
     fun addStack() {
@@ -294,8 +376,7 @@ class AxGridEditController(
                 maxSpan = AxQsSpan(columns = 2, rows = 2),
                 value = AxQsGridValue.Stack(emptyList(), emptyList()),
             )
-        listState.add(newItem)
-        saveOrders()
+        appendItemAtBottom(newItem)
     }
 }
 
@@ -312,17 +393,22 @@ fun rememberAxGridEditController(
     editModeViewModel: EditModeViewModel,
     resetEpoch: Int,
 ): AxGridEditController {
-    val selectedId = remember(isEditing, resetEpoch) { mutableStateOf<String?>(null) }
+    val allowStraddle = isSeparateMode || layout == AxQsLayout.SPLIT_SHADE
+    val selectedId = remember(isEditing, layout, resetEpoch) { mutableStateOf<String?>(null) }
     val showResetDialog = remember { mutableStateOf(false) }
 
     val listState =
-        remember(isEditing, layout, resetEpoch, isSeparateMode) {
+        remember(isEditing, layout, columns, resetEpoch, allowStraddle) {
             AxQsEditListState(
                 initialItems = gridItems,
                 initialQqsMaxRows = axQsViewModel.qqsMaxRows,
-                allowStraddle = isSeparateMode,
+                allowStraddle = allowStraddle,
             )
         }
+    LaunchedEffect(listState, axQsViewModel.qqsMaxRows) {
+        listState.updateQqsMaxRows(axQsViewModel.qqsMaxRows)
+    }
+
 
     val editTilesBySpec =
         remember(allEditTiles) {
@@ -330,19 +416,23 @@ fun rememberAxGridEditController(
         }
     val liveTilesBySpec = remember(tiles) { tiles.associateBy { it.spec.spec } }
 
-    LaunchedEffect(gridItems) {
+    LaunchedEffect(listState, gridItems) {
         if (!isEditing) {
             listState.updateItems(gridItems)
         } else {
-            val existingIds = listState.items.map { it.id }.toSet()
-            val newItems = gridItems.filter { it.id !in existingIds }
+            val allowedOrder = axQsViewModel.order(layout)?.toSet()
+            val existingIds = activeItemIdsSnapshot(listState.items)
+            val newItems =
+                gridItems.filter { item ->
+                    item.id !in existingIds && (allowedOrder == null || item.id in allowedOrder)
+                }
             if (newItems.isNotEmpty()) {
                 newItems.forEach { listState.add(it) }
             }
         }
     }
 
-    LaunchedEffect(isEditing, allEditTiles) {
+    LaunchedEffect(listState, isEditing, layout, allEditTiles, tiles) {
         if (isEditing) {
             val stacks = axQsViewModel.stacks(layout)
             listState.items.forEach { item ->
@@ -380,5 +470,16 @@ fun rememberAxGridEditController(
             editTilesBySpec = editTilesBySpec,
             liveTilesBySpec = liveTilesBySpec,
         )
+    }
+}
+
+private fun activeItemIdsSnapshot(items: List<AxQsGridItem<AxQsGridValue>>): Set<String> = buildSet {
+    items.forEach { item ->
+        add(item.id)
+        val v = item.value
+        if (v is AxQsGridValue.Stack) {
+            v.editTiles.forEach { add(it.tileSpec.spec) }
+            v.tiles.forEach { add(it.spec.spec) }
+        }
     }
 }

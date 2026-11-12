@@ -16,6 +16,7 @@
 
 package com.android.systemui.qs.ax.ui.grid
 
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -57,6 +58,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
@@ -301,6 +303,7 @@ internal fun Modifier.axQsResizeHandle(
     val currentOnResize by rememberUpdatedState(onResize)
     val currentOnResizeFinished by rememberUpdatedState(onResizeFinished)
     val layoutDirection = LocalLayoutDirection.current
+    val view = LocalView.current
     val density = LocalDensity.current
     val columnStep =
         with(density) { (cellConfig.cellWidth + cellConfig.spacing).toPx().coerceAtLeast(1f) }
@@ -336,6 +339,7 @@ internal fun Modifier.axQsResizeHandle(
             val rowDelta = (state.dragOffset.y / rowStep).roundToInt()
             val target = currentResolveSpan(state.startSpan, columnDelta, rowDelta)
             if (target != currentSpan() && currentCanResize(target)) {
+                view.performHapticFeedback(HapticFeedbackConstants.SEGMENT_TICK)
                 currentOnResize(target)
             }
         }
