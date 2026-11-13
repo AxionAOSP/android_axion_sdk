@@ -146,6 +146,8 @@ import com.android.systemui.qs.ax.shared.model.AxQsGridLayout
 import com.android.systemui.qs.ax.shared.model.AxQsLayout
 import com.android.systemui.qs.ax.shared.model.AxQsPanelMode
 import com.android.systemui.qs.ax.shared.model.LocalAxQsLayout
+import com.android.systemui.qs.ax.tiles.bluetooth.BluetoothTileViewModel
+import com.android.systemui.qs.ax.tiles.bluetooth.LocalBluetoothTileViewModel
 import com.android.systemui.qs.ax.tiles.ringer.LocalRingerSliderViewModel
 import com.android.systemui.qs.ax.tiles.ringer.RingerSliderViewModel
 import com.android.systemui.qs.ax.ui.controls.AxControlViewModels
@@ -221,6 +223,7 @@ constructor(
     @param:ShadeDisplayAware private val configurationController: ConfigurationController,
     private val windowRootViewBlurInteractor: WindowRootViewBlurInteractor,
     private val ringerSliderViewModel: RingerSliderViewModel,
+    private val bluetoothTileViewModel: BluetoothTileViewModel,
     private val tintedIconManagerFactory: TintedIconManager.Factory,
     private val shadeHeaderController: ShadeHeaderController,
     private val volumeNavigator: VolumeNavigator,
@@ -369,6 +372,7 @@ constructor(
                             LocalBlurEnabled provides blurEnabled,
                             LocalQsScrolling provides scrollState.isScrollInProgress,
                             LocalRingerSliderViewModel provides ringerSliderViewModel,
+                            LocalBluetoothTileViewModel provides bluetoothTileViewModel,
                             LocalAxPressFeedbackHelper provides pressFeedbackHelper,
                             LocalLayoutDirection provides LayoutDirection.Ltr,
                         ) {

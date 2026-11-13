@@ -167,6 +167,7 @@ fun ContentScope.AxTile(
         AxTile(
             uiState = uiState,
             iconProvider = { getAxTileIcon(icon = icon) },
+            tileSpec = tile.spec.spec,
             compact = compact,
             span = span,
             modifier = modifier,
@@ -214,6 +215,7 @@ fun ContentScope.AxTile(
 fun AxTile(
     uiState: TileUiState,
     iconProvider: Context.() -> Icon,
+    tileSpec: String? = null,
     compact: Boolean,
     span: AxQsSpan,
     modifier: Modifier = Modifier,
@@ -323,6 +325,8 @@ fun AxTile(
                             iconShape = CircleShape,
                             tileState = uiState.state,
                             span = span,
+                            tileSpec = tileSpec,
+                            isClickable = isClickable,
                             isDualTarget = isDualTarget,
                             toggleClick = secondaryClick,
                             onLongClick = onLongClick?.let { { it(expandable) } },

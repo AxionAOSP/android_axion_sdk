@@ -276,6 +276,8 @@ private fun AxStackedTilePageContent(
             squishiness = { 1f },
             tileState = uiState.state,
             span = AxQsSpan(columns = 2, rows = 2),
+            tileSpec = tile.spec.spec,
+            isClickable = effectiveClickable,
             isDualTarget = isDualTarget,
             toggleClick = handleToggleClick,
             onLongClick = handleLongClick,

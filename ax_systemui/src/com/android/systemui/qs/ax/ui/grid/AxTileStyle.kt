@@ -50,10 +50,14 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.android.compose.modifiers.thenIf
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.android.systemui.Flags
 import com.android.systemui.common.shared.model.Icon
 import com.android.systemui.qs.ax.shared.model.AxQsSpan
 import com.android.systemui.qs.ax.shared.model.AxQsTokens
+import com.android.systemui.qs.ax.tiles.bluetooth.AxBluetoothConnectedLargeContent
+import com.android.systemui.qs.ax.tiles.bluetooth.BLUETOOTH_TILE_SPEC
+import com.android.systemui.qs.ax.tiles.bluetooth.LocalBluetoothTileViewModel
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.CommonTileDefaults
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.CommonTileDefaults.longPressLabelSettings
 import com.android.systemui.qs.panels.ui.compose.infinitegrid.SmallTileContent
@@ -89,6 +93,8 @@ fun AxLargeTileContent(
     tileState: Int,
     span: AxQsSpan,
     modifier: Modifier = Modifier,
+    tileSpec: String? = null,
+    isClickable: Boolean = true,
     isVisible: () -> Boolean = { true },
     accessibilityUiState: AccessibilityUiState? = null,
     iconShape: RoundedCornerShape = RoundedCornerShape(CommonTileDefaults.InactiveCornerRadius),
@@ -116,6 +122,29 @@ fun AxLargeTileContent(
             label = "AxLargeTileChipIconColor",
         )
 
+
+    val btViewModel =
+        if (tileSpec == BLUETOOTH_TILE_SPEC && isClickable) {
+            LocalBluetoothTileViewModel.current
+        } else {
+            null
+        }
+    val btSnapshot = btViewModel?.snapshot?.collectAsStateWithLifecycle()?.value
+    if (btSnapshot != null && btSnapshot.hasConnectedDevices) {
+        AxBluetoothConnectedLargeContent(
+            snapshot = btSnapshot,
+            fallbackIconProvider = iconProvider,
+            colors = colors,
+            span = span,
+            isClickable = isClickable,
+            isDualTarget = isDualTarget,
+            toggleClick = toggleClick,
+            onLongClick = onLongClick,
+            interactionSource = interactionSource,
+            modifier = modifier,
+        )
+        return
+    }
     if (span.rows == 1) {
         val clickableIconModifier =
             if (toggleClick != null) {
