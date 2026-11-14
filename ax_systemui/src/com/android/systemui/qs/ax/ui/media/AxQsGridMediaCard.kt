@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
@@ -56,6 +58,8 @@ internal fun AxQsGridMediaCard(
             animationSpec = AxMediaTokens.ButtonPressSpring,
             label = "AxQsGridMediaCardPressScale"
         )
+    var showPopup by remember { mutableStateOf(false) }
+    val blurEnabled = true
 
     ExpandableContainer(
         controller = rememberExpandableController(color = { theme.containerBackground }, shape = shape),
@@ -79,15 +83,27 @@ internal fun AxQsGridMediaCard(
                 enabled = interactive && (session != null || lastMediaPackage != null),
                 onClick = {
                     if (session != null) {
-                        viewModel.openSession(session, expandable)
+                        showPopup = true
                     } else {
                         viewModel.openLastMediaApp(expandable)
                     }
                 },
                 onClickLabel = clickLabel,
-                onLongClick = null
+                onLongClick = {
+                    if (session != null) viewModel.openSession(session, expandable)
+                }
             )
         ) {
+            if (showPopup && session != null) {
+                AxMediaExpandedPopup(
+                    session = session,
+                    viewModel = viewModel,
+                    colors = theme.colors,
+                    songKey = session.let { "${it.key}:${it.appName}:${it.title}:${it.subtitle}" },
+                    blurEnabled = blurEnabled,
+                    onDismiss = { showPopup = false }
+                )
+            }
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val gridConfig =
                     remember(span, maxHeight) {
