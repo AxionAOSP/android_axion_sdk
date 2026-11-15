@@ -420,6 +420,9 @@ public class AppLockService {
     public void onAppFocusChanged(ActivityRecord newFocus, Task newTask) {
         String newKey = (newFocus != null) ? sessionKey(newFocus) : null;
         if (mLastFocusedAppKey != null && !mLastFocusedAppKey.equals(newKey)) {
+            if (mUnlockedApps.contains(mLastFocusedAppKey)) {
+                mUnlockTimestamps.put(mLastFocusedAppKey, SystemClock.elapsedRealtime());
+            }
             scheduleTimeoutLock(mLastFocusedAppKey);
             if (mRepository.getLockBehavior() == LOCK_BEHAVIOR_ON_LEAVE
                     && mUnlockedApps.contains(mLastFocusedAppKey)) {
@@ -487,6 +490,7 @@ public class AppLockService {
 
     public void clearUnlockedApp(ActivityRecord r) {
         if (r == null) return;
+        if (mRepository.getLockBehavior() != LOCK_BEHAVIOR_ON_LEAVE) return;
         if (r.occludesParent() || r.isActivityTypeHomeOrRecents()) {
             if (r.isActivityTypeHomeOrRecents() && r.mTransitionController.isTransientLaunch(r)) {
                 return;
